@@ -1,0 +1,76 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, "feature/*"]
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'shared/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'shared/**'
+
+jobs:
+  backend-unit:
+    name: Backend unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: yarn
+          cache-dependency-path: backend/yarn.lock
+      - name: Install and build shared
+        working-directory: shared
+        run: yarn install --frozen-lockfile --non-interactive && yarn build
+      - name: Install backend dependencies
+        working-directory: backend
+        run: yarn install --frozen-lockfile --non-interactive
+      - name: Run unit tests
+        working-directory: backend
+        run: yarn test
+
+  backend-e2e:
+    name: Backend e2e tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: yarn
+          cache-dependency-path: backend/yarn.lock
+      - name: Install and build shared
+        working-directory: shared
+        run: yarn install --frozen-lockfile --non-interactive && yarn build
+      - name: Install backend dependencies
+        working-directory: backend
+        run: yarn install --frozen-lockfile --non-interactive
+      - name: Run e2e tests
+        working-directory: backend
+        run: yarn test:e2e
+
+  frontend:
+    name: Frontend tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+      - name: Install and build shared
+        working-directory: shared
+        run: yarn install --frozen-lockfile --non-interactive && yarn build
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: yarn install --frozen-lockfile --non-interactive
+      - name: Run tests
+        working-directory: frontend
+        run: yarn vitest --run

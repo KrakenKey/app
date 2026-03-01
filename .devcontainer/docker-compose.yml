@@ -1,0 +1,68 @@
+services:
+  node:
+    image: mcr.microsoft.com/devcontainers/typescript-node:4.0.5-24-bookworm
+    container_name: krakenkey-api-dev
+    env_file:
+      - .env
+    environment:
+      API_VERSION: ${API_VERSION}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      JWT_SECRET: ${JWT_SECRET}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      # REDIS_PASSWORD: ${REDIS_PASSWORD}
+    volumes:
+      - ..:/workspaces/app
+    working_dir: /workspaces/app
+    command: sleep infinity
+    ports:
+      - "8080:8080"
+    networks:
+      - krakenkey-dev
+
+  postgres:
+    image: postgres:18-alpine
+    container_name: krakenkey-db-dev
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: auth_db
+    ports:
+      - '5432:5432'
+    volumes:
+      - krakenkey_db_data:/var/lib/postgresql
+    networks:
+      - krakenkey-dev
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:8.6-rc1-trixie
+    container_name: krakenkey-redis-dev
+    ports:
+      - '6379:6379'
+    volumes:
+      - krakenkey_redis_data:/data
+    networks:
+      - krakenkey-dev
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  krakenkey_db_data:
+  krakenkey_redis_data:
+
+networks:
+  krakenkey-dev:

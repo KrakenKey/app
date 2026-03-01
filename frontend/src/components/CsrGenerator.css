@@ -1,0 +1,380 @@
+/**
+ * CSR Generator Component Styles
+ * Reuses existing classes from CertificateManagement.css and DomainManagement.css
+ * Defines only CSR-specific styles
+ */
+
+.csr-generator {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.csr-generator .subtitle {
+  color: #666;
+  margin-bottom: 1.5rem;
+}
+
+.csr-generator .error-banner {
+  background-color: #fee;
+  border: 1px solid #fcc;
+  border-radius: 4px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  color: #c00;
+}
+
+.csr-generator .info-text {
+  background-color: #e7f3ff;
+  border: 1px solid #b3d9ff;
+  border-radius: 4px;
+  padding: 1rem;
+  margin-top: 1rem;
+  color: #004085;
+}
+
+/* Form Sections */
+.form-section {
+  margin-bottom: 2rem;
+  padding: 1.5rem;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  background-color: #fafafa;
+}
+
+.form-section h4 {
+  margin-top: 0;
+  margin-bottom: 1rem;
+  color: #333;
+}
+
+.section-help {
+  color: #666;
+  font-size: 0.9rem;
+  margin-bottom: 1rem;
+}
+
+/* Form Fields */
+.form-field {
+  margin-bottom: 1rem;
+}
+
+.form-field label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+  color: #333;
+}
+
+.form-field .required {
+  color: #c00;
+}
+
+.form-field input,
+.form-field textarea {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.9rem;
+}
+
+.form-field input:disabled,
+.form-field textarea:disabled {
+  background-color: #f5f5f5;
+  cursor: not-allowed;
+}
+
+.field-error {
+  display: block;
+  color: #c00;
+  font-size: 0.85rem;
+  margin-top: 0.25rem;
+}
+
+.field-help {
+  display: block;
+  color: #666;
+  font-size: 0.85rem;
+  margin-top: 0.25rem;
+}
+
+/* Form Rows (side-by-side fields) */
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+/* Subject Alternative Names */
+.san-section {
+  margin-bottom: 1.5rem;
+}
+
+.san-section label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+}
+
+.san-input-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.san-input-row input {
+  flex: 1;
+}
+
+.btn-remove {
+  padding: 0.5rem 1rem;
+  background-color: #dc3545;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.btn-remove:hover {
+  background-color: #c82333;
+}
+
+/* Key Type Selector */
+.key-type-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.key-type-option {
+  display: flex;
+  align-items: center;
+  padding: 1rem;
+  border: 2px solid #ddd;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.key-type-option:hover {
+  border-color: #007bff;
+  background-color: #f8f9fa;
+}
+
+.key-type-option input[type="radio"] {
+  margin-right: 1rem;
+  width: auto;
+}
+
+.key-type-label {
+  font-weight: 500;
+  font-family: monospace;
+  min-width: 100px;
+}
+
+.key-type-info {
+  color: #666;
+  font-size: 0.85rem;
+  margin-left: auto;
+}
+
+.recommended-badge {
+  background-color: #28a745;
+  color: white;
+  padding: 0.25rem 0.75rem;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  margin-left: 1rem;
+}
+
+.key-type-warning {
+  background-color: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: 4px;
+  padding: 0.75rem;
+  margin-top: 1rem;
+  color: #856404;
+}
+
+/* CSR Preview */
+.csr-preview-section {
+  margin-top: 1.5rem;
+}
+
+.preview-fields {
+  background-color: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.preview-fields .field {
+  display: flex;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.preview-fields .field:last-child {
+  border-bottom: none;
+}
+
+.preview-fields .field label {
+  font-weight: 500;
+  min-width: 200px;
+  color: #495057;
+}
+
+.preview-fields .field span {
+  color: #212529;
+  font-family: monospace;
+}
+
+.csr-textarea {
+  width: 100%;
+  font-family: monospace;
+  font-size: 0.85rem;
+  padding: 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background-color: #f8f9fa;
+  resize: vertical;
+}
+
+.public-key-details {
+  margin-top: 1rem;
+  cursor: pointer;
+}
+
+.public-key-details summary {
+  padding: 0.5rem;
+  background-color: #e9ecef;
+  border-radius: 4px;
+  user-select: none;
+}
+
+.public-key-details summary:hover {
+  background-color: #dee2e6;
+}
+
+/* Form Actions */
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+  margin-top: 2rem;
+}
+
+/* Private Key Modal */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background-color: white;
+  border-radius: 8px;
+  padding: 2rem;
+  max-width: 600px;
+  width: 90%;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.private-key-modal h3 {
+  margin-top: 0;
+  color: #c00;
+}
+
+.private-key-warning {
+  background-color: #fff3cd;
+  border: 2px solid #ffc107;
+  border-radius: 4px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.private-key-warning p {
+  margin: 0.5rem 0;
+}
+
+.private-key-warning strong {
+  color: #856404;
+}
+
+.private-key-textarea {
+  width: 100%;
+  font-family: monospace;
+  font-size: 0.85rem;
+  padding: 0.75rem;
+  border: 2px solid #ffc107;
+  border-radius: 4px;
+  background-color: #fffbf0;
+  resize: vertical;
+  margin-bottom: 1rem;
+}
+
+.private-key-actions {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.save-confirmation {
+  display: flex;
+  align-items: center;
+  padding: 1rem;
+  background-color: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+  cursor: pointer;
+}
+
+.save-confirmation input[type="checkbox"] {
+  margin-right: 0.75rem;
+  width: auto;
+}
+
+.save-checkpoint-timer {
+  padding: 1rem;
+  background-color: #e7f3ff;
+  border: 1px solid #b3d9ff;
+  border-radius: 4px;
+  text-align: center;
+  color: #004085;
+  margin-bottom: 1rem;
+}
+
+.btn-full-width {
+  width: 100%;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .key-type-info {
+    margin-left: 0;
+    margin-top: 0.25rem;
+    display: block;
+  }
+
+  .modal {
+    width: 95%;
+    padding: 1rem;
+  }
+}

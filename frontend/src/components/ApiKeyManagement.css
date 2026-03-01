@@ -1,0 +1,244 @@
+/* API Key Management Container */
+.apikey-management {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.apikey-management h2 {
+  margin-bottom: 8px;
+  color: #1f2937;
+}
+
+.apikey-management .subtitle {
+  color: #6b7280;
+  margin-bottom: 20px;
+}
+
+/* Create Key Section */
+.create-key-section {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 30px;
+}
+
+.create-key-section h3 {
+  margin-top: 0;
+  margin-bottom: 15px;
+  color: #374151;
+}
+
+.create-key-form .form-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.key-name-input,
+.key-expiry-input {
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.key-name-input {
+  flex: 1;
+  min-width: 200px;
+}
+
+.key-name-input:focus,
+.key-expiry-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.key-name-input:disabled,
+.key-expiry-input:disabled {
+  background: #f3f4f6;
+  cursor: not-allowed;
+}
+
+/* New Key Banner */
+.new-key-banner {
+  background: #f0fdf4;
+  border: 2px solid #10b981;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.key-display {
+  display: block;
+  background: #1f2937;
+  color: #10b981;
+  padding: 10px;
+  border-radius: 4px;
+  font-family: 'Courier New', monospace;
+  font-size: 14px;
+  margin: 8px 0;
+  word-break: break-all;
+}
+
+.new-key-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.key-warning {
+  color: #ef4444;
+  font-weight: 600;
+  font-size: 13px;
+  margin: 0;
+}
+
+/* Keys Table */
+.keys-list h3 {
+  margin-bottom: 20px;
+  color: #374151;
+}
+
+.keys-table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.keys-table th,
+.keys-table td {
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.keys-table th {
+  background: #f9fafb;
+  font-weight: 600;
+  color: #374151;
+  font-size: 13px;
+  text-transform: uppercase;
+}
+
+.keys-table td {
+  font-size: 14px;
+  color: #1f2937;
+}
+
+.keys-table .key-name {
+  font-family: monospace;
+  font-weight: 500;
+}
+
+/* Expiration status colors */
+.keys-table td.healthy {
+  color: #10b981;
+  font-weight: 600;
+}
+
+.keys-table td.expiring-soon {
+  color: #f59e0b;
+  font-weight: 600;
+}
+
+.keys-table td.expiring-critical {
+  color: #ef4444;
+  font-weight: 600;
+}
+
+.keys-table td.expired {
+  color: #ef4444;
+  font-weight: 600;
+  text-decoration: line-through;
+}
+
+/* Empty state */
+.apikey-management .empty-state {
+  color: #6b7280;
+  font-style: italic;
+  padding: 20px 0;
+}
+
+/* Button styles */
+.apikey-management .btn-primary {
+  background: #3b82f6;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.apikey-management .btn-primary:hover:not(:disabled) {
+  background: #2563eb;
+}
+
+.apikey-management .btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.apikey-management .btn-secondary {
+  background: #e5e7eb;
+  color: #374151;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.apikey-management .btn-secondary:hover:not(:disabled) {
+  background: #d1d5db;
+}
+
+.apikey-management .btn-danger {
+  background: #ef4444;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.apikey-management .btn-danger:hover:not(:disabled) {
+  background: #dc2626;
+}
+
+.apikey-management .btn-danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.apikey-management .btn-small {
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .create-key-form .form-row {
+    flex-direction: column;
+  }
+
+  .key-name-input {
+    width: 100%;
+  }
+
+  .keys-table {
+    font-size: 13px;
+  }
+
+  .keys-table th,
+  .keys-table td {
+    padding: 8px 10px;
+  }
+}
