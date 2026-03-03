@@ -12,6 +12,7 @@ import { UsersModule } from './users/users.module';
 import { DomainsModule } from './domains/domains.module';
 import { KKThrottlerModule } from './throttler/throttler.module';
 import { HealthModule } from './health/health.module';
+import { FeedbackModule } from './feedback/feedback.module';
 
 @Module({
   imports: [
@@ -63,6 +64,7 @@ import { HealthModule } from './health/health.module';
     AuthModule,
     UsersModule,
     DomainsModule,
+    FeedbackModule,
   ],
   controllers: [AppController],
   providers: [AppService],
