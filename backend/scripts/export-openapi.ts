@@ -108,7 +108,10 @@ function main() {
       fullOperation.security = doc.security;
     }
     if (doc.responses && Object.keys(doc.responses).length > 0) {
-      fullOperation.responses = { ...fullOperation.responses, ...doc.responses };
+      fullOperation.responses = {
+        ...fullOperation.responses,
+        ...doc.responses,
+      };
     }
 
     paths[routePath][methodKey] = fullOperation;

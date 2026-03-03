@@ -13,19 +13,19 @@ import './App.css';
  */
 const ProtectedRoute = ({ children }: { children: { } & ReactNode }) => {
   const { isAuthenticated, isLoading, user } = useAuth();
-  
+
   console.log("🛡️ ProtectedRoute check:", { isAuthenticated, isLoading, hasUser: !!user });
-  
+
   if (isLoading) {
     console.log("⏳ ProtectedRoute: Still loading...");
     return <div>Loading...</div>;
   }
-  
+
   if (!isAuthenticated) {
     console.log("❌ ProtectedRoute: Not authenticated, redirecting to home");
     return <Navigate to="/" replace />;
   }
-  
+
   console.log("✅ ProtectedRoute: Authenticated, rendering protected content");
   return children;
 };
@@ -38,13 +38,13 @@ function AppRoutes() {
     <Routes>
       <Route path="/" element={<Home />} />
       <Route path="/auth/callback" element={<Callback />} />
-      <Route 
-        path="/dashboard" 
+      <Route
+        path="/dashboard"
         element={
           <ProtectedRoute>
             <Dashboard />
           </ProtectedRoute>
-        } 
+        }
       />
     </Routes>
   );

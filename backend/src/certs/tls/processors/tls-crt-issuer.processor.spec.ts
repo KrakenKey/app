@@ -10,7 +10,8 @@ describe('CertIssuerConsumer', () => {
 
   const mockCsrRecord = {
     id: 1,
-    rawCsr: '-----BEGIN CERTIFICATE REQUEST-----\nfakedata\n-----END CERTIFICATE REQUEST-----',
+    rawCsr:
+      '-----BEGIN CERTIFICATE REQUEST-----\nfakedata\n-----END CERTIFICATE REQUEST-----',
     status: 'pending',
   };
 
@@ -20,7 +21,11 @@ describe('CertIssuerConsumer', () => {
       updateInternal: jest.fn().mockResolvedValue({}),
     };
     mockAcme = {
-      issue: jest.fn().mockResolvedValue('-----BEGIN CERTIFICATE-----\ncert\n-----END CERTIFICATE-----'),
+      issue: jest
+        .fn()
+        .mockResolvedValue(
+          '-----BEGIN CERTIFICATE-----\ncert\n-----END CERTIFICATE-----',
+        ),
     };
     mockDns = {};
     mockCsrUtil = {

@@ -188,8 +188,18 @@ describe('TlsService', () => {
       });
       jest.spyOn(domainsService, 'findAllVerified').mockResolvedValue([
         { id: 1, hostname: 'example.com', isVerified: true, userId } as any,
-        { id: 2, hostname: 'www.example.com', isVerified: true, userId } as any,
-        { id: 3, hostname: 'api.example.com', isVerified: true, userId } as any,
+        {
+          id: 2,
+          hostname: 'www.example.com',
+          isVerified: true,
+          userId,
+        } as any,
+        {
+          id: 3,
+          hostname: 'api.example.com',
+          isVerified: true,
+          userId,
+        } as any,
       ]);
       jest.spyOn(csrUtilService, 'isAuthorized').mockReturnValue(undefined);
 
@@ -246,7 +256,9 @@ describe('TlsService', () => {
       const cert = { id: 1, userId, status: 'issued' };
       mockRepository.findOneBy.mockResolvedValue(cert);
 
-      const result = await service.update(1, userId, { autoRenew: false } as any);
+      const result = await service.update(1, userId, {
+        autoRenew: false,
+      } as any);
 
       expect(mockRepository.update).toHaveBeenCalledWith(1, {
         autoRenew: false,
@@ -480,7 +492,11 @@ describe('TlsService', () => {
       const cert = { id: 1, status: 'issuing' };
       mockRepository.findOneBy.mockResolvedValue(cert);
 
-      const result = await service.updateInternal(1, { crtPem: 'cert-pem' }, 'issuing' as any);
+      const result = await service.updateInternal(
+        1,
+        { crtPem: 'cert-pem' },
+        'issuing' as any,
+      );
 
       expect(mockRepository.update).toHaveBeenCalledWith(1, {
         crtPem: 'cert-pem',

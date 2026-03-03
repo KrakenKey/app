@@ -75,7 +75,9 @@ describe('HealthController', () => {
 
       await controller.readiness();
 
-      const [fns] = mockHealthCheckService.check.mock.calls[0] as [Array<() => unknown>];
+      const [fns] = mockHealthCheckService.check.mock.calls[0] as [
+        Array<() => unknown>,
+      ];
       expect(fns).toHaveLength(3);
       fns.forEach((fn) => expect(typeof fn).toBe('function'));
     });

@@ -101,7 +101,10 @@ export class TlsController {
   @ApiOperation({ summary: 'Delete a failed or revoked certificate' })
   @ApiParam({ name: 'id', description: 'Certificate ID' })
   @ApiResponse({ status: 200, description: 'Certificate deleted' })
-  @ApiResponse({ status: 400, description: 'Certificate not in failed or revoked state' })
+  @ApiResponse({
+    status: 400,
+    description: 'Certificate not in failed or revoked state',
+  })
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
   remove(

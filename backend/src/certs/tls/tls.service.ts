@@ -181,7 +181,10 @@ export class TlsService {
   async remove(id: number, userId: string) {
     const cert = await this.findOne(id, userId);
 
-    if (cert.status !== CertStatus.FAILED && cert.status !== CertStatus.REVOKED) {
+    if (
+      cert.status !== CertStatus.FAILED &&
+      cert.status !== CertStatus.REVOKED
+    ) {
       throw new BadRequestException(
         `Only failed or revoked certificates can be deleted. Current status: ${cert.status}`,
       );

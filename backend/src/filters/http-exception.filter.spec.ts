@@ -1,8 +1,4 @@
-import {
-  HttpException,
-  HttpStatus,
-  BadRequestException,
-} from '@nestjs/common';
+import { HttpException, HttpStatus, BadRequestException } from '@nestjs/common';
 import { HttpExceptionFilter } from './http-exception.filter';
 
 describe('HttpExceptionFilter', () => {
@@ -33,7 +29,7 @@ describe('HttpExceptionFilter', () => {
   it('handles HttpException with string response', () => {
     const exception = new HttpException('Not found', HttpStatus.NOT_FOUND);
 
-    filter.catch(exception, mockHost as any);
+    filter.catch(exception, mockHost);
 
     expect(mockResponse.status).toHaveBeenCalledWith(404);
     expect(mockResponse.json).toHaveBeenCalledWith(
@@ -48,7 +44,7 @@ describe('HttpExceptionFilter', () => {
   it('handles HttpException with object response', () => {
     const exception = new BadRequestException('Validation failed');
 
-    filter.catch(exception, mockHost as any);
+    filter.catch(exception, mockHost);
 
     expect(mockResponse.status).toHaveBeenCalledWith(400);
     expect(mockResponse.json).toHaveBeenCalledWith(
@@ -62,7 +58,7 @@ describe('HttpExceptionFilter', () => {
   it('handles non-HttpException errors with 500 status', () => {
     const exception = new Error('Something broke');
 
-    filter.catch(exception, mockHost as any);
+    filter.catch(exception, mockHost);
 
     expect(mockResponse.status).toHaveBeenCalledWith(500);
     expect(mockResponse.json).toHaveBeenCalledWith(
@@ -75,7 +71,7 @@ describe('HttpExceptionFilter', () => {
   });
 
   it('handles unknown exceptions (non-Error)', () => {
-    filter.catch('string error', mockHost as any);
+    filter.catch('string error', mockHost);
 
     expect(mockResponse.status).toHaveBeenCalledWith(500);
     expect(mockResponse.json).toHaveBeenCalledWith(
@@ -87,7 +83,7 @@ describe('HttpExceptionFilter', () => {
   });
 
   it('includes timestamp and path in response', () => {
-    filter.catch(new BadRequestException('test'), mockHost as any);
+    filter.catch(new BadRequestException('test'), mockHost);
 
     const body = mockResponse.json.mock.calls[0][0];
     expect(body.timestamp).toBeDefined();

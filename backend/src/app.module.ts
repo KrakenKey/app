@@ -37,10 +37,7 @@ import { FeedbackModule } from './feedback/feedback.module';
             ? {
                 rejectUnauthorized: true,
                 ca: readFileSync(
-                  configService.get(
-                    'KK_DB_SSL_CA',
-                    '/certs/postgres/ca.crt',
-                  ),
+                  configService.get('KK_DB_SSL_CA', '/certs/postgres/ca.crt'),
                   'utf8',
                 ),
               }

@@ -77,7 +77,10 @@ export class AuthController {
   @UseGuards(JwtOrApiKeyGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'List all API keys for the current user' })
-  @ApiResponse({ status: 200, description: 'List of API keys (metadata only, no secrets)' })
+  @ApiResponse({
+    status: 200,
+    description: 'List of API keys (metadata only, no secrets)',
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
   async listApiKeys(@Req() req: RequestWithUser) {
@@ -95,7 +98,11 @@ export class AuthController {
     @Req() req: RequestWithUser,
     @Body() dto: CreateApiKeyDto,
   ) {
-    return this.authService.createApiKey(req.user.userId, dto.name, dto.expiresAt);
+    return this.authService.createApiKey(
+      req.user.userId,
+      dto.name,
+      dto.expiresAt,
+    );
   }
 
   @Delete('api-keys/:id')
@@ -107,10 +114,7 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'API key not found' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
-  async deleteApiKey(
-    @Req() req: RequestWithUser,
-    @Param('id') id: string,
-  ) {
+  async deleteApiKey(@Req() req: RequestWithUser, @Param('id') id: string) {
     await this.authService.deleteApiKey(req.user.userId, id);
     return { message: 'API key deleted' };
   }

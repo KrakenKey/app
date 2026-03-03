@@ -57,7 +57,10 @@ describe('Certificate Lifecycle (e2e)', () => {
   // ─── Lifecycle: submit → issued → revoke → delete ─────────────────────────
   describe('Lifecycle: submit → issued → revoke → delete', () => {
     it('Step 1: POST /certs/tls — cert created with pending status', async () => {
-      mockTlsService.create.mockResolvedValueOnce({ id: 10, status: 'pending' });
+      mockTlsService.create.mockResolvedValueOnce({
+        id: 10,
+        status: 'pending',
+      });
 
       const res = await request(app.getHttpServer())
         .post('/certs/tls')
@@ -138,7 +141,10 @@ describe('Certificate Lifecycle (e2e)', () => {
   // ─── Lifecycle: submit → failed → retry → issued → renew ──────────────────
   describe('Lifecycle: submit → failed → retry → issued → renew', () => {
     it('Step 1: POST /certs/tls — cert created', async () => {
-      mockTlsService.create.mockResolvedValueOnce({ id: 20, status: 'pending' });
+      mockTlsService.create.mockResolvedValueOnce({
+        id: 20,
+        status: 'pending',
+      });
 
       const res = await request(app.getHttpServer())
         .post('/certs/tls')
@@ -216,9 +222,7 @@ describe('Certificate Lifecycle (e2e)', () => {
   describe('CSR validation rejections', () => {
     it('rejects CSR with unauthorized domains', async () => {
       mockTlsService.create.mockRejectedValueOnce(
-        new BadRequestException(
-          'CSR contains unauthorized domains: evil.com',
-        ),
+        new BadRequestException('CSR contains unauthorized domains: evil.com'),
       );
 
       const res = await request(app.getHttpServer())
@@ -280,9 +284,7 @@ describe('Certificate Lifecycle (e2e)', () => {
         ),
       );
 
-      await request(app.getHttpServer())
-        .post('/certs/tls/1/renew')
-        .expect(400);
+      await request(app.getHttpServer()).post('/certs/tls/1/renew').expect(400);
     });
 
     it('cannot retry an issued cert', async () => {
@@ -292,9 +294,7 @@ describe('Certificate Lifecycle (e2e)', () => {
         ),
       );
 
-      await request(app.getHttpServer())
-        .post('/certs/tls/1/retry')
-        .expect(400);
+      await request(app.getHttpServer()).post('/certs/tls/1/retry').expect(400);
     });
 
     it('cannot delete an issued cert', async () => {
@@ -304,9 +304,7 @@ describe('Certificate Lifecycle (e2e)', () => {
         ),
       );
 
-      await request(app.getHttpServer())
-        .delete('/certs/tls/1')
-        .expect(400);
+      await request(app.getHttpServer()).delete('/certs/tls/1').expect(400);
     });
   });
 });

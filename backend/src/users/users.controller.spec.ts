@@ -69,9 +69,9 @@ describe('UsersController', () => {
     });
 
     it('throws ForbiddenException when unauthorized', () => {
-      expect(() =>
-        controller.update(userId, {} as any, otherReq),
-      ).toThrow(ForbiddenException);
+      expect(() => controller.update(userId, {} as any, otherReq)).toThrow(
+        ForbiddenException,
+      );
     });
   });
 

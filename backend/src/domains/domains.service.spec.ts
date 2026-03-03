@@ -15,7 +15,9 @@ jest.mock('crypto', () => {
   const actual = jest.requireActual('crypto');
   return {
     ...actual,
-    randomBytes: jest.fn().mockReturnValue(Buffer.from('a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4', 'hex')),
+    randomBytes: jest
+      .fn()
+      .mockReturnValue(Buffer.from('a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4', 'hex')),
   };
 });
 
@@ -174,9 +176,7 @@ describe('DomainsService', () => {
 
     it('marks domain as verified when TXT record found', async () => {
       mockRepository.findOne.mockResolvedValue({ ...mockDomain });
-      mockResolveTxt.mockResolvedValue([
-        [mockDomain.verificationCode],
-      ]);
+      mockResolveTxt.mockResolvedValue([[mockDomain.verificationCode]]);
       mockRepository.save.mockResolvedValue({
         ...mockDomain,
         isVerified: true,
@@ -209,27 +209,25 @@ describe('DomainsService', () => {
       mockRepository.findOne.mockResolvedValue({ ...mockDomain });
       mockResolveTxt.mockResolvedValue([['unrelated-record']]);
 
-      await expect(
-        service.verify(userId, 'domain-uuid-1'),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.verify(userId, 'domain-uuid-1')).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('throws BadRequestException when DNS lookup fails', async () => {
       mockRepository.findOne.mockResolvedValue({ ...mockDomain });
       mockResolveTxt.mockRejectedValue(new Error('ENOTFOUND'));
 
-      await expect(
-        service.verify(userId, 'domain-uuid-1'),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.verify(userId, 'domain-uuid-1')).rejects.toThrow(
+        BadRequestException,
+      );
     });
   });
 
   // ─── checkVerificationRecord ──────────────────────────────────────────
   describe('checkVerificationRecord', () => {
     it('returns true when TXT record present', async () => {
-      mockResolveTxt.mockResolvedValue([
-        [mockDomain.verificationCode],
-      ]);
+      mockResolveTxt.mockResolvedValue([[mockDomain.verificationCode]]);
 
       expect(await service.checkVerificationRecord(mockDomain)).toBe(true);
     });
@@ -260,9 +258,9 @@ describe('DomainsService', () => {
     it('throws NotFoundException when not found', async () => {
       mockRepository.delete.mockResolvedValue({ affected: 0 });
 
-      await expect(
-        service.delete(userId, 'nonexistent'),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.delete(userId, 'nonexistent')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 });

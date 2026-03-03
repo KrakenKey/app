@@ -20,8 +20,8 @@ KrakenKey is a modular, service-oriented backend built with NestJS for managing 
                       │   TLS    │        │  Authentik  │
                       │  Module  │        │  (OIDC)     │
                       └───┬──────┘        └─────────────┘
-                          │                 
-                    ┌─────┴─────┐       
+                          │
+                    ┌─────┴─────┐
                     │           │
             ┌───────▼───┐  ┌────▼────────┐
             │ TLS       │  │ Job Queue   │
@@ -370,7 +370,7 @@ export class TlsCrt {
 
 ## Scheduled Jobs
 
-All cron jobs are managed by `@nestjs/schedule` (`ScheduleModule.forRoot()` registered in `AppModule`). Jobs run in-process on the single EC2 instance — no separate worker process is required.
+All cron jobs are managed by `@nestjs/schedule` (`ScheduleModule.forRoot()` registered in `AppModule`). Jobs run in-process — no separate worker process is required.
 
 | Service | Cron | Time | Action |
 |---------|------|------|--------|
