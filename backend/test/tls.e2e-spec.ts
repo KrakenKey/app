@@ -106,10 +106,9 @@ describe('TLS Certificates (e2e)', () => {
             id: 1,
             status: 'pending',
           });
-          expect(mockTlsService.create).toHaveBeenCalledWith(
-            MOCK_USER.userId,
-            { csrPem: MOCK_CSR_PEM },
-          );
+          expect(mockTlsService.create).toHaveBeenCalledWith(MOCK_USER.userId, {
+            csrPem: MOCK_CSR_PEM,
+          });
         }));
   });
 
@@ -265,9 +264,7 @@ describe('TLS Certificates (e2e)', () => {
         new BadRequestException('Certificate is not in issued state'),
       );
 
-      await request(app.getHttpServer())
-        .post('/certs/tls/1/renew')
-        .expect(400);
+      await request(app.getHttpServer()).post('/certs/tls/1/renew').expect(400);
     });
 
     it('returns 404 when cert not found', async () => {
@@ -296,19 +293,14 @@ describe('TLS Certificates (e2e)', () => {
         new BadRequestException('Certificate is not in failed state'),
       );
 
-      await request(app.getHttpServer())
-        .post('/certs/tls/1/retry')
-        .expect(400);
+      await request(app.getHttpServer()).post('/certs/tls/1/retry').expect(400);
     });
   });
 
   // ─── Input validation ────────────────────────────────────────────────────
   describe('Input validation', () => {
     it('POST /certs/tls returns 400 when csrPem is missing', () =>
-      request(app.getHttpServer())
-        .post('/certs/tls')
-        .send({})
-        .expect(400));
+      request(app.getHttpServer()).post('/certs/tls').send({}).expect(400));
 
     it('POST /certs/tls returns 400 when csrPem is empty', () =>
       request(app.getHttpServer())
@@ -356,9 +348,7 @@ describe('TLS Certificates (e2e)', () => {
           const messages = Array.isArray(res.body.message)
             ? res.body.message
             : [res.body.message];
-          expect(
-            messages.some((m: string) => m.includes('10,000')),
-          ).toBe(true);
+          expect(messages.some((m: string) => m.includes('10,000'))).toBe(true);
         });
     });
   });

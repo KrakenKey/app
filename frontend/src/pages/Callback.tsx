@@ -10,9 +10,9 @@ const Callback: React.FC = () => {
 
   useEffect(() => {
     const code = searchParams.get('code');
-    
+
     console.log("🔗 Callback page loaded with code:", code ? code.substring(0, 10) + "..." : "NO CODE");
-    
+
     if (code && !processedRef.current) {
       processedRef.current = true; // Prevent double execution in Strict Mode
       console.log("🚀 Starting callback processing...");

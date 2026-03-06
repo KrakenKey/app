@@ -4,6 +4,7 @@ import { DomainsProvider } from '../context/DomainsContext';
 import DomainManagement from '../components/DomainManagement';
 import CertificateManagement from '../components/CertificateManagement';
 import ApiKeyManagement from '../components/ApiKeyManagement';
+import Feedback from '../components/Feedback';
 
 const Dashboard: React.FC = () => {
   const { user, logout } = useAuth();
@@ -31,6 +32,11 @@ const Dashboard: React.FC = () => {
         {/* Certificate Management Section */}
         <div style={{ marginTop: '3rem' }}>
           <CertificateManagement />
+        </div>
+
+        {/* Feedback Section */}
+        <div style={{ marginTop: '3rem' }}>
+          <Feedback />
         </div>
 
         <div style={{ marginTop: '2rem' }}>

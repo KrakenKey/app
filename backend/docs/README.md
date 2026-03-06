@@ -6,10 +6,7 @@ This directory contains comprehensive documentation for the KrakenKey backend AP
 
 1. [Architecture Overview](./ARCHITECTURE.md) - System design and module structure
 2. [API Reference](./API_REFERENCE.md) - Endpoint documentation
-3. [Certificate Issuance Flow](./CERTIFICATE_FLOW.md) - Detailed flow of certificate request to issuance
-4. [Database Schema](./DATABASE.md) - Data model and entities
-5. [Configuration](./CONFIGURATION.md) - Environment variables and setup
-6. [Integration Guides](./INTEGRATIONS.md) - DNS providers and ACME integrations
+3. [Database Schema](./DATABASE.md) - Data model and entities
 
 ## Quick Start
 

@@ -161,9 +161,7 @@ export class AcmeIssuerStrategy implements CertIssuerStrategy {
 
   async revoke(certPem: string, reason?: number): Promise<void> {
     const client = await this.createClient();
-    this.logger.log(
-      `Revoking certificate (reason: ${reason ?? 0})...`,
-    );
+    this.logger.log(`Revoking certificate (reason: ${reason ?? 0})...`);
     await client.revokeCertificate(certPem, { reason: reason ?? 0 });
     this.logger.log('Certificate revoked successfully.');
   }

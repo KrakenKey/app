@@ -231,7 +231,7 @@ await this.TlsCrtRepository.update(
 
 **SQL**:
 ```sql
-UPDATE tls_crt 
+UPDATE tls_crt
 SET status = $1, crtPem = $2, updatedAt = CURRENT_TIMESTAMP
 WHERE id = $3;
 ```
@@ -248,7 +248,7 @@ const recent = await this.TlsCrtRepository.find({
 
 **SQL**:
 ```sql
-SELECT * FROM tls_crt 
+SELECT * FROM tls_crt
 WHERE status = 'issued'
 ORDER BY id DESC
 LIMIT 10;
@@ -414,8 +414,8 @@ reindexdb -h localhost -U postgres -d krakenkey -t tls_crt
 SELECT datname, count(*) FROM pg_stat_activity GROUP BY datname;
 
 -- Long-running queries
-SELECT pid, now() - query_start, query 
-FROM pg_stat_activity 
+SELECT pid, now() - query_start, query
+FROM pg_stat_activity
 WHERE query_start < now() - interval '5 minutes';
 ```
 
@@ -426,9 +426,9 @@ WHERE query_start < now() - interval '5 minutes';
 SELECT pg_size_pretty(pg_database_size('krakenkey'));
 
 -- Table size
-SELECT 
-  schemaname, 
-  tablename, 
+SELECT
+  schemaname,
+  tablename,
   pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename))
 FROM pg_tables
 ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
@@ -441,9 +441,9 @@ ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
 SET log_min_duration_statement = 1000;  -- Log queries > 1 second
 
 -- View slow query log
-SELECT query, calls, total_time, mean_time 
-FROM pg_stat_statements 
-ORDER BY mean_time DESC 
+SELECT query, calls, total_time, mean_time
+FROM pg_stat_statements
+ORDER BY mean_time DESC
 LIMIT 10;
 ```
 
@@ -472,7 +472,7 @@ LIMIT 10;
 async cleanupOldFailures(daysOld: number) {
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - daysOld);
-  
+
   await this.TlsCrtRepository.delete({
     status: 'failed',
     createdAt: LessThan(cutoffDate),

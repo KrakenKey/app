@@ -50,7 +50,10 @@ describe('TlsController', () => {
 
   describe('create', () => {
     it('passes userId and dto to service.create()', () => {
-      const dto = { csrPem: '-----BEGIN CERTIFICATE REQUEST-----\nfoo\n-----END CERTIFICATE REQUEST-----' };
+      const dto = {
+        csrPem:
+          '-----BEGIN CERTIFICATE REQUEST-----\nfoo\n-----END CERTIFICATE REQUEST-----',
+      };
       mockService.create.mockReturnValue({ id: 1, status: 'pending' });
 
       expect(controller.create(mockReq, dto as any)).toEqual({

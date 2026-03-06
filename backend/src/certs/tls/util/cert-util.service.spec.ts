@@ -34,7 +34,9 @@ describe('CertUtilService', () => {
   // ─── getExpirationDate ────────────────────────────────────────────────────
   describe('getExpirationDate', () => {
     it('returns a Date parsed from the certificate validTo field', () => {
-      const result = service.getExpirationDate('-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----');
+      const result = service.getExpirationDate(
+        '-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----',
+      );
       expect(result).toEqual(new Date(mockValidTo));
     });
 

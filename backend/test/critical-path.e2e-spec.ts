@@ -74,10 +74,9 @@ describe('Sprint 5.1 Critical Path (e2e)', () => {
       isVerified: false,
       verificationCode: expect.any(String),
     });
-    expect(mockDomainsService.create).toHaveBeenCalledWith(
-      MOCK_USER.userId,
-      { hostname: 'example.com' },
-    );
+    expect(mockDomainsService.create).toHaveBeenCalledWith(MOCK_USER.userId, {
+      hostname: 'example.com',
+    });
   });
 
   it('Step 2: GET /domains/:id — confirm domain registered (unverified)', async () => {

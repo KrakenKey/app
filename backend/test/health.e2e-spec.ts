@@ -1,9 +1,6 @@
 import { INestApplication, ServiceUnavailableException } from '@nestjs/common';
 import request from 'supertest';
-import {
-  HealthCheckService,
-  TypeOrmHealthIndicator,
-} from '@nestjs/terminus';
+import { HealthCheckService, TypeOrmHealthIndicator } from '@nestjs/terminus';
 import { HealthController } from '../src/health/health.controller';
 import { RedisHealthIndicator } from '../src/health/redis.health';
 import { AuthentikHealthIndicator } from '../src/health/authentik.health';
@@ -17,7 +14,11 @@ describe('Health (e2e)', () => {
     mockHealthCheckService = {
       check: jest.fn().mockResolvedValue({
         status: 'ok',
-        info: { db: { status: 'up' }, redis: { status: 'up' }, auth: { status: 'up' } },
+        info: {
+          db: { status: 'up' },
+          redis: { status: 'up' },
+          auth: { status: 'up' },
+        },
         error: {},
         details: {},
       }),
@@ -29,7 +30,10 @@ describe('Health (e2e)', () => {
         { provide: HealthCheckService, useValue: mockHealthCheckService },
         { provide: TypeOrmHealthIndicator, useValue: { pingCheck: jest.fn() } },
         { provide: RedisHealthIndicator, useValue: { isHealthy: jest.fn() } },
-        { provide: AuthentikHealthIndicator, useValue: { isHealthy: jest.fn() } },
+        {
+          provide: AuthentikHealthIndicator,
+          useValue: { isHealthy: jest.fn() },
+        },
       ],
       guardMode: 'none', // health endpoints are public, no guard to override
     }));
@@ -79,9 +83,7 @@ describe('Health (e2e)', () => {
         }),
       );
 
-      await request(app.getHttpServer())
-        .get('/health/readiness')
-        .expect(503);
+      await request(app.getHttpServer()).get('/health/readiness').expect(503);
     });
   });
 });

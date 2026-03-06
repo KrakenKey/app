@@ -38,7 +38,10 @@ describe('AuthController', () => {
 
   describe('register', () => {
     it('delegates to authService.getRegisterRedirect()', () => {
-      const redirect = { url: 'https://auth.example.com/enrollment', statusCode: 302 };
+      const redirect = {
+        url: 'https://auth.example.com/enrollment',
+        statusCode: 302,
+      };
       mockAuthService.getRegisterRedirect.mockReturnValue(redirect);
 
       expect(controller.register()).toEqual(redirect);
@@ -48,7 +51,10 @@ describe('AuthController', () => {
 
   describe('login', () => {
     it('delegates to authService.getLoginRedirect()', () => {
-      const redirect = { url: 'https://auth.example.com/authorize', statusCode: 302 };
+      const redirect = {
+        url: 'https://auth.example.com/authorize',
+        statusCode: 302,
+      };
       mockAuthService.getLoginRedirect.mockReturnValue(redirect);
 
       expect(controller.login()).toEqual(redirect);

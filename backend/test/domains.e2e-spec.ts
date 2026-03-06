@@ -126,9 +126,7 @@ describe('Domains (e2e)', () => {
         new NotFoundException('Domain #missing not found'),
       );
 
-      await request(app.getHttpServer())
-        .get('/domains/missing')
-        .expect(404);
+      await request(app.getHttpServer()).get('/domains/missing').expect(404);
     });
   });
 
@@ -165,9 +163,7 @@ describe('Domains (e2e)', () => {
         new NotFoundException('Domain #missing not found'),
       );
 
-      await request(app.getHttpServer())
-        .delete('/domains/missing')
-        .expect(404);
+      await request(app.getHttpServer()).delete('/domains/missing').expect(404);
     });
   });
 
@@ -180,10 +176,7 @@ describe('Domains (e2e)', () => {
         .expect(400));
 
     it('POST /domains returns 400 when hostname is missing', () =>
-      request(app.getHttpServer())
-        .post('/domains')
-        .send({})
-        .expect(400));
+      request(app.getHttpServer()).post('/domains').send({}).expect(400));
 
     it('POST /domains strips unknown properties', async () => {
       await request(app.getHttpServer())
@@ -192,10 +185,9 @@ describe('Domains (e2e)', () => {
         .expect(201);
 
       // Service should only receive { hostname } due to whitelist: true
-      expect(mockDomainsService.create).toHaveBeenCalledWith(
-        MOCK_USER.userId,
-        { hostname: 'example.com' },
-      );
+      expect(mockDomainsService.create).toHaveBeenCalledWith(MOCK_USER.userId, {
+        hostname: 'example.com',
+      });
     });
   });
 });

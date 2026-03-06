@@ -421,7 +421,7 @@ const { id, status } = await response.json();
 const pollInterval = setInterval(async () => {
   const statusResponse = await fetch(`http://localhost:8080/certs/tls/${id}`);
   const { status, crtPem } = await statusResponse.json();
-  
+
   if (status === 'issued') {
     console.log('Certificate ready:', crtPem);
     clearInterval(pollInterval);
@@ -467,7 +467,7 @@ KrakenKey uses **Authentik (OIDC)** for user authentication and **API Keys** for
 
 #### Human Login Flow
 1. User visits application URL.
-2. Redirected to `https://auth.dev.krakenkey.io` (Authentik).
+2. Redirected to `https://auth.krakenkey.io` (Authentik).
 3. Authenticates and redirects back to `/auth/callback`.
 4. Backend swaps code for access token.
 
@@ -541,7 +541,7 @@ Use API keys for automation.
 
 **Example:**
 ```bash
-curl -H "Authorization: Bearer kk__abc123..." https://api.dev.krakenkey.io/certs/tls
+curl -H "Authorization: Bearer kk__abc123..." https://api.krakenkey.io/certs/tls
 ```
 
 **Validation:**

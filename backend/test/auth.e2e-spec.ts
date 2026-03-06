@@ -119,9 +119,7 @@ describe('Auth (e2e)', () => {
         }));
 
     it('returns 401 when no auth token provided', () =>
-      request(unauthApp.getHttpServer())
-        .get('/auth/profile')
-        .expect(401));
+      request(unauthApp.getHttpServer()).get('/auth/profile').expect(401));
   });
 
   // ─── POST /auth/api-keys ────────────────────────────────────────────────

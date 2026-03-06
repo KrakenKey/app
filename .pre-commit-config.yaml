@@ -1,0 +1,52 @@
+# See https://pre-commit.com for more information
+repos:
+  # ── General hygiene ────────────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-json
+        exclude: (^frontend/tsconfig\..*\.json$|devcontainer\.json$)  # JSONC files with comments/trailing commas
+      - id: check-merge-conflict
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+
+  # ── Local hooks (binaries installed via devcontainer Dockerfile) ───────────
+  - repo: local
+    hooks:
+      # ── Secrets detection ────────────────────────────────────────────────
+      - id: gitleaks
+        name: gitleaks
+        entry: gitleaks git --pre-commit --redact --staged --verbose
+        language: system
+        pass_filenames: false
+
+      # ── ESLint ───────────────────────────────────────────────────────────
+      - id: eslint-backend
+        name: eslint (backend)
+        entry: bash -c 'cd backend && npx eslint --fix "${@/#backend\//}"' --
+        language: system
+        files: ^backend/.*\.ts$
+        types: [ts]
+      - id: eslint-frontend
+        name: eslint (frontend)
+        entry: bash -c 'cd frontend && npx eslint --fix "${@/#frontend\//}"' --
+        language: system
+        files: ^frontend/.*\.(ts|tsx)$
+        types_or: [ts, tsx]
+
+      # ── Prettier (backend — has .prettierrc) ─────────────────────────────
+      - id: prettier-backend
+        name: prettier (backend)
+        entry: bash -c 'cd backend && npx prettier --write "${@/#backend\//}"' --
+        language: system
+        files: ^backend/src/.*\.ts$
+        types: [ts]
+
+      # ── Dockerfile linting ───────────────────────────────────────────────
+      - id: hadolint
+        name: hadolint
+        entry: hadolint
+        language: system
+        files: Dockerfile

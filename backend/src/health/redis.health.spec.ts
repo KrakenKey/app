@@ -76,6 +76,8 @@ describe('RedisHealthIndicator', () => {
       .mockRejectedValue(new Error('ECONNREFUSED'));
 
     const result = await indicator.isHealthy('redis');
-    expect((result['redis'] as { message?: string }).message).toContain('ECONNREFUSED');
+    expect((result['redis'] as { message?: string }).message).toContain(
+      'ECONNREFUSED',
+    );
   });
 });

@@ -173,9 +173,10 @@ export class CsrUtilService {
       pub.modulusLength = rsaAlg.modulusLength;
       if (rsaAlg.publicExponent) {
         pub.e = String(
-          new DataView(
-            (rsaAlg.publicExponent as Uint8Array).buffer,
-          ).getUint32(0, false),
+          new DataView((rsaAlg.publicExponent as Uint8Array).buffer).getUint32(
+            0,
+            false,
+          ),
         );
       }
     } else if ('namedCurve' in algorithm) {
@@ -227,9 +228,10 @@ export class CsrUtilService {
     return attrs;
   }
 
-  private extractExtensions(
-    csr: x509.Pkcs10CertificateRequest,
-  ): { name: string | undefined; altNames: { type: number; value: string }[] }[] {
+  private extractExtensions(csr: x509.Pkcs10CertificateRequest): {
+    name: string | undefined;
+    altNames: { type: number; value: string }[];
+  }[] {
     // OID 2.5.29.17 = subjectAltName
     const rawSanExt = csr.getExtension('2.5.29.17');
     if (!rawSanExt) return [];
@@ -267,7 +269,9 @@ export class CsrUtilService {
     // OID 2.5.29.17 = subjectAltName
     const rawSanExt = csr.getExtension('2.5.29.17');
     if (rawSanExt) {
-      const sanExt = new x509.SubjectAlternativeNameExtension(rawSanExt.rawData);
+      const sanExt = new x509.SubjectAlternativeNameExtension(
+        rawSanExt.rawData,
+      );
       for (const item of sanExt.names.items) {
         // Only extract DNS names (type 'dns'). Type 'ip' = IP, type 'email' = email.
         if (item.type === 'dns' && item.value) {

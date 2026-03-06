@@ -21,7 +21,13 @@ const buildIdToken = (payload: object) =>
 
 describe('AuthService', () => {
   let service: AuthService;
-  let mockUserApiKeyRepo: { create: jest.Mock; save: jest.Mock; findOne: jest.Mock; find: jest.Mock; delete: jest.Mock };
+  let mockUserApiKeyRepo: {
+    create: jest.Mock;
+    save: jest.Mock;
+    findOne: jest.Mock;
+    find: jest.Mock;
+    delete: jest.Mock;
+  };
   let mockUserRepo: { findOne: jest.Mock; create: jest.Mock; save: jest.Mock };
 
   beforeEach(async () => {
@@ -47,7 +53,10 @@ describe('AuthService', () => {
             get: jest.fn((key: string, def?: string) => CONFIG[key] ?? def),
           },
         },
-        { provide: getRepositoryToken(UserApiKey), useValue: mockUserApiKeyRepo },
+        {
+          provide: getRepositoryToken(UserApiKey),
+          useValue: mockUserApiKeyRepo,
+        },
         { provide: getRepositoryToken(User), useValue: mockUserRepo },
       ],
     }).compile();
@@ -109,20 +118,35 @@ describe('AuthService', () => {
   // ---------------------------------------------------------------------------
   describe('handleCallback', () => {
     it('POSTs the auth code to the Authentik token endpoint', async () => {
-      const tokens = { access_token: 'at', token_type: 'Bearer', expires_in: 3600 };
-      global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => tokens });
+      const tokens = {
+        access_token: 'at',
+        token_type: 'Bearer',
+        expires_in: 3600,
+      };
+      global.fetch = jest
+        .fn()
+        .mockResolvedValue({ ok: true, json: async () => tokens });
 
       await service.handleCallback('auth-code-abc');
 
-      const [url, init] = (global.fetch as jest.Mock).mock.calls[0] as [string, RequestInit];
+      const [url, init] = (global.fetch as jest.Mock).mock.calls[0] as [
+        string,
+        RequestInit,
+      ];
       expect(url).toContain('auth.example.com');
       expect(url).toContain('/application/o/token/');
       expect(init.body!.toString()).toContain('code=auth-code-abc');
     });
 
     it('returns the tokens from Authentik', async () => {
-      const tokens = { access_token: 'at', token_type: 'Bearer', expires_in: 3600 };
-      global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => tokens });
+      const tokens = {
+        access_token: 'at',
+        token_type: 'Bearer',
+        expires_in: 3600,
+      };
+      global.fetch = jest
+        .fn()
+        .mockResolvedValue({ ok: true, json: async () => tokens });
 
       const result = await service.handleCallback('code');
       expect(result).toEqual(tokens);
@@ -137,26 +161,44 @@ describe('AuthService', () => {
       };
       global.fetch = jest.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ access_token: 'at', id_token: buildIdToken(payload) }),
+        json: async () => ({
+          access_token: 'at',
+          id_token: buildIdToken(payload),
+        }),
       });
       mockUserRepo.findOne.mockResolvedValue(null);
-      const newUser = { id: payload.sub, username: payload.preferred_username, email: payload.email };
+      const newUser = {
+        id: payload.sub,
+        username: payload.preferred_username,
+        email: payload.email,
+      };
       mockUserRepo.create.mockReturnValue(newUser);
       mockUserRepo.save.mockResolvedValue(newUser);
 
       await service.handleCallback('code');
 
       expect(mockUserRepo.create).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'sub-123', username: 'alice', email: 'alice@example.com' }),
+        expect.objectContaining({
+          id: 'sub-123',
+          username: 'alice',
+          email: 'alice@example.com',
+        }),
       );
       expect(mockUserRepo.save).toHaveBeenCalled();
     });
 
     it('skips user creation when the user already exists', async () => {
-      const payload = { sub: 'sub-123', preferred_username: 'alice', email: 'alice@example.com' };
+      const payload = {
+        sub: 'sub-123',
+        preferred_username: 'alice',
+        email: 'alice@example.com',
+      };
       global.fetch = jest.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ access_token: 'at', id_token: buildIdToken(payload) }),
+        json: async () => ({
+          access_token: 'at',
+          id_token: buildIdToken(payload),
+        }),
       });
       mockUserRepo.findOne.mockResolvedValue({ id: 'sub-123' });
 
@@ -167,8 +209,14 @@ describe('AuthService', () => {
     });
 
     it('skips user provisioning when no id_token is returned', async () => {
-      const tokens = { access_token: 'at', token_type: 'Bearer', expires_in: 3600 };
-      global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => tokens });
+      const tokens = {
+        access_token: 'at',
+        token_type: 'Bearer',
+        expires_in: 3600,
+      };
+      global.fetch = jest
+        .fn()
+        .mockResolvedValue({ ok: true, json: async () => tokens });
 
       const result = await service.handleCallback('code');
 
@@ -203,14 +251,18 @@ describe('AuthService', () => {
 
     it('stores the SHA-256 hash, not the raw key', async () => {
       let capturedHash = '';
-      mockUserApiKeyRepo.create.mockImplementation(({ hash }: { hash: string }) => {
-        capturedHash = hash;
-        return { id: 'uuid-1', name: 'k', hash };
-      });
+      mockUserApiKeyRepo.create.mockImplementation(
+        ({ hash }: { hash: string }) => {
+          capturedHash = hash;
+          return { id: 'uuid-1', name: 'k', hash };
+        },
+      );
       mockUserApiKeyRepo.save.mockResolvedValue({});
 
       const result = await service.createApiKey('user-1', 'k');
-      const expectedHash = createHash('sha256').update(result.apiKey).digest('hex');
+      const expectedHash = createHash('sha256')
+        .update(result.apiKey)
+        .digest('hex');
       expect(capturedHash).toBe(expectedHash);
     });
 
@@ -277,7 +329,9 @@ describe('AuthService', () => {
       await service.createApiKey('user-1', 'k', '2027-01-01T00:00:00.000Z');
 
       expect(mockUserApiKeyRepo.create).toHaveBeenCalledWith(
-        expect.objectContaining({ expiresAt: new Date('2027-01-01T00:00:00.000Z') }),
+        expect.objectContaining({
+          expiresAt: new Date('2027-01-01T00:00:00.000Z'),
+        }),
       );
     });
 
@@ -299,8 +353,18 @@ describe('AuthService', () => {
   describe('listApiKeys', () => {
     it('returns keys for the specified user with ISO string dates', async () => {
       const keys = [
-        { id: 'k1', name: 'key1', createdAt: new Date('2026-01-01'), expiresAt: null },
-        { id: 'k2', name: 'key2', createdAt: new Date('2026-02-01'), expiresAt: new Date('2027-01-01') },
+        {
+          id: 'k1',
+          name: 'key1',
+          createdAt: new Date('2026-01-01'),
+          expiresAt: null,
+        },
+        {
+          id: 'k2',
+          name: 'key2',
+          createdAt: new Date('2026-02-01'),
+          expiresAt: new Date('2027-01-01'),
+        },
       ];
       mockUserApiKeyRepo.find.mockResolvedValue(keys);
 
@@ -312,8 +376,18 @@ describe('AuthService', () => {
         select: ['id', 'name', 'createdAt', 'expiresAt'],
       });
       expect(result).toEqual([
-        { id: 'k1', name: 'key1', createdAt: '2026-01-01T00:00:00.000Z', expiresAt: null },
-        { id: 'k2', name: 'key2', createdAt: '2026-02-01T00:00:00.000Z', expiresAt: '2027-01-01T00:00:00.000Z' },
+        {
+          id: 'k1',
+          name: 'key1',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          expiresAt: null,
+        },
+        {
+          id: 'k2',
+          name: 'key2',
+          createdAt: '2026-02-01T00:00:00.000Z',
+          expiresAt: '2027-01-01T00:00:00.000Z',
+        },
       ]);
     });
 
@@ -330,18 +404,27 @@ describe('AuthService', () => {
   describe('deleteApiKey', () => {
     it('deletes the key when it exists and belongs to the user', async () => {
       mockUserApiKeyRepo.delete.mockResolvedValue({ affected: 1 });
-      await expect(service.deleteApiKey('user-1', 'key-1')).resolves.toBeUndefined();
-      expect(mockUserApiKeyRepo.delete).toHaveBeenCalledWith({ id: 'key-1', userId: 'user-1' });
+      await expect(
+        service.deleteApiKey('user-1', 'key-1'),
+      ).resolves.toBeUndefined();
+      expect(mockUserApiKeyRepo.delete).toHaveBeenCalledWith({
+        id: 'key-1',
+        userId: 'user-1',
+      });
     });
 
     it('throws NotFoundException when key does not exist', async () => {
       mockUserApiKeyRepo.delete.mockResolvedValue({ affected: 0 });
-      await expect(service.deleteApiKey('user-1', 'nonexistent')).rejects.toThrow(NotFoundException);
+      await expect(
+        service.deleteApiKey('user-1', 'nonexistent'),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('throws NotFoundException when key belongs to another user', async () => {
       mockUserApiKeyRepo.delete.mockResolvedValue({ affected: 0 });
-      await expect(service.deleteApiKey('user-2', 'key-of-user-1')).rejects.toThrow(NotFoundException);
+      await expect(
+        service.deleteApiKey('user-2', 'key-of-user-1'),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 });

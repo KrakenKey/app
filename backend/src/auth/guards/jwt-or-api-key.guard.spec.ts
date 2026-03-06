@@ -1,4 +1,8 @@
-import { ExecutionContext, Logger, UnauthorizedException } from '@nestjs/common';
+import {
+  ExecutionContext,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtOrApiKeyGuard } from './jwt-or-api-key.guard';
 
 describe('JwtOrApiKeyGuard', () => {
@@ -13,8 +17,8 @@ describe('JwtOrApiKeyGuard', () => {
     getClass: () => jest.fn(),
     getArgs: () => [],
     getArgByIndex: () => undefined,
-    switchToRpc: () => ({} as any),
-    switchToWs: () => ({} as any),
+    switchToRpc: () => ({}) as any,
+    switchToWs: () => ({}) as any,
     getType: () => 'http' as const,
   } as unknown as ExecutionContext;
 
@@ -54,10 +58,7 @@ describe('JwtOrApiKeyGuard', () => {
       const logSpy = jest.spyOn(Logger, 'error').mockImplementation();
 
       await expect(guard.canActivate(mockContext)).rejects.toThrow();
-      expect(logSpy).toHaveBeenCalledWith(
-        'Authentication guard failed',
-        error,
-      );
+      expect(logSpy).toHaveBeenCalledWith('Authentication guard failed', error);
     });
   });
 
@@ -66,7 +67,10 @@ describe('JwtOrApiKeyGuard', () => {
     it('returns user when no error and user present', () => {
       const user = { userId: 'u1' };
       jest
-        .spyOn(Object.getPrototypeOf(JwtOrApiKeyGuard.prototype), 'handleRequest')
+        .spyOn(
+          Object.getPrototypeOf(JwtOrApiKeyGuard.prototype),
+          'handleRequest',
+        )
         .mockReturnValue(user);
 
       const result = guard.handleRequest(null, user, null, mockContext);
@@ -76,7 +80,10 @@ describe('JwtOrApiKeyGuard', () => {
     it('logs warning when err is truthy', () => {
       const warnSpy = jest.spyOn(Logger, 'warn').mockImplementation();
       jest
-        .spyOn(Object.getPrototypeOf(JwtOrApiKeyGuard.prototype), 'handleRequest')
+        .spyOn(
+          Object.getPrototypeOf(JwtOrApiKeyGuard.prototype),
+          'handleRequest',
+        )
         .mockImplementation(() => {
           throw new UnauthorizedException();
         });
@@ -92,7 +99,10 @@ describe('JwtOrApiKeyGuard', () => {
     it('logs warning when user is falsy', () => {
       const warnSpy = jest.spyOn(Logger, 'warn').mockImplementation();
       jest
-        .spyOn(Object.getPrototypeOf(JwtOrApiKeyGuard.prototype), 'handleRequest')
+        .spyOn(
+          Object.getPrototypeOf(JwtOrApiKeyGuard.prototype),
+          'handleRequest',
+        )
         .mockImplementation(() => {
           throw new UnauthorizedException();
         });

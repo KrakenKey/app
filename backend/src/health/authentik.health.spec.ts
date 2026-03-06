@@ -48,12 +48,16 @@ describe('AuthentikHealthIndicator', () => {
 
     const result = await indicator.isHealthy('auth');
     expect(result['auth'].status).toBe('down');
-    expect((result['auth'] as { message?: string }).message).toContain('ECONNREFUSED');
+    expect((result['auth'] as { message?: string }).message).toContain(
+      'ECONNREFUSED',
+    );
   });
 
   it('returns down when fetch is aborted (timeout)', async () => {
     global.fetch = jest.fn().mockRejectedValue(
-      Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }),
+      Object.assign(new Error('The operation was aborted'), {
+        name: 'AbortError',
+      }),
     );
 
     const result = await indicator.isHealthy('auth');

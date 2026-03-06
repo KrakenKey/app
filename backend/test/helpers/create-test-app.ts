@@ -62,12 +62,12 @@ export async function createTestApp(options: CreateTestAppOptions) {
       .useValue(PASS_THROUGH_GUARD(mockUser));
 
     for (const guard of extraGuards) {
-      builder = builder.overrideGuard(guard).useValue(PASS_THROUGH_GUARD(mockUser));
+      builder = builder
+        .overrideGuard(guard)
+        .useValue(PASS_THROUGH_GUARD(mockUser));
     }
   } else if (guardMode === 'reject') {
-    builder = builder
-      .overrideGuard(JwtOrApiKeyGuard)
-      .useValue(REJECT_GUARD);
+    builder = builder.overrideGuard(JwtOrApiKeyGuard).useValue(REJECT_GUARD);
 
     for (const guard of extraGuards) {
       builder = builder.overrideGuard(guard).useValue(REJECT_GUARD);
@@ -78,9 +78,7 @@ export async function createTestApp(options: CreateTestAppOptions) {
   const app = module.createNestApplication();
 
   // Match production setup (src/main.ts:62-70)
-  app.useGlobalPipes(
-    new ValidationPipe({ whitelist: true, transform: true }),
-  );
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   app.useGlobalFilters(new HttpExceptionFilter());
 
   await app.init();

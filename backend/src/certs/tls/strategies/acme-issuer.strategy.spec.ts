@@ -157,10 +157,9 @@ describe('AcmeIssuerStrategy', () => {
         termsOfServiceAgreed: true,
         contact: ['mailto:test@example.com'],
       });
-      expect(mockClient.revokeCertificate).toHaveBeenCalledWith(
-        FAKE_CERT_PEM,
-        { reason: 4 },
-      );
+      expect(mockClient.revokeCertificate).toHaveBeenCalledWith(FAKE_CERT_PEM, {
+        reason: 4,
+      });
     });
 
     it('defaults reason to 0 when not provided', async () => {
@@ -168,10 +167,9 @@ describe('AcmeIssuerStrategy', () => {
 
       await strategy.revoke(FAKE_CERT_PEM);
 
-      expect(mockClient.revokeCertificate).toHaveBeenCalledWith(
-        FAKE_CERT_PEM,
-        { reason: 0 },
-      );
+      expect(mockClient.revokeCertificate).toHaveBeenCalledWith(FAKE_CERT_PEM, {
+        reason: 0,
+      });
     });
 
     it('propagates ACME revocation errors', async () => {
@@ -514,9 +512,7 @@ describe('AcmeIssuerStrategy', () => {
       }).compile();
 
       const s = module.get<AcmeIssuerStrategy>(AcmeIssuerStrategy);
-      await expect(s.revoke(FAKE_CERT_PEM)).rejects.toThrow(
-        'not valid PEM',
-      );
+      await expect(s.revoke(FAKE_CERT_PEM)).rejects.toThrow('not valid PEM');
     });
 
     it('throws when OpenSSL cannot parse the normalized key', async () => {
