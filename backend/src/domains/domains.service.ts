@@ -9,12 +9,14 @@ import { Domain } from './entities/domain.entity';
 import { CreateDomainDto } from './dto/create-domain.dto';
 import { randomBytes } from 'crypto';
 import { resolveTxt } from 'dns/promises';
+import { MetricsService } from '../metrics/metrics.service';
 
 @Injectable()
 export class DomainsService {
   constructor(
     @InjectRepository(Domain)
     private domainsRepository: Repository<Domain>,
+    private readonly metricsService: MetricsService,
   ) {}
 
   /**
@@ -110,14 +112,17 @@ export class DomainsService {
 
       if (hasVerification) {
         domain.isVerified = true;
+        this.metricsService.domainsVerifiedTotal.inc({ status: 'verified' });
         return await this.domainsRepository.save(domain);
       } else {
+        this.metricsService.domainsVerifiedTotal.inc({ status: 'failed' });
         throw new BadRequestException(
           `Verification record not found. Expected: "${domain.verificationCode}", Found: ${JSON.stringify(flatRecords)}`,
         );
       }
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
+      this.metricsService.domainsVerifiedTotal.inc({ status: 'failed' });
       throw new BadRequestException(`DNS lookup failed: ${error.message}`);
     }
   }

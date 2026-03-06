@@ -4,6 +4,7 @@ import { CertMonitorService } from './cert-monitor.service';
 import { TlsService } from '../tls.service';
 import { TlsCrt } from '../entities/tls-crt.entity';
 import { CertStatus } from '@krakenkey/shared';
+import { MetricsService } from '../../../metrics/metrics.service';
 
 describe('CertMonitorService', () => {
   let service: CertMonitorService;
@@ -20,6 +21,7 @@ describe('CertMonitorService', () => {
   beforeEach(async () => {
     mockRepository = {
       find: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     };
 
     mockTlsService = {
@@ -36,6 +38,13 @@ describe('CertMonitorService', () => {
         {
           provide: TlsService,
           useValue: mockTlsService,
+        },
+        {
+          provide: MetricsService,
+          useValue: {
+            activeCertificatesTotal: { set: jest.fn() },
+            certExpiryDays: { set: jest.fn() },
+          },
         },
       ],
     }).compile();

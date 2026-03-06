@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { AcmeIssuerStrategy } from './acme-issuer.strategy';
 import * as acme from 'acme-client';
 import { DnsProvider } from '../interfaces/dns-provider.interface';
+import { MetricsService } from '../../../metrics/metrics.service';
 
 // ── Mock acme-client ─────────────────────────────────────────────────────────
 const mockClient = {
@@ -88,6 +89,12 @@ describe('AcmeIssuerStrategy', () => {
           provide: ConfigService,
           useValue: {
             get: jest.fn((key: string) => configMap[key]),
+          },
+        },
+        {
+          provide: MetricsService,
+          useValue: {
+            acmeChallengeDuration: { startTimer: jest.fn(() => jest.fn()) },
           },
         },
       ],

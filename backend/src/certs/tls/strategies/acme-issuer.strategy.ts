@@ -5,6 +5,7 @@ import { DnsProvider } from '../interfaces/dns-provider.interface';
 import { ConfigService } from '@nestjs/config/dist/config.service';
 import * as acme from 'acme-client';
 import { promises as dns } from 'dns';
+import { MetricsService } from '../../../metrics/metrics.service';
 
 @Injectable()
 export class AcmeIssuerStrategy implements CertIssuerStrategy {
@@ -13,7 +14,10 @@ export class AcmeIssuerStrategy implements CertIssuerStrategy {
   private readonly dnsResolvers: string[];
   private readonly contactEmail: string;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly metricsService: MetricsService,
+  ) {
     this.authZoneDomain = this.configService.get<string>(
       'KK_ACME_AUTH_ZONE_DOMAIN',
     ) as string;
@@ -81,6 +85,7 @@ export class AcmeIssuerStrategy implements CertIssuerStrategy {
   }
 
   async issue(csrPem: string, dnsProvider: DnsProvider): Promise<string> {
+    const endTimer = this.metricsService.acmeChallengeDuration.startTimer();
     // 1. Initialize ACME client
     const client = await this.createClient();
 
@@ -146,6 +151,7 @@ export class AcmeIssuerStrategy implements CertIssuerStrategy {
 
       // 8. finalizedOrder contains the URL, client.getCertificate downloads the content
       const certificatePem = await client.getCertificate(finalizedOrder);
+      endTimer();
       return certificatePem;
     } finally {
       // 9. Cleanup

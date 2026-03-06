@@ -1,4 +1,5 @@
 import { CertIssuerConsumer } from './tls-crt-issuer.processor';
+import { MetricsService } from '../../../metrics/metrics.service';
 
 describe('CertIssuerConsumer', () => {
   let processor: CertIssuerConsumer;
@@ -7,6 +8,9 @@ describe('CertIssuerConsumer', () => {
   let mockDns: any;
   let mockCsrUtil: Record<string, jest.Mock>;
   let mockCertUtil: Record<string, jest.Mock>;
+  const mockMetricsService = {
+    certIssuanceTotal: { inc: jest.fn() },
+  } as unknown as MetricsService;
 
   const mockCsrRecord = {
     id: 1,
@@ -41,6 +45,7 @@ describe('CertIssuerConsumer', () => {
       mockDns,
       mockCsrUtil as any,
       mockCertUtil as any,
+      mockMetricsService,
     );
   });
 

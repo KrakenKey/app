@@ -13,6 +13,7 @@ import { DomainsModule } from './domains/domains.module';
 import { KKThrottlerModule } from './throttler/throttler.module';
 import { HealthModule } from './health/health.module';
 import { FeedbackModule } from './feedback/feedback.module';
+import { MetricsModule } from './metrics/metrics.module';
 
 @Module({
   imports: [
@@ -62,6 +63,7 @@ import { FeedbackModule } from './feedback/feedback.module';
     UsersModule,
     DomainsModule,
     FeedbackModule,
+    MetricsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
