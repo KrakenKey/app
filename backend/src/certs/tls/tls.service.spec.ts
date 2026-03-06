@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { TlsService } from './tls.service';
 import { CsrUtilService } from './util/csr-util.service';
+import { CertUtilService } from './util/cert-util.service';
 import { DomainsService } from '../../domains/domains.service';
 import { AcmeIssuerStrategy } from './strategies/acme-issuer.strategy';
 import { getRepositoryToken } from '@nestjs/typeorm';
@@ -16,6 +17,7 @@ import type { ParsedCsr } from '@krakenkey/shared';
 describe('TlsService', () => {
   let service: TlsService;
   let csrUtilService: CsrUtilService;
+  let certUtilService: CertUtilService;
   let domainsService: DomainsService;
   let mockAcme: Record<string, jest.Mock>;
   let mockRepository: any;
@@ -67,6 +69,21 @@ describe('TlsService', () => {
           },
         },
         {
+          provide: CertUtilService,
+          useValue: {
+            getDetails: jest.fn().mockReturnValue({
+              serialNumber: '03A1B2C3D4E5F6',
+              issuer: "C=US, O=Let's Encrypt, CN=R3",
+              subject: 'CN=example.com',
+              validFrom: '2025-06-15T00:00:00.000Z',
+              validTo: '2026-06-15T00:00:00.000Z',
+              keyType: 'RSA',
+              keySize: 2048,
+              fingerprint: 'AB:CD:EF:01:23:45:67:89',
+            }),
+          },
+        },
+        {
           provide: AcmeIssuerStrategy,
           useValue: mockAcme,
         },
@@ -83,6 +100,7 @@ describe('TlsService', () => {
 
     service = module.get<TlsService>(TlsService);
     csrUtilService = module.get<CsrUtilService>(CsrUtilService);
+    certUtilService = module.get<CertUtilService>(CertUtilService);
     domainsService = module.get<DomainsService>(DomainsService);
   });
 
@@ -245,6 +263,55 @@ describe('TlsService', () => {
       mockRepository.findOneBy.mockResolvedValue(null);
 
       await expect(service.findOne(999, userId)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+
+  // ─── getDetails ─────────────────────────────────────────────────────────
+  describe('getDetails', () => {
+    const issuedCert = {
+      id: 1,
+      userId,
+      status: 'issued',
+      crtPem: '-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----',
+    };
+
+    it('returns parsed details for issued cert', async () => {
+      mockRepository.findOneBy.mockResolvedValue({ ...issuedCert });
+
+      const result = await service.getDetails(1, userId);
+
+      expect(result).toEqual({
+        serialNumber: '03A1B2C3D4E5F6',
+        issuer: "C=US, O=Let's Encrypt, CN=R3",
+        subject: 'CN=example.com',
+        validFrom: '2025-06-15T00:00:00.000Z',
+        validTo: '2026-06-15T00:00:00.000Z',
+        keyType: 'RSA',
+        keySize: 2048,
+        fingerprint: 'AB:CD:EF:01:23:45:67:89',
+      });
+      expect(certUtilService.getDetails).toHaveBeenCalledWith(
+        issuedCert.crtPem,
+      );
+    });
+
+    it('throws BadRequestException when crtPem is null', async () => {
+      mockRepository.findOneBy.mockResolvedValue({
+        ...issuedCert,
+        crtPem: null,
+      });
+
+      await expect(service.getDetails(1, userId)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('throws NotFoundException when cert not found', async () => {
+      mockRepository.findOneBy.mockResolvedValue(null);
+
+      await expect(service.getDetails(999, userId)).rejects.toThrow(
         NotFoundException,
       );
     });

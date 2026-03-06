@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import api from '../services/api';
 import { toast } from '../utils/toast';
 import { API_ROUTES, CertStatus } from '@krakenkey/shared';
-import type { TlsCert, CreateTlsCertRequest, CreateTlsCertResponse, RenewTlsCertResponse, RetryTlsCertResponse, RevokeTlsCertResponse, RevokeTlsCertRequest, DeleteTlsCertResponse } from '@krakenkey/shared';
+import type { TlsCert, TlsCertDetails, CreateTlsCertRequest, CreateTlsCertResponse, RenewTlsCertResponse, RetryTlsCertResponse, RevokeTlsCertResponse, RevokeTlsCertRequest, DeleteTlsCertResponse } from '@krakenkey/shared';
 import CsrGenerator from './CsrGenerator';
 import './CertificateManagement.css';
 
@@ -496,8 +496,30 @@ interface CertCardProps {
 
 function CertCard({ cert, isPolling, isRenewing, isRetrying, isRevoking, isDeleting, isTogglingAutoRenew, onDownload, onCopy, onRenew, onRetry, onRevoke, onDelete, onToggleAutoRenew }: CertCardProps) {
   const [showPem, setShowPem] = useState(false);
+  const [showCertDetails, setShowCertDetails] = useState(false);
+  const [certDetails, setCertDetails] = useState<TlsCertDetails | null>(null);
+  const [loadingDetails, setLoadingDetails] = useState(false);
   const domains = getCertDomains(cert);
   const expirationInfo = getExpirationInfo(cert);
+
+  const fetchCertDetails = useCallback(async () => {
+    if (certDetails || loadingDetails) return;
+    setLoadingDetails(true);
+    try {
+      const res = await api.get<TlsCertDetails>(API_ROUTES.TLS_CERTS.DETAILS(String(cert.id)));
+      setCertDetails(res.data);
+    } catch {
+      toast.error('Failed to load certificate details');
+    } finally {
+      setLoadingDetails(false);
+    }
+  }, [cert.id, certDetails, loadingDetails]);
+
+  const handleToggleCertDetails = () => {
+    const next = !showCertDetails;
+    setShowCertDetails(next);
+    if (next && !certDetails) fetchCertDetails();
+  };
 
   return (
     <div className={`cert-card ${cert.status}`}>
@@ -644,6 +666,51 @@ function CertCard({ cert, isPolling, isRenewing, isRetrying, isRevoking, isDelet
           </label>
         </div>
       </div>
+
+      {/* Parsed Certificate Details */}
+      {cert.crtPem && (
+        <div className="cert-pem-section">
+          <button onClick={handleToggleCertDetails} className="toggle-instructions">
+            {showCertDetails ? '\u25BC' : '\u25B6'} Certificate Details
+          </button>
+          {showCertDetails && (
+            loadingDetails ? (
+              <p className="loading-text">Loading details...</p>
+            ) : certDetails ? (
+              <div className="cert-details">
+                <div className="detail-row">
+                  <span className="label">Serial Number:</span>
+                  <span className="value mono">{certDetails.serialNumber}</span>
+                </div>
+                <div className="detail-row">
+                  <span className="label">Issuer:</span>
+                  <span className="value">{certDetails.issuer}</span>
+                </div>
+                <div className="detail-row">
+                  <span className="label">Subject:</span>
+                  <span className="value">{certDetails.subject}</span>
+                </div>
+                <div className="detail-row">
+                  <span className="label">Valid From:</span>
+                  <span className="value">{new Date(certDetails.validFrom).toLocaleDateString()}</span>
+                </div>
+                <div className="detail-row">
+                  <span className="label">Valid To:</span>
+                  <span className="value">{new Date(certDetails.validTo).toLocaleDateString()}</span>
+                </div>
+                <div className="detail-row">
+                  <span className="label">Key Type:</span>
+                  <span className="value">{certDetails.keyType} {certDetails.keySize}-bit</span>
+                </div>
+                <div className="detail-row">
+                  <span className="label">Fingerprint (SHA-256):</span>
+                  <span className="value mono">{certDetails.fingerprint}</span>
+                </div>
+              </div>
+            ) : null
+          )}
+        </div>
+      )}
 
       {/* Issued Certificate PEM */}
       {cert.crtPem && (

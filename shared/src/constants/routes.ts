@@ -22,6 +22,7 @@ export const API_ROUTES = {
     RETRY: (id: string) => `/certs/tls/${id}/retry`,
     REVOKE: (id: string) => `/certs/tls/${id}/revoke`,
     DELETE: (id: string) => `/certs/tls/${id}`,
+    DETAILS: (id: string) => `/certs/tls/${id}/details`,
   },
   API_KEYS: {
     BASE: '/auth/api-keys',

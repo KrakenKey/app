@@ -11,7 +11,18 @@ jest.mock('crypto', () => {
       if (!pem || pem === 'invalid-pem') {
         throw new Error('unable to read certificate');
       }
-      return { validTo: mockValidTo };
+      return {
+        validTo: mockValidTo,
+        validFrom: '2025-06-15T00:00:00.000Z',
+        serialNumber: '03A1B2C3D4E5F6',
+        issuer: 'C=US\nO=Let\'s Encrypt\nCN=R3',
+        subject: 'CN=example.com',
+        fingerprint256: 'AB:CD:EF:01:23:45:67:89',
+        publicKey: {
+          asymmetricKeyType: 'rsa',
+          asymmetricKeyDetails: { modulusLength: 2048 },
+        },
+      };
     }),
   };
 });
@@ -49,6 +60,39 @@ describe('CertUtilService', () => {
     it('throws Error for empty string', () => {
       expect(() => service.getExpirationDate('')).toThrow(
         'Failed to parse certificate',
+      );
+    });
+  });
+
+  // ─── getDetails ─────────────────────────────────────────────────────────
+  describe('getDetails', () => {
+    const validPem =
+      '-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----';
+
+    it('returns structured TlsCertDetails for valid PEM', () => {
+      const result = service.getDetails(validPem);
+
+      expect(result).toEqual({
+        serialNumber: '03A1B2C3D4E5F6',
+        issuer: "C=US, O=Let's Encrypt, CN=R3",
+        subject: 'CN=example.com',
+        validFrom: new Date('2025-06-15T00:00:00.000Z').toISOString(),
+        validTo: new Date(mockValidTo).toISOString(),
+        keyType: 'RSA',
+        keySize: 2048,
+        fingerprint: 'AB:CD:EF:01:23:45:67:89',
+      });
+    });
+
+    it('throws Error for invalid PEM', () => {
+      expect(() => service.getDetails('invalid-pem')).toThrow(
+        'Failed to parse certificate details',
+      );
+    });
+
+    it('throws Error for empty string', () => {
+      expect(() => service.getDetails('')).toThrow(
+        'Failed to parse certificate details',
       );
     });
   });

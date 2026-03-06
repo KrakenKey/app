@@ -11,6 +11,7 @@ import {
   InternalUpdateTlsCrtDto,
 } from './dto/update-tls-crt.dto';
 import { CsrUtilService } from './util/csr-util.service';
+import { CertUtilService } from './util/cert-util.service';
 import { TlsCrt } from './entities/tls-crt.entity';
 import { Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -24,6 +25,7 @@ import type {
   RetryTlsCertResponse,
   RevokeTlsCertResponse,
   TlsCertJobPayload,
+  TlsCertDetails,
 } from '@krakenkey/shared';
 import { AcmeIssuerStrategy } from './strategies/acme-issuer.strategy';
 
@@ -45,6 +47,7 @@ export class TlsService {
     @InjectQueue('tlsCertIssuance')
     private readonly tlsCertQueue: Queue,
     private readonly csrUtilService: CsrUtilService,
+    private readonly certUtilService: CertUtilService,
     private readonly domainsService: DomainsService,
     private readonly acmeIssuerStrategy: AcmeIssuerStrategy,
   ) {}
@@ -116,6 +119,18 @@ export class TlsService {
       );
     }
     return tlsCrt;
+  }
+
+  async getDetails(id: number, userId: string): Promise<TlsCertDetails> {
+    const cert = await this.findOne(id, userId);
+
+    if (!cert.crtPem) {
+      throw new BadRequestException(
+        'Certificate has not been issued yet. Details are only available for issued certificates.',
+      );
+    }
+
+    return this.certUtilService.getDetails(cert.crtPem);
   }
 
   async update(
