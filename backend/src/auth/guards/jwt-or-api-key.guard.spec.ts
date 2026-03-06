@@ -4,13 +4,18 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtOrApiKeyGuard } from './jwt-or-api-key.guard';
+import { MetricsService } from '../../metrics/metrics.service';
 
 describe('JwtOrApiKeyGuard', () => {
   let guard: JwtOrApiKeyGuard;
 
+  const mockMetricsService = {
+    authTotal: { inc: jest.fn() },
+  } as unknown as MetricsService;
+
   const mockContext = {
     switchToHttp: () => ({
-      getRequest: () => ({ url: '/test-endpoint' }),
+      getRequest: () => ({ url: '/test-endpoint', headers: {} }),
       getResponse: () => ({}),
     }),
     getHandler: () => jest.fn(),
@@ -23,7 +28,7 @@ describe('JwtOrApiKeyGuard', () => {
   } as unknown as ExecutionContext;
 
   beforeEach(() => {
-    guard = new JwtOrApiKeyGuard();
+    guard = new JwtOrApiKeyGuard(mockMetricsService);
     jest.restoreAllMocks();
   });
 

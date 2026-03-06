@@ -10,6 +10,7 @@ import type { DnsProvider } from '../interfaces/dns-provider.interface';
 import { Inject } from '@nestjs/common';
 import { CertStatus } from '@krakenkey/shared';
 import type { TlsCertJobPayload } from '@krakenkey/shared';
+import { MetricsService } from '../../../metrics/metrics.service';
 
 /**
  * Background job processor for certificate issuance and renewal.
@@ -27,6 +28,7 @@ export class CertIssuerConsumer extends WorkerHost {
     @Inject('DNS_PROVIDER') private readonly dnsStrategy: DnsProvider,
     private readonly csrUtilService: CsrUtilService,
     private readonly certUtilService: CertUtilService,
+    private readonly metricsService: MetricsService,
   ) {
     super();
   }
@@ -106,8 +108,10 @@ export class CertIssuerConsumer extends WorkerHost {
         `Certificate ${isRenewal ? 'renewed' : 'issued'} for ID: ${certId}, expires: ${expiresAt.toISOString()}`,
       );
 
+      this.metricsService.certIssuanceTotal.inc({ status: 'issued' });
       return { success: true };
     } catch (err: unknown) {
+      this.metricsService.certIssuanceTotal.inc({ status: 'failed' });
       // Mark as failed and let BullMQ retry the job
       await this.tlsService.updateInternal(
         csrRecord.id,

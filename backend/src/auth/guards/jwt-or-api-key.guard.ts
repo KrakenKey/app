@@ -1,19 +1,32 @@
 import {
   Injectable,
   ExecutionContext,
-  UnauthorizedException,
+  Inject,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-
 import { Logger } from '@nestjs/common';
+import { MetricsService } from '../../metrics/metrics.service';
 
 @Injectable()
 export class JwtOrApiKeyGuard extends AuthGuard(['jwt', 'api-key']) {
+  constructor(
+    @Inject(MetricsService) private readonly metricsService: MetricsService,
+  ) {
+    super();
+  }
+
   async canActivate(context: ExecutionContext): Promise<boolean> {
     try {
-      return (await super.canActivate(context)) as boolean;
+      const result = (await super.canActivate(context)) as boolean;
+      const req = context.switchToHttp().getRequest();
+      const method = req.headers?.['x-api-key'] ? 'api-key' : 'jwt';
+      this.metricsService.authTotal.inc({ method, status: 'success' });
+      return result;
     } catch (e) {
       Logger.error('Authentication guard failed', e);
+      const req = context.switchToHttp().getRequest();
+      const method = req.headers?.['x-api-key'] ? 'api-key' : 'jwt';
+      this.metricsService.authTotal.inc({ method, status: 'failed' });
       throw e;
     }
   }

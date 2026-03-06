@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { AcmeIssuerStrategy } from './acme-issuer.strategy';
 import * as acme from 'acme-client';
 import { DnsProvider } from '../interfaces/dns-provider.interface';
+import { MetricsService } from '../../../metrics/metrics.service';
 
 // ── Mock acme-client ─────────────────────────────────────────────────────────
 const mockClient = {
@@ -52,6 +53,13 @@ describe('AcmeIssuerStrategy', () => {
   let configMap: Record<string, string | undefined>;
 
   // Valid-looking PEM that passes the regex in normalizePrivateKeyPem
+  const mockMetricsProvider = {
+    provide: MetricsService,
+    useValue: {
+      acmeChallengeDuration: { startTimer: jest.fn(() => jest.fn()) },
+    },
+  };
+
   const FAKE_ACCOUNT_KEY =
     '-----BEGIN EC PRIVATE KEY-----\nMHQCAQEEIBkg4LVWM9nuwNSk3yByxZpYRTBnVJk20LsMetVHLSJoB0IDBAMl\n-----END EC PRIVATE KEY-----';
 
@@ -90,6 +98,7 @@ describe('AcmeIssuerStrategy', () => {
             get: jest.fn((key: string) => configMap[key]),
           },
         },
+        mockMetricsProvider,
       ],
     }).compile();
 
@@ -118,6 +127,7 @@ describe('AcmeIssuerStrategy', () => {
               get: jest.fn((key: string) => configMap[key]),
             },
           },
+          mockMetricsProvider,
         ],
       }).compile();
 
@@ -138,6 +148,7 @@ describe('AcmeIssuerStrategy', () => {
               get: jest.fn((key: string) => configMap[key]),
             },
           },
+          mockMetricsProvider,
         ],
       }).compile();
 
@@ -194,6 +205,7 @@ describe('AcmeIssuerStrategy', () => {
               get: jest.fn((key: string) => configMap[key]),
             },
           },
+          mockMetricsProvider,
         ],
       }).compile();
 
@@ -390,6 +402,7 @@ describe('AcmeIssuerStrategy', () => {
               get: jest.fn((key: string) => configMap[key]),
             },
           },
+          mockMetricsProvider,
         ],
       }).compile();
 
@@ -418,6 +431,7 @@ describe('AcmeIssuerStrategy', () => {
               get: jest.fn((key: string) => configMap[key]),
             },
           },
+          mockMetricsProvider,
         ],
       }).compile();
 
@@ -448,6 +462,7 @@ describe('AcmeIssuerStrategy', () => {
               get: jest.fn((key: string) => configMap[key]),
             },
           },
+          mockMetricsProvider,
         ],
       }).compile();
 
@@ -469,6 +484,7 @@ describe('AcmeIssuerStrategy', () => {
               get: jest.fn((key: string) => configMap[key]),
             },
           },
+          mockMetricsProvider,
         ],
       }).compile();
 
@@ -489,6 +505,7 @@ describe('AcmeIssuerStrategy', () => {
               get: jest.fn((key: string) => configMap[key]),
             },
           },
+          mockMetricsProvider,
         ],
       }).compile();
 
@@ -508,6 +525,7 @@ describe('AcmeIssuerStrategy', () => {
               get: jest.fn((key: string) => configMap[key]),
             },
           },
+          mockMetricsProvider,
         ],
       }).compile();
 
@@ -530,6 +548,7 @@ describe('AcmeIssuerStrategy', () => {
               get: jest.fn((key: string) => configMap[key]),
             },
           },
+          mockMetricsProvider,
         ],
       }).compile();
 

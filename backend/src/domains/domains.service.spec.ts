@@ -3,6 +3,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { DomainsService } from './domains.service';
 import { Domain } from './entities/domain.entity';
+import { MetricsService } from '../metrics/metrics.service';
 
 // Mock dns/promises
 const mockResolveTxt = jest.fn();
@@ -53,6 +54,10 @@ describe('DomainsService', () => {
         {
           provide: getRepositoryToken(Domain),
           useValue: mockRepository,
+        },
+        {
+          provide: MetricsService,
+          useValue: { domainsVerifiedTotal: { inc: jest.fn() } },
         },
       ],
     }).compile();
