@@ -55,6 +55,20 @@ export class TlsController {
     return this.tlsService.create(req.user.userId, createTlsCrtDto);
   }
 
+  @Get(':id/details')
+  @ApiOperation({ summary: 'Get parsed certificate details from issued cert' })
+  @ApiParam({ name: 'id', description: 'Certificate ID' })
+  @ApiResponse({ status: 200, description: 'Parsed certificate details' })
+  @ApiResponse({ status: 400, description: 'Certificate not yet issued' })
+  @ApiResponse({ status: 404, description: 'Certificate not found' })
+  @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
+  getDetails(
+    @Request() req: { user: { userId: string } },
+    @Param('id') id: string,
+  ) {
+    return this.tlsService.getDetails(+id, req.user.userId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get certificate details' })
   @ApiParam({ name: 'id', description: 'Certificate ID' })

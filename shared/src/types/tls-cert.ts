@@ -61,6 +61,17 @@ export interface DeleteTlsCertResponse {
     id: number;
 }
 
+export interface TlsCertDetails {
+    serialNumber: string;
+    issuer: string;
+    subject: string;
+    validFrom: string;
+    validTo: string;
+    keyType: string;
+    keySize: number;
+    fingerprint: string;
+}
+
 export interface TlsCertJobPayload {
     certId: number;
 }

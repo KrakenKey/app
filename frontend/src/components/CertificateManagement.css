@@ -220,6 +220,17 @@
   word-break: break-all;
 }
 
+.mono {
+  font-family: var(--font-mono);
+  word-break: break-all;
+}
+
+.loading-text {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  padding: 8px 0;
+}
+
 /* Certificate Table View */
 .certs-table-view {
   margin-top: var(--space-md);

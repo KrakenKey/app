@@ -13,6 +13,7 @@ describe('TlsController', () => {
     mockService = {
       findAll: jest.fn(),
       findOne: jest.fn(),
+      getDetails: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
       renew: jest.fn(),
@@ -61,6 +62,25 @@ describe('TlsController', () => {
         status: 'pending',
       });
       expect(mockService.create).toHaveBeenCalledWith(userId, dto);
+    });
+  });
+
+  describe('getDetails', () => {
+    it('passes numeric id and userId to service.getDetails()', () => {
+      const details = {
+        serialNumber: '03A1',
+        issuer: 'CN=R3',
+        subject: 'CN=example.com',
+        validFrom: '2025-06-15T00:00:00.000Z',
+        validTo: '2026-06-15T00:00:00.000Z',
+        keyType: 'RSA',
+        keySize: 2048,
+        fingerprint: 'AB:CD',
+      };
+      mockService.getDetails.mockReturnValue(details);
+
+      expect(controller.getDetails(mockReq, '42')).toEqual(details);
+      expect(mockService.getDetails).toHaveBeenCalledWith(42, userId);
     });
   });
 

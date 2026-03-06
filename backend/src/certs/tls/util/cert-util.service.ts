@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { X509Certificate } from 'crypto';
+import type { TlsCertDetails } from '@krakenkey/shared';
 
 @Injectable()
 export class CertUtilService {
@@ -41,5 +42,46 @@ export class CertUtilService {
    */
   isExpired(expiresAt: Date): boolean {
     return expiresAt.getTime() < Date.now();
+  }
+
+  private curveToKeySize(curve?: string): number {
+    const sizes: Record<string, number> = {
+      'prime256v1': 256,
+      'secp384r1': 384,
+      'secp521r1': 521,
+    };
+    return curve ? (sizes[curve] ?? 0) : 0;
+  }
+
+  getDetails(certPem: string): TlsCertDetails {
+    try {
+      const cert = new X509Certificate(certPem);
+      const keyType =
+        cert.publicKey.asymmetricKeyType?.toUpperCase() ?? 'UNKNOWN';
+      const details = cert.publicKey.asymmetricKeyDetails;
+      const keySize =
+        (details as { modulusLength?: number })?.modulusLength ??
+        this.curveToKeySize(
+          (details as { namedCurve?: string })?.namedCurve,
+        );
+
+      return {
+        serialNumber: cert.serialNumber,
+        issuer: cert.issuer.replace(/\n/g, ', '),
+        subject: cert.subject.replace(/\n/g, ', '),
+        validFrom: new Date(cert.validFrom).toISOString(),
+        validTo: new Date(cert.validTo).toISOString(),
+        keyType,
+        keySize,
+        fingerprint: cert.fingerprint256,
+      };
+    } catch (error: unknown) {
+      if (error instanceof Error) {
+        throw new Error(
+          `Failed to parse certificate details: ${error.message}`,
+        );
+      }
+      throw new Error('Failed to parse certificate details: Unknown error');
+    }
   }
 }
