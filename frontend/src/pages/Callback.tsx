@@ -11,28 +11,28 @@ const Callback: React.FC = () => {
   useEffect(() => {
     const code = searchParams.get('code');
 
-    console.log("🔗 Callback page loaded with code:", code ? code.substring(0, 10) + "..." : "NO CODE");
+    console.log("Callback page loaded with code:", code ? code.substring(0, 10) + "..." : "NO CODE");
 
     if (code && !processedRef.current) {
       processedRef.current = true; // Prevent double execution in Strict Mode
-      console.log("🚀 Starting callback processing...");
+      console.log("Starting callback processing...");
       handleCallback(code)
         .then(() => {
-          console.log("✅ Callback successful, navigating to dashboard");
+          console.log("Callback successful, navigating to dashboard");
           navigate('/dashboard');
         })
         .catch((err) => {
-          console.error("❌ Callback error:", err);
+          console.error("Callback error:", err);
           navigate('/'); // Redirect to home on error
         });
     } else if (!code) {
-        console.log("❌ No code found, redirecting to home");
+        console.log("No code found, redirecting to home");
         navigate('/');
     }
   }, [searchParams, handleCallback, navigate]);
 
   return (
-    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+    <div className="page-center">
       <h2>Authenticating...</h2>
     </div>
   );

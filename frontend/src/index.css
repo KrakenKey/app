@@ -1,17 +1,4 @@
-/* ===== Design Tokens (mirrors web/src/styles/global.css) ===== */
-:root {
-  --color-bg: #0c1222;
-  --color-surface: #1e293b;
-  --color-accent: #06b6d4;
-  --color-accent-hover: #22d3ee;
-  --color-cta: #f59e0b;
-  --color-cta-hover: #fbbf24;
-  --color-text: #f1f5f9;
-  --color-muted: #94a3b8;
-  --color-border: #334155;
-  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
-}
+/* Design tokens are in styles/variables.css */
 
 /* ===== Reset ===== */
 *,

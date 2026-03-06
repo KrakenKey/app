@@ -13,20 +13,11 @@ const Home: React.FC = () => {
   }, [isAuthenticated, navigate]);
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        height: '100vh',
-        gap: '0.5rem',
-      }}
-    >
-      <img src="/favicon.svg" alt="KrakenKey" width={64} height={64} style={{ marginBottom: '0.5rem' }} />
+    <div className="page-center">
+      <img src="/favicon.svg" alt="KrakenKey" width={64} height={64} />
       <h1>KrakenKey</h1>
-      <p style={{ color: 'var(--color-muted)', marginBottom: '0.5rem' }}>Certificate Automagick</p>
-      <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
+      <p className="tagline">Certificate Automagick</p>
+      <div className="btn-group">
         <button className="btn-outline" onClick={login}>
           Login
         </button>
@@ -34,10 +25,7 @@ const Home: React.FC = () => {
           Sign Up
         </button>
       </div>
-      <a
-        href="https://krakenkey.io"
-        style={{ fontSize: '0.8125rem', color: 'var(--color-muted)', marginTop: '0.75rem' }}
-      >
+      <a href="https://krakenkey.io" className="learn-more">
         Learn more at krakenkey.io
       </a>
     </div>

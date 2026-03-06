@@ -289,7 +289,7 @@ function DomainCard({ domain, onVerify, onDelete, onCopy, isVerifying }: DomainC
                       Copy
                     </button>
                   </div>
-                  <div className="code-label" style={{ marginTop: '8px' }}>
+                  <div className="code-label code-label-spaced">
                     <strong>Target:</strong>
                   </div>
                   <div className="code-value">

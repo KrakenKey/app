@@ -1,0 +1,74 @@
+/* ===== Dashboard Layout ===== */
+
+.dashboard {
+  padding: var(--space-xl);
+  max-width: var(--max-width);
+  margin: 0 auto;
+}
+
+.dashboard-header {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  padding: var(--space-lg);
+  border-radius: var(--radius-md);
+}
+
+.dashboard-header h2 {
+  color: var(--color-text);
+  margin-bottom: var(--space-sm);
+}
+
+.dashboard-header p {
+  color: var(--color-muted);
+  margin-bottom: var(--space-xs);
+}
+
+.dashboard-header p strong {
+  color: var(--color-text);
+}
+
+.dashboard-section {
+  margin-top: var(--space-2xl);
+}
+
+.btn-logout {
+  background-color: var(--color-danger);
+  color: white;
+  border-color: var(--color-danger);
+}
+
+.btn-logout:hover:not(:disabled) {
+  background-color: var(--color-danger-hover);
+  border-color: var(--color-danger-hover);
+}
+
+/* --- Page Center (Home, Callback) --- */
+.page-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  gap: var(--space-sm);
+}
+
+.page-center h1 {
+  color: var(--color-text);
+}
+
+.page-center .tagline {
+  color: var(--color-muted);
+  margin-bottom: var(--space-sm);
+}
+
+.page-center .btn-group {
+  display: flex;
+  gap: var(--space-md);
+  margin-top: var(--space-sm);
+}
+
+.page-center .learn-more {
+  font-size: 0.8125rem;
+  color: var(--color-muted);
+  margin-top: 0.75rem;
+}
