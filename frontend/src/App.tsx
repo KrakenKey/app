@@ -4,7 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import Home from './pages/Home';
 import Callback from './pages/Callback';
 import Dashboard from './pages/Dashboard';
-import './App.css';
+
 
 /**
  * A wrapper component to protect routes that require authentication.

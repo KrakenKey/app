@@ -1,23 +1,23 @@
 .feedback-section {
-  max-width: 1200px;
+  max-width: var(--max-width);
   margin: 0 auto;
-  padding: 20px;
+  padding: var(--space-xl);
 }
 
 .feedback-section h2 {
   margin-bottom: 8px;
-  color: #1f2937;
+  color: var(--color-text);
 }
 
 .feedback-section .subtitle {
-  color: #6b7280;
+  color: var(--color-muted);
   margin-bottom: 20px;
 }
 
 .feedback-form-container {
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
   padding: 20px;
 }
 
@@ -25,28 +25,30 @@
   width: 100%;
   min-height: 100px;
   padding: 10px 15px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 14px;
   font-family: inherit;
   resize: vertical;
   box-sizing: border-box;
+  background-color: var(--color-bg);
+  color: var(--color-text);
 }
 
 .feedback-textarea:focus {
   outline: none;
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  border-color: var(--color-accent);
+  box-shadow: var(--focus-ring);
 }
 
 .feedback-textarea:disabled {
-  background: #f3f4f6;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
 .star-rating-label {
   font-size: 14px;
-  color: #374151;
+  color: var(--color-text);
   margin-bottom: 6px;
   font-weight: 500;
 }
@@ -63,17 +65,18 @@
   font-size: 28px;
   cursor: pointer;
   padding: 2px;
-  color: #d1d5db;
+  color: var(--color-border);
   transition: color 0.15s;
   line-height: 1;
 }
 
 .star-btn.active {
-  color: #f59e0b;
+  color: var(--color-cta);
 }
 
 .star-btn:hover {
-  color: #f59e0b;
+  color: var(--color-cta);
+  transform: none;
 }
 
 .star-btn:disabled {
@@ -82,15 +85,19 @@
 }
 
 .feedback-success {
-  background: #f0fdf4;
-  border: 2px solid #10b981;
-  border-radius: 8px;
+  background: var(--color-success-surface);
+  border: 2px solid var(--color-success);
+  border-radius: var(--radius-md);
   padding: 16px;
-  color: #065f46;
+  color: var(--color-success);
   text-align: center;
 }
 
 .feedback-success p {
   margin: 0;
   font-weight: 500;
+}
+
+.feedback-section .submit-another {
+  margin-top: 12px;
 }

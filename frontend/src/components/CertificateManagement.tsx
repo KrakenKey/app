@@ -6,6 +6,79 @@ import type { TlsCert, CreateTlsCertRequest, CreateTlsCertResponse, RenewTlsCert
 import CsrGenerator from './CsrGenerator';
 import './CertificateManagement.css';
 
+const STATUS_LABEL: Record<CertStatus, string> = {
+  [CertStatus.PENDING]: 'Pending',
+  [CertStatus.ISSUING]: 'Issuing',
+  [CertStatus.ISSUED]: 'Issued',
+  [CertStatus.FAILED]: 'Failed',
+  [CertStatus.RENEWING]: 'Renewing',
+  [CertStatus.REVOKING]: 'Revoking',
+  [CertStatus.REVOKED]: 'Revoked',
+};
+
+const STATUS_ORDER: Record<string, number> = {
+  [CertStatus.PENDING]: 0,
+  [CertStatus.ISSUING]: 1,
+  [CertStatus.ISSUED]: 2,
+  [CertStatus.RENEWING]: 3,
+  [CertStatus.REVOKING]: 4,
+  [CertStatus.REVOKED]: 5,
+  [CertStatus.FAILED]: 6,
+};
+
+function getCertDomains(cert: TlsCert): string[] {
+  const parsed = cert.parsedCsr;
+  if (!parsed || typeof parsed !== 'object') return [];
+
+  const domains: string[] = [];
+
+  const subject = (parsed as unknown as Record<string, unknown>).subject;
+  if (Array.isArray(subject)) {
+    for (const entry of subject) {
+      if (entry && typeof entry === 'object' && 'shortName' in entry && entry.shortName === 'CN') {
+        domains.push(String((entry as Record<string, unknown>).value));
+      }
+    }
+  }
+
+  const extensions = (parsed as unknown as Record<string, unknown>).extensions;
+  if (Array.isArray(extensions)) {
+    for (const ext of extensions) {
+      if (ext && typeof ext === 'object' && 'altNames' in ext) {
+        const altNames = (ext as Record<string, unknown>).altNames;
+        if (Array.isArray(altNames)) {
+          for (const alt of altNames) {
+            if (alt && typeof alt === 'object' && 'value' in alt) {
+              const val = String((alt as Record<string, unknown>).value);
+              if (!domains.includes(val)) domains.push(val);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return domains;
+}
+
+function getExpirationInfo(cert: TlsCert) {
+  if (!cert.expiresAt) return null;
+
+  const expiresAt = new Date(cert.expiresAt);
+  const now = new Date();
+  const daysUntilExpiry = Math.floor(
+    (expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
+  );
+
+  const isExpired = daysUntilExpiry < 0;
+  let colorClass = 'healthy';
+  if (isExpired) colorClass = 'expired';
+  else if (daysUntilExpiry < 7) colorClass = 'expiring-critical';
+  else if (daysUntilExpiry <= 30) colorClass = 'expiring-soon';
+
+  return { expiresAt, daysUntilExpiry, isExpired, colorClass };
+}
+
 export default function CertificateManagement() {
   const [certs, setCerts] = useState<TlsCert[]>([]);
   const [loading, setLoading] = useState(true);
@@ -19,6 +92,7 @@ export default function CertificateManagement() {
   const [togglingAutoRenewIds, setTogglingAutoRenewIds] = useState<Set<number>>(new Set());
   const pollingTimers = useRef<Map<number, ReturnType<typeof setInterval>>>(new Map());
   const [showCsrGenerator, setShowCsrGenerator] = useState(false);
+  const [viewMode, setViewMode] = useState<'card' | 'table'>('card');
 
   const stopPolling = useCallback((certId: number) => {
     const timer = pollingTimers.current.get(certId);
@@ -333,13 +407,31 @@ export default function CertificateManagement() {
 
       {/* Certificates List */}
       <div className="certs-list">
-        <h3>Your Certificates ({certs.length})</h3>
+        <div className="certs-header">
+          <h3>Your Certificates ({certs.length})</h3>
+          {certs.length > 0 && (
+            <div className="view-toggle">
+              <button
+                className={`view-toggle-btn ${viewMode === 'card' ? 'active' : ''}`}
+                onClick={() => setViewMode('card')}
+              >
+                Cards
+              </button>
+              <button
+                className={`view-toggle-btn ${viewMode === 'table' ? 'active' : ''}`}
+                onClick={() => setViewMode('table')}
+              >
+                Table
+              </button>
+            </div>
+          )}
+        </div>
 
         {certs.length === 0 ? (
           <p className="empty-state">
             No certificates yet. Submit a CSR above to request your first certificate.
           </p>
-        ) : (
+        ) : viewMode === 'card' ? (
           <div className="certs-table">
             {certs.map(cert => (
               <CertCard
@@ -361,6 +453,23 @@ export default function CertificateManagement() {
               />
             ))}
           </div>
+        ) : (
+          <CertTable
+            certs={certs}
+            pollingIds={pollingIds}
+            renewingIds={renewingIds}
+            retryingIds={retryingIds}
+            revokingIds={revokingIds}
+            deletingIds={deletingIds}
+            togglingAutoRenewIds={togglingAutoRenewIds}
+            onDownload={handleDownloadPem}
+            onCopy={copyToClipboard}
+            onRenew={handleRenewCert}
+            onRetry={handleRetryCert}
+            onRevoke={handleRevokeCert}
+            onDelete={handleDeleteCert}
+            onToggleAutoRenew={handleToggleAutoRenew}
+          />
         )}
       </div>
     </div>
@@ -387,75 +496,8 @@ interface CertCardProps {
 
 function CertCard({ cert, isPolling, isRenewing, isRetrying, isRevoking, isDeleting, isTogglingAutoRenew, onDownload, onCopy, onRenew, onRetry, onRevoke, onDelete, onToggleAutoRenew }: CertCardProps) {
   const [showPem, setShowPem] = useState(false);
-
-  const getDomains = (): string[] => {
-    const parsed = cert.parsedCsr;
-    if (!parsed || typeof parsed !== 'object') return [];
-
-    const domains: string[] = [];
-
-    // Extract CN from subject
-    const subject = (parsed as unknown as Record<string, unknown>).subject;
-    if (Array.isArray(subject)) {
-      for (const entry of subject) {
-        if (entry && typeof entry === 'object' && 'shortName' in entry && entry.shortName === 'CN') {
-          domains.push(String((entry as Record<string, unknown>).value));
-        }
-      }
-    }
-
-    // Extract SANs from extensions
-    const extensions = (parsed as unknown as Record<string, unknown>).extensions;
-    if (Array.isArray(extensions)) {
-      for (const ext of extensions) {
-        if (ext && typeof ext === 'object' && 'altNames' in ext) {
-          const altNames = (ext as Record<string, unknown>).altNames;
-          if (Array.isArray(altNames)) {
-            for (const alt of altNames) {
-              if (alt && typeof alt === 'object' && 'value' in alt) {
-                const val = String((alt as Record<string, unknown>).value);
-                if (!domains.includes(val)) domains.push(val);
-              }
-            }
-          }
-        }
-      }
-    }
-
-    return domains;
-  };
-
-  const domains = getDomains();
-
-  const statusLabel: Record<CertStatus, string> = {
-    [CertStatus.PENDING]: 'Pending',
-    [CertStatus.ISSUING]: 'Issuing',
-    [CertStatus.ISSUED]: 'Issued',
-    [CertStatus.FAILED]: 'Failed',
-    [CertStatus.RENEWING]: 'Renewing',
-    [CertStatus.REVOKING]: 'Revoking',
-    [CertStatus.REVOKED]: 'Revoked',
-  };
-
-  const getExpirationInfo = () => {
-    if (!cert.expiresAt) return null;
-
-    const expiresAt = new Date(cert.expiresAt);
-    const now = new Date();
-    const daysUntilExpiry = Math.floor(
-      (expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
-    );
-
-    const isExpired = daysUntilExpiry < 0;
-    let colorClass = 'healthy';
-    if (isExpired) colorClass = 'expired';
-    else if (daysUntilExpiry < 7) colorClass = 'expiring-critical';
-    else if (daysUntilExpiry <= 30) colorClass = 'expiring-soon';
-
-    return { expiresAt, daysUntilExpiry, isExpired, colorClass };
-  };
-
-  const expirationInfo = getExpirationInfo();
+  const domains = getCertDomains(cert);
+  const expirationInfo = getExpirationInfo(cert);
 
   return (
     <div className={`cert-card ${cert.status}`}>
@@ -466,7 +508,7 @@ function CertCard({ cert, isPolling, isRenewing, isRetrying, isRevoking, isDelet
             {domains.length > 0 ? domains[0] : `Certificate #${cert.id}`}
           </h4>
           <span className={`status-badge ${cert.status}`}>
-            {statusLabel[cert.status] || cert.status}
+            {STATUS_LABEL[cert.status] || cert.status}
             {isPolling && <span className="polling-indicator" />}
           </span>
         </div>
@@ -549,7 +591,7 @@ function CertCard({ cert, isPolling, isRenewing, isRetrying, isRevoking, isDelet
         )}
         <div className="detail-row">
           <span className="label">Status:</span>
-          <span className="value">{statusLabel[cert.status] || cert.status}</span>
+          <span className="value">{STATUS_LABEL[cert.status] || cert.status}</span>
         </div>
 
         {/* Expiration Information */}
@@ -618,6 +660,171 @@ function CertCard({ cert, isPolling, isRenewing, isRetrying, isRevoking, isDelet
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// Certificate Table Component
+type SortField = 'cn' | 'status' | 'expiry' | 'autoRenew';
+
+interface CertTableProps {
+  certs: TlsCert[];
+  pollingIds: Set<number>;
+  renewingIds: Set<number>;
+  retryingIds: Set<number>;
+  revokingIds: Set<number>;
+  deletingIds: Set<number>;
+  togglingAutoRenewIds: Set<number>;
+  onDownload: (cert: TlsCert) => void;
+  onCopy: (text: string) => void;
+  onRenew: (cert: TlsCert) => void;
+  onRetry: (cert: TlsCert) => void;
+  onRevoke: (cert: TlsCert) => void;
+  onDelete: (cert: TlsCert) => void;
+  onToggleAutoRenew: (cert: TlsCert) => void;
+}
+
+function CertTable({ certs, pollingIds, renewingIds, retryingIds, revokingIds, deletingIds, togglingAutoRenewIds, onDownload, onCopy, onRenew, onRetry, onRevoke, onDelete, onToggleAutoRenew }: CertTableProps) {
+  const [sortField, setSortField] = useState<SortField>('cn');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDir('asc');
+    }
+  };
+
+  const sorted = [...certs].sort((a, b) => {
+    const dir = sortDir === 'asc' ? 1 : -1;
+    switch (sortField) {
+      case 'cn': {
+        const aCn = getCertDomains(a)[0] || '';
+        const bCn = getCertDomains(b)[0] || '';
+        return dir * aCn.localeCompare(bCn);
+      }
+      case 'status':
+        return dir * ((STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99));
+      case 'expiry': {
+        const aTime = a.expiresAt ? new Date(a.expiresAt).getTime() : Infinity;
+        const bTime = b.expiresAt ? new Date(b.expiresAt).getTime() : Infinity;
+        return dir * (aTime - bTime);
+      }
+      case 'autoRenew':
+        return dir * (Number(b.autoRenew) - Number(a.autoRenew));
+      default:
+        return 0;
+    }
+  });
+
+  const arrow = (field: SortField) =>
+    sortField === field ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
+
+  return (
+    <div className="table-responsive">
+      <table className="data-table certs-table-view">
+        <thead>
+          <tr>
+            <th className="sortable-header" onClick={() => handleSort('cn')}>
+              Common Name{arrow('cn')}
+            </th>
+            <th className="sortable-header" onClick={() => handleSort('status')}>
+              Status{arrow('status')}
+            </th>
+            <th className="sortable-header" onClick={() => handleSort('expiry')}>
+              Expiry{arrow('expiry')}
+            </th>
+            <th className="sortable-header" onClick={() => handleSort('autoRenew')}>
+              Auto-Renew{arrow('autoRenew')}
+            </th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map(cert => {
+            const domains = getCertDomains(cert);
+            const expInfo = getExpirationInfo(cert);
+            const isRenewing = renewingIds.has(cert.id);
+            const isRetrying = retryingIds.has(cert.id);
+            const isRevoking = revokingIds.has(cert.id);
+            const isDeleting = deletingIds.has(cert.id);
+
+            return (
+              <tr key={cert.id}>
+                <td className="cert-cn">
+                  {domains.length > 0 ? domains[0] : `#${cert.id}`}
+                  {pollingIds.has(cert.id) && <span className="polling-indicator" />}
+                </td>
+                <td>
+                  <span className={`status-badge ${cert.status}`}>
+                    {STATUS_LABEL[cert.status] || cert.status}
+                  </span>
+                </td>
+                <td>
+                  {expInfo ? (
+                    <span className={expInfo.colorClass}>
+                      {expInfo.expiresAt.toLocaleDateString()}
+                      {expInfo.isExpired ? ' (Expired)' : ` (${expInfo.daysUntilExpiry}d)`}
+                    </span>
+                  ) : '—'}
+                </td>
+                <td>
+                  <label className="auto-renew-toggle">
+                    <input
+                      type="checkbox"
+                      checked={cert.autoRenew}
+                      disabled={togglingAutoRenewIds.has(cert.id)}
+                      onChange={() => onToggleAutoRenew(cert)}
+                    />
+                    <span>{cert.autoRenew ? 'On' : 'Off'}</span>
+                  </label>
+                </td>
+                <td>
+                  <div className="cert-actions-cell">
+                    {cert.status === CertStatus.ISSUED && (
+                      <>
+                        <button onClick={() => onRenew(cert)} disabled={isRenewing || isRevoking} className="btn-secondary btn-small">
+                          {isRenewing ? 'Renewing...' : 'Renew'}
+                        </button>
+                        <button onClick={() => onRevoke(cert)} disabled={isRevoking || isRenewing} className="btn-danger btn-small">
+                          {isRevoking ? 'Revoking...' : 'Revoke'}
+                        </button>
+                      </>
+                    )}
+                    {cert.status === CertStatus.FAILED && (
+                      <>
+                        <button onClick={() => onRetry(cert)} disabled={isRetrying || isDeleting} className="btn-secondary btn-small">
+                          {isRetrying ? 'Retrying...' : 'Retry'}
+                        </button>
+                        <button onClick={() => onDelete(cert)} disabled={isDeleting || isRetrying} className="btn-danger btn-small">
+                          {isDeleting ? 'Deleting...' : 'Delete'}
+                        </button>
+                      </>
+                    )}
+                    {cert.status === CertStatus.REVOKED && (
+                      <button onClick={() => onDelete(cert)} disabled={isDeleting} className="btn-danger btn-small">
+                        {isDeleting ? 'Deleting...' : 'Delete'}
+                      </button>
+                    )}
+                    {cert.crtPem && (
+                      <>
+                        <button onClick={() => onDownload(cert)} className="btn-secondary btn-small">
+                          Download
+                        </button>
+                        <button onClick={() => onCopy(cert.crtPem!)} className="btn-copy btn-small">
+                          Copy
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

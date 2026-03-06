@@ -43,8 +43,7 @@ export default function Feedback() {
           <p>Thank you for your feedback!</p>
         </div>
         <button
-          className="btn-primary"
-          style={{ marginTop: '12px' }}
+          className="btn-primary submit-another"
           onClick={() => setSubmitted(false)}
         >
           Submit Another
