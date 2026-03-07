@@ -21,6 +21,10 @@ export class ApiKeyStrategy extends PassportStrategy(Strategy, 'api-key') {
     const record = await this.authService.validateApiKey(apiKey);
     if (!record) throw new UnauthorizedException('Invalid API key');
 
-    return { userId: record.user.id, apiKeyId: record.id };
+    return {
+      userId: record.user.id,
+      apiKeyId: record.id,
+      groups: record.user.groups,
+    };
   }
 }

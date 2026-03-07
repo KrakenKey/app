@@ -17,6 +17,8 @@ describe('AuthController', () => {
       createApiKey: jest.fn(),
       listApiKeys: jest.fn(),
       deleteApiKey: jest.fn(),
+      getFullProfile: jest.fn(),
+      updateProfile: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -75,9 +77,15 @@ describe('AuthController', () => {
   });
 
   describe('getProfile', () => {
-    it('returns req.user', () => {
-      const req = { user: { userId: 'u1', username: 'alice' } } as any;
-      expect(controller.getProfile(req)).toEqual(req.user);
+    it('delegates to authService.getFullProfile()', async () => {
+      const profile = { id: 'u1', username: 'alice', resourceCounts: { domains: 0, certificates: 0, apiKeys: 0 } };
+      mockAuthService.getFullProfile.mockResolvedValue(profile);
+      const req = { user: { userId: 'u1' } } as any;
+
+      const result = await controller.getProfile(req);
+
+      expect(mockAuthService.getFullProfile).toHaveBeenCalledWith('u1');
+      expect(result).toEqual(profile);
     });
   });
 

@@ -23,8 +23,8 @@ export class Feedback {
   @JoinColumn({ name: 'userId' })
   user: User;
 
-  @Column()
-  userId: string;
+  @Column({ nullable: true })
+  userId: string | null;
 
   @CreateDateColumn()
   createdAt: Date;

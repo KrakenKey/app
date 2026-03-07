@@ -2,10 +2,12 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ForbiddenException } from '@nestjs/common';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
+import { AccountDeletionService } from './services/account-deletion.service';
 
 describe('UsersController', () => {
   let controller: UsersController;
   let mockService: Record<string, jest.Mock>;
+  let mockAccountDeletion: Record<string, jest.Mock>;
 
   const userId = 'user-123';
   const mockReq = { user: { userId } } as any;
@@ -20,6 +22,9 @@ describe('UsersController', () => {
       update: jest.fn(),
       remove: jest.fn(),
     };
+    mockAccountDeletion = {
+      deleteAccount: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [UsersController],
@@ -27,6 +32,10 @@ describe('UsersController', () => {
         {
           provide: UsersService,
           useValue: mockService,
+        },
+        {
+          provide: AccountDeletionService,
+          useValue: mockAccountDeletion,
         },
       ],
     }).compile();
@@ -55,6 +64,17 @@ describe('UsersController', () => {
         ForbiddenException,
       );
     });
+
+    it('allows admin access to other users', () => {
+      const adminReq = { user: { userId: 'admin-user', groups: ['authentik Admins'] } } as any;
+      const user = { id: userId, username: 'alice' };
+      mockService.findOne.mockReturnValue(user);
+
+      const result = controller.findOne(userId, adminReq);
+
+      expect(mockService.findOne).toHaveBeenCalledWith(userId);
+      expect(result).toEqual(user);
+    });
   });
 
   // ─── update ───────────────────────────────────────────────────────────
@@ -77,12 +97,12 @@ describe('UsersController', () => {
 
   // ─── remove ───────────────────────────────────────────────────────────
   describe('remove', () => {
-    it('delegates to service when authorized', () => {
-      mockService.remove.mockReturnValue({ affected: 1 });
+    it('delegates to accountDeletionService when authorized', () => {
+      mockAccountDeletion.deleteAccount.mockResolvedValue({ deleted: true, certsRevoked: 0 });
 
       controller.remove(userId, mockReq);
 
-      expect(mockService.remove).toHaveBeenCalledWith(userId);
+      expect(mockAccountDeletion.deleteAccount).toHaveBeenCalledWith(userId);
     });
 
     it('throws ForbiddenException when unauthorized', () => {
