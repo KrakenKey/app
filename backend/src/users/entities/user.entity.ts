@@ -1,5 +1,11 @@
 import { UserApiKey } from 'src/auth/entities/user-api-key.entity';
-import { Entity, PrimaryColumn, Column, OneToMany } from 'typeorm';
+import {
+  Entity,
+  PrimaryColumn,
+  Column,
+  OneToMany,
+  CreateDateColumn,
+} from 'typeorm';
 import { Domain } from '../../domains/entities/domain.entity';
 import { TlsCrt } from '../../certs/tls/entities/tls-crt.entity';
 
@@ -16,6 +22,12 @@ export class User {
 
   @Column('text', { array: true, default: '{}' })
   groups: string[];
+
+  @Column({ nullable: true })
+  displayName: string | null;
+
+  @CreateDateColumn()
+  createdAt: Date;
 
   @OneToMany(() => UserApiKey, (apiKey) => apiKey.user)
   apiKeys: UserApiKey[];

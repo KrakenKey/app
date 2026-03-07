@@ -5,10 +5,14 @@ import { UserApiKey } from './entities/user-api-key.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash, randomBytes } from 'crypto';
 import { User } from '../users/entities/user.entity';
+import { Domain } from '../domains/entities/domain.entity';
+import { TlsCrt } from '../certs/tls/entities/tls-crt.entity';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import type {
   ApiKey,
   AuthCallbackResponse,
   CreateApiKeyResponse,
+  UserProfile,
 } from '@krakenkey/shared';
 
 @Injectable()
@@ -19,6 +23,10 @@ export class AuthService {
     private userApiKeyRepo: Repository<UserApiKey>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    @InjectRepository(Domain)
+    private readonly domainRepo: Repository<Domain>,
+    @InjectRepository(TlsCrt)
+    private readonly tlsCrtRepo: Repository<TlsCrt>,
   ) {}
 
   // --- Authentik OIDC Redirects ---
@@ -214,6 +222,52 @@ export class AuthService {
     if (!record) return null;
     if (record.expiresAt && record.expiresAt < new Date()) return null;
     return record;
+  }
+
+  // --- Profile Management ---
+
+  async getFullProfile(userId: string): Promise<UserProfile> {
+    const user = await this.userRepo.findOneBy({ id: userId });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const [domainCount, certCount, apiKeyCount] = await Promise.all([
+      this.domainRepo.count({ where: { userId } }),
+      this.tlsCrtRepo.count({ where: { userId } }),
+      this.userApiKeyRepo.count({ where: { userId } }),
+    ]);
+
+    return {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      groups: user.groups,
+      displayName: user.displayName,
+      createdAt: user.createdAt.toISOString(),
+      resourceCounts: {
+        domains: domainCount,
+        certificates: certCount,
+        apiKeys: apiKeyCount,
+      },
+    };
+  }
+
+  async updateProfile(
+    userId: string,
+    dto: UpdateProfileDto,
+  ): Promise<UserProfile> {
+    const user = await this.userRepo.findOneBy({ id: userId });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (dto.displayName !== undefined) {
+      user.displayName = dto.displayName || null;
+    }
+
+    await this.userRepo.save(user);
+    return this.getFullProfile(userId);
   }
 
   private async ensureUserExists(authUser: {

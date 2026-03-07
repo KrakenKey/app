@@ -46,5 +46,6 @@ import { CertMonitorService } from './services/cert-monitor.service';
       inject: [ConfigService, CloudflareDnsStrategy, Route53DnsStrategy],
     },
   ],
+  exports: [AcmeIssuerStrategy],
 })
 export class TlsModule {}

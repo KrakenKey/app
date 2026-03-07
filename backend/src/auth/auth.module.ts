@@ -8,12 +8,13 @@ import { ApiKeyStrategy } from './strategies/api-key.strategy';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { UserApiKey } from './entities/user-api-key.entity';
 import { User } from '../users/entities/user.entity';
+import { Domain } from '../domains/entities/domain.entity';
+import { TlsCrt } from '../certs/tls/entities/tls-crt.entity';
 
 @Module({
   imports: [
     PassportModule.register({ defaultStrategy: 'jwt' }),
-    TypeOrmModule.forFeature([UserApiKey]),
-    TypeOrmModule.forFeature([User]),
+    TypeOrmModule.forFeature([UserApiKey, User, Domain, TlsCrt]),
   ],
   controllers: [AuthController],
   providers: [AuthService, AuthentikProxyStrategy, JwtStrategy, ApiKeyStrategy],

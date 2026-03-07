@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { DomainsProvider } from '../context/DomainsContext';
 import DomainManagement from '../components/DomainManagement';
@@ -39,7 +40,10 @@ const Dashboard: React.FC = () => {
           <Feedback />
         </div>
 
-        <div className="dashboard-section">
+        <div className="dashboard-section" style={{ display: 'flex', gap: '1rem' }}>
+          <Link to="/settings" className="btn-secondary btn-small">
+            Settings
+          </Link>
           <button onClick={logout} className="btn-logout">
             Logout
           </button>

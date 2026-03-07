@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Patch,
   UseGuards,
   Req,
   Redirect,
@@ -19,10 +20,10 @@ import {
   ApiParam,
 } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
-import type { Request } from 'express';
 import type { RequestWithUser } from './interfaces/request-with-user.interface';
 import { JwtOrApiKeyGuard } from './guards/jwt-or-api-key.guard';
 import { CreateApiKeyDto } from './dto/create-api-key.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import { RateLimitCategoryDecorator } from '../throttler/decorators/rate-limit-category.decorator';
 import { RateLimitCategory } from '../throttler/interfaces/rate-limit-category.enum';
 
@@ -65,12 +66,26 @@ export class AuthController {
   @Get('profile')
   @UseGuards(JwtOrApiKeyGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get current user profile' })
-  @ApiResponse({ status: 200, description: 'User profile data' })
+  @ApiOperation({ summary: 'Get current user profile with resource counts' })
+  @ApiResponse({ status: 200, description: 'Full user profile data' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
-  getProfile(@Req() req: Request) {
-    return req.user;
+  getProfile(@Req() req: RequestWithUser) {
+    return this.authService.getFullProfile(req.user.userId);
+  }
+
+  @Patch('profile')
+  @UseGuards(JwtOrApiKeyGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update current user profile' })
+  @ApiResponse({ status: 200, description: 'Updated user profile' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
+  updateProfile(
+    @Req() req: RequestWithUser,
+    @Body() dto: UpdateProfileDto,
+  ) {
+    return this.authService.updateProfile(req.user.userId, dto);
   }
 
   @Get('api-keys')

@@ -10,6 +10,7 @@ interface AuthContextType {
   register: () => void;
   logout: () => void;
   handleCallback: (code: string) => Promise<void>;
+  deleteAccount: () => Promise<void>;
   isLoading: boolean;
 }
 
@@ -39,8 +40,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.log("Validating token with /auth/profile");
           const response = await api.get('/auth/profile');
           console.log("Token valid, user authenticated:", response.data.email);
-          const { userId, ...rest } = response.data;
-          setUser({ id: userId, ...rest });
+          setUser(response.data);
         } catch (error) {
           console.error("Token validation failed, logging out", error);
           logout();
@@ -103,8 +103,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const userRes = await api.get('/auth/profile');
         console.log("Profile received:", userRes.data.email);
 
-        const { userId, ...rest } = userRes.data;
-        setUser({ id: userId, ...rest });
+        setUser(userRes.data);
         console.log("Authentication complete");
       } else {
         console.error("No token received from callback");
@@ -133,8 +132,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     window.location.href = '/';
   };
 
+  const deleteAccount = async () => {
+    if (!user) return;
+    await api.delete(`/users/${user.id}`);
+    logout();
+  };
+
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: !!user, login, register, logout, handleCallback, isLoading }}>
+    <AuthContext.Provider value={{ user, isAuthenticated: !!user, login, register, logout, handleCallback, deleteAccount, isLoading }}>
       {children}
     </AuthContext.Provider>
   );

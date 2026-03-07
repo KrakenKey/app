@@ -1,0 +1,174 @@
+/* ===== Settings Page ===== */
+.settings-page {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: var(--space-xl);
+}
+
+.settings-page h1 {
+  margin-bottom: var(--space-xl);
+}
+
+.settings-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--color-accent);
+  text-decoration: none;
+  font-size: 14px;
+  margin-bottom: var(--space-lg);
+}
+
+.settings-back:hover {
+  color: var(--color-accent-hover);
+}
+
+/* --- Sections --- */
+.settings-section {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-xl);
+  margin-bottom: var(--space-lg);
+}
+
+.settings-section h2 {
+  margin-top: 0;
+  margin-bottom: var(--space-lg);
+  font-size: 18px;
+}
+
+/* --- Profile Info --- */
+.profile-grid {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: var(--space-sm) var(--space-lg);
+  font-size: 14px;
+}
+
+.profile-label {
+  color: var(--color-muted);
+  font-weight: 500;
+}
+
+.profile-value {
+  color: var(--color-text);
+  word-break: break-all;
+}
+
+/* --- Display Name Form --- */
+.display-name-form {
+  display: flex;
+  gap: var(--space-md);
+  align-items: flex-end;
+}
+
+.display-name-form .form-group {
+  flex: 1;
+}
+
+.display-name-form label {
+  display: block;
+  color: var(--color-muted);
+  font-size: 13px;
+  margin-bottom: var(--space-xs);
+}
+
+.display-name-form input {
+  width: 100%;
+  padding: 8px 12px;
+  background-color: var(--color-code-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: 14px;
+}
+
+.display-name-form input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: var(--focus-ring);
+}
+
+/* --- Resource Counts --- */
+.resource-counts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-md);
+}
+
+.resource-card {
+  background-color: var(--color-code-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-lg);
+  text-align: center;
+}
+
+.resource-card .count {
+  display: block;
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--color-accent);
+  margin-bottom: var(--space-xs);
+}
+
+.resource-card .resource-label {
+  font-size: 13px;
+  color: var(--color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* --- Danger Zone --- */
+.danger-zone {
+  border-color: var(--color-danger);
+  background-color: var(--color-danger-surface);
+}
+
+.danger-zone h2 {
+  color: var(--color-danger);
+}
+
+.danger-zone p {
+  color: var(--color-muted);
+  font-size: 14px;
+  margin-bottom: var(--space-lg);
+}
+
+/* --- Delete Confirmation --- */
+.delete-confirm {
+  margin-top: var(--space-lg);
+  padding: var(--space-lg);
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-md);
+}
+
+.delete-confirm p {
+  margin-bottom: var(--space-md);
+  color: var(--color-text);
+  font-size: 14px;
+}
+
+.delete-confirm input {
+  width: 100%;
+  padding: 8px 12px;
+  background-color: var(--color-code-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: 14px;
+  margin-bottom: var(--space-md);
+}
+
+.delete-confirm input:focus {
+  outline: none;
+  border-color: var(--color-danger);
+}
+
+.delete-confirm-actions {
+  display: flex;
+  gap: var(--space-md);
+  justify-content: flex-end;
+}
