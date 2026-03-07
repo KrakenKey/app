@@ -23,7 +23,7 @@ export class User {
   @Column('text', { array: true, default: '{}' })
   groups: string[];
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   displayName: string | null;
 
   @CreateDateColumn()
