@@ -1,9 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Key, Plus, Trash2, Copy, AlertTriangle } from 'lucide-react';
 import api from '../services/api';
 import { toast } from '../utils/toast';
 import { API_ROUTES } from '@krakenkey/shared';
 import type { ApiKey, CreateApiKeyResponse } from '@krakenkey/shared';
-import './ApiKeyManagement.css';
+import { Card } from './ui/Card';
+import { Button } from './ui/Button';
+import { Input } from './ui/Input';
+import { Badge } from './ui/Badge';
+import { Table, TableHeader, TableRow, TableHead, TableCell } from './ui/Table';
+import { PageHeader } from './ui/PageHeader';
+import { EmptyState } from './ui/EmptyState';
 
 export default function ApiKeyManagement() {
   const [keys, setKeys] = useState<ApiKey[]>([]);
@@ -88,124 +95,132 @@ export default function ApiKeyManagement() {
     }
   };
 
-  const getExpirationStatus = (expiresAt: string | null): { label: string; className: string } => {
-    if (!expiresAt) return { label: 'Never', className: '' };
+  const getExpirationBadge = (expiresAt: string | null): { label: string; variant: 'success' | 'warning' | 'danger' | 'neutral' } => {
+    if (!expiresAt) return { label: 'Never', variant: 'neutral' };
     const expiry = new Date(expiresAt);
     const now = new Date();
     const daysLeft = Math.floor((expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 
-    if (daysLeft < 0) return { label: `Expired ${Math.abs(daysLeft)}d ago`, className: 'expired' };
-    if (daysLeft < 7) return { label: `${daysLeft}d remaining`, className: 'expiring-critical' };
-    if (daysLeft <= 30) return { label: `${daysLeft}d remaining`, className: 'expiring-soon' };
-    return { label: expiry.toLocaleDateString(), className: 'healthy' };
+    if (daysLeft < 0) return { label: `Expired ${Math.abs(daysLeft)}d ago`, variant: 'danger' };
+    if (daysLeft < 7) return { label: `${daysLeft}d remaining`, variant: 'danger' };
+    if (daysLeft <= 30) return { label: `${daysLeft}d remaining`, variant: 'warning' };
+    return { label: expiry.toLocaleDateString(), variant: 'neutral' };
   };
 
   if (loading) {
     return (
-      <div className="apikey-management">
-        <h2>API Key Management</h2>
-        <p>Loading API keys...</p>
+      <div>
+        <PageHeader title="API Keys" icon={<Key className="w-6 h-6" />} />
+        <p className="text-zinc-400">Loading API keys...</p>
       </div>
     );
   }
 
   return (
-    <div className="apikey-management">
-      <h2>API Key Management</h2>
-      <p className="subtitle">Create and manage Personal Access Tokens for automation.</p>
+    <div>
+      <PageHeader
+        title="API Keys"
+        description="Create and manage Personal Access Tokens for automation."
+        icon={<Key className="w-6 h-6" />}
+      />
 
       {/* Create Key Form */}
-      <div className="create-key-section">
-        <h3>Create New API Key</h3>
-        <form onSubmit={handleCreate} className="create-key-form">
-          <div className="form-row">
-            <input
-              type="text"
-              className="key-name-input"
+      <Card className="mb-6">
+        <h3 className="text-sm font-medium text-zinc-400 mb-4">Create New API Key</h3>
+        <form onSubmit={handleCreate}>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <Input
               placeholder="Key name (e.g., ci-deploy)"
               value={newKeyName}
               onChange={(e) => setNewKeyName(e.target.value)}
               disabled={creating}
+              className="flex-1"
             />
             <input
               type="date"
-              className="key-expiry-input"
+              className="bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-300 focus:border-zinc-600 focus:ring-1 focus:ring-zinc-600 focus:outline-none"
               value={newKeyExpiry}
               onChange={(e) => setNewKeyExpiry(e.target.value)}
               disabled={creating}
               min={new Date().toISOString().split('T')[0]}
             />
-            <button type="submit" disabled={creating} className="btn-primary">
+            <Button type="submit" variant="primary" disabled={creating} icon={<Plus className="w-3.5 h-3.5" />}>
               {creating ? 'Creating...' : 'Create Key'}
-            </button>
+            </Button>
           </div>
         </form>
-      </div>
+      </Card>
 
       {/* Newly Created Key Banner */}
       {newlyCreatedKey && (
-        <div className="new-key-banner">
-          <strong>Your new API key:</strong>
-          <code className="key-display">{newlyCreatedKey}</code>
-          <div className="new-key-actions">
-            <button onClick={handleCopyKey} className="btn-secondary btn-small">
-              Copy
-            </button>
-            <button
-              onClick={() => setNewlyCreatedKey(null)}
-              className="btn-secondary btn-small"
-            >
-              Dismiss
-            </button>
+        <Card className="mb-6 border-emerald-500/20 bg-emerald-500/5">
+          <div className="flex flex-col gap-3">
+            <p className="text-sm font-medium text-emerald-400">Your new API key:</p>
+            <code className="block bg-zinc-950 rounded-lg px-4 py-3 font-mono text-sm text-zinc-200 break-all">
+              {newlyCreatedKey}
+            </code>
+            <div className="flex gap-2">
+              <Button size="sm" variant="secondary" icon={<Copy className="w-3.5 h-3.5" />} onClick={handleCopyKey}>
+                Copy
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setNewlyCreatedKey(null)}>
+                Dismiss
+              </Button>
+            </div>
+            <p className="text-xs text-amber-400 flex items-center gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5" />
+              Copy this key now. It will not be shown again.
+            </p>
           </div>
-          <p className="key-warning">
-            Copy this key now. It will not be shown again.
-          </p>
-        </div>
+        </Card>
       )}
 
       {/* Keys List */}
-      <div className="keys-list">
-        <h3>Your API Keys ({keys.length})</h3>
+      <Card>
+        <h3 className="text-sm font-medium text-zinc-400 mb-4">Your API Keys ({keys.length})</h3>
 
         {keys.length === 0 ? (
-          <p className="empty-state">
-            No API keys yet. Create one above to get started.
-          </p>
+          <EmptyState
+            icon={<Key className="w-8 h-8" />}
+            title="No API keys yet"
+            description="Create one above to get started."
+          />
         ) : (
-          <table className="keys-table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Created</th>
-                <th>Expires</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
+          <Table>
+            <TableHeader>
+              <TableHead>Name</TableHead>
+              <TableHead>Created</TableHead>
+              <TableHead>Expires</TableHead>
+              <TableHead>Actions</TableHead>
+            </TableHeader>
             <tbody>
               {keys.map((key) => {
-                const expStatus = getExpirationStatus(key.expiresAt);
+                const expBadge = getExpirationBadge(key.expiresAt);
                 return (
-                  <tr key={key.id}>
-                    <td className="key-name">{key.name}</td>
-                    <td>{new Date(key.createdAt).toLocaleDateString()}</td>
-                    <td className={expStatus.className}>{expStatus.label}</td>
-                    <td>
-                      <button
+                  <TableRow key={key.id}>
+                    <TableCell className="font-medium text-zinc-200">{key.name}</TableCell>
+                    <TableCell>{new Date(key.createdAt).toLocaleDateString()}</TableCell>
+                    <TableCell>
+                      <Badge variant={expBadge.variant}>{expBadge.label}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        icon={<Trash2 className="w-3.5 h-3.5" />}
                         onClick={() => handleDelete(key)}
                         disabled={deletingIds.has(key.id)}
-                        className="btn-danger btn-small"
                       >
                         {deletingIds.has(key.id) ? 'Deleting...' : 'Delete'}
-                      </button>
-                    </td>
-                  </tr>
+                      </Button>
+                    </TableCell>
+                  </TableRow>
                 );
               })}
             </tbody>
-          </table>
+          </Table>
         )}
-      </div>
+      </Card>
     </div>
   );
 }

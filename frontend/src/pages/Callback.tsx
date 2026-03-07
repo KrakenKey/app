@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { Loader2 } from 'lucide-react';
 
 const Callback: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -32,8 +33,9 @@ const Callback: React.FC = () => {
   }, [searchParams, handleCallback, navigate]);
 
   return (
-    <div className="page-center">
-      <h2>Authenticating...</h2>
+    <div className="flex min-h-screen flex-col items-center justify-center bg-bg">
+      <Loader2 className="h-8 w-8 animate-spin text-accent" />
+      <p className="mt-4 text-text-muted">Authenticating...</p>
     </div>
   );
 };

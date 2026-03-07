@@ -105,7 +105,7 @@ describe('CertificateManagement', () => {
     render(<CertificateManagement />);
 
     await waitFor(() => {
-      expect(screen.getByText('Download .pem')).toBeInTheDocument();
+      expect(screen.getByText('Download')).toBeInTheDocument();
     });
   });
 
