@@ -1,39 +1,35 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { DomainsProvider } from './context/DomainsContext';
+import { DashboardLayout } from './layouts/DashboardLayout';
 import Home from './pages/Home';
 import Callback from './pages/Callback';
-import Dashboard from './pages/Dashboard';
+import Overview from './pages/Overview';
 import Settings from './pages/Settings';
+import DomainManagement from './components/DomainManagement';
+import CertificateManagement from './components/CertificateManagement';
+import ApiKeyManagement from './components/ApiKeyManagement';
+import Feedback from './components/Feedback';
 
-
-/**
- * A wrapper component to protect routes that require authentication.
- * Checks if the user is authenticated; if not, redirects to the home page.
- * Shows a loading state while authentication status is being determined.
- */
 const ProtectedRoute = ({ children }: { children: { } & ReactNode }) => {
-  const { isAuthenticated, isLoading, user } = useAuth();
-
-  console.log("🛡️ ProtectedRoute check:", { isAuthenticated, isLoading, hasUser: !!user });
+  const { isAuthenticated, isLoading } = useAuth();
 
   if (isLoading) {
-    console.log("⏳ ProtectedRoute: Still loading...");
-    return <div>Loading...</div>;
+    return (
+      <div className="flex items-center justify-center h-screen bg-bg">
+        <div className="text-zinc-500 text-sm">Loading...</div>
+      </div>
+    );
   }
 
   if (!isAuthenticated) {
-    console.log("❌ ProtectedRoute: Not authenticated, redirecting to home");
     return <Navigate to="/" replace />;
   }
 
-  console.log("✅ ProtectedRoute: Authenticated, rendering protected content");
   return children;
 };
 
-/**
- * Defines the application's routing structure.
- */
 function AppRoutes() {
   return (
     <Routes>
@@ -43,26 +39,32 @@ function AppRoutes() {
         path="/dashboard"
         element={
           <ProtectedRoute>
-            <Dashboard />
+            <DomainsProvider>
+              <DashboardLayout />
+            </DomainsProvider>
           </ProtectedRoute>
         }
-      />
+      >
+        <Route index element={<Overview />} />
+        <Route path="domains" element={<DomainManagement />} />
+        <Route path="certificates" element={<CertificateManagement />} />
+        <Route path="api-keys" element={<ApiKeyManagement />} />
+        <Route path="feedback" element={<Feedback />} />
+      </Route>
       <Route
         path="/settings"
         element={
           <ProtectedRoute>
-            <Settings />
+            <DashboardLayout />
           </ProtectedRoute>
         }
-      />
+      >
+        <Route index element={<Settings />} />
+      </Route>
     </Routes>
   );
 }
 
-/**
- * Main App Component.
- * Sets up the Router and AuthProvider context.
- */
 function App() {
   return (
     <BrowserRouter>
