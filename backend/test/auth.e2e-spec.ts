@@ -32,6 +32,16 @@ describe('Auth (e2e)', () => {
         id: 'key-uuid-1',
         name: 'my-key',
       }),
+      getFullProfile: jest.fn().mockResolvedValue({
+        id: MOCK_USER.userId,
+        username: MOCK_USER.username,
+        email: MOCK_USER.email,
+        groups: [],
+        displayName: null,
+        createdAt: '2025-01-01T00:00:00.000Z',
+        resourceCounts: { domains: 0, certificates: 0, apiKeys: 0 },
+      }),
+      updateProfile: jest.fn(),
     };
 
     // Authenticated app — guards overridden
@@ -114,8 +124,11 @@ describe('Auth (e2e)', () => {
         .expect(200)
         .expect((res) => {
           expect(res.body).toMatchObject({
-            userId: MOCK_USER.userId,
+            id: MOCK_USER.userId,
+            username: MOCK_USER.username,
+            email: MOCK_USER.email,
           });
+          expect(res.body.resourceCounts).toBeDefined();
         }));
 
     it('returns 401 when no auth token provided', () =>
