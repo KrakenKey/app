@@ -26,6 +26,7 @@ describe('DomainMonitorService', () => {
       createdAt: new Date(),
       apiKeys: [],
       tlsCrts: [],
+      notificationPreferences: {},
     },
     createdAt: new Date(),
     updatedAt: new Date(),

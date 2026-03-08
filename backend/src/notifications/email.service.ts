@@ -129,10 +129,7 @@ export class EmailService {
 
   async sendCertExpiryWarning(ctx: CertEmailContext): Promise<void> {
     if (
-      !(await this.shouldSend(
-        ctx.userId,
-        NotificationType.CERT_EXPIRY_WARNING,
-      ))
+      !(await this.shouldSend(ctx.userId, NotificationType.CERT_EXPIRY_WARNING))
     )
       return;
     await this.send(
