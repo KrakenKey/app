@@ -244,6 +244,7 @@ export class AuthService {
       email: user.email,
       groups: user.groups,
       displayName: user.displayName,
+      notificationPreferences: user.notificationPreferences,
       createdAt: user.createdAt.toISOString(),
       resourceCounts: {
         domains: domainCount,
@@ -264,6 +265,13 @@ export class AuthService {
 
     if (dto.displayName !== undefined) {
       user.displayName = dto.displayName || null;
+    }
+
+    if (dto.notificationPreferences !== undefined) {
+      user.notificationPreferences = {
+        ...user.notificationPreferences,
+        ...dto.notificationPreferences,
+      };
     }
 
     await this.userRepo.save(user);

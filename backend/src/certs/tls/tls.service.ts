@@ -191,6 +191,7 @@ export class TlsService {
           cert.parsedCsr?.extensions?.[0]?.altNames?.[0]?.value ??
           `cert #${cert.id}`;
         await this.emailService.sendCertRevoked({
+          userId: cert.user.id,
           username: cert.user.username,
           email: cert.user.email,
           certId: cert.id,

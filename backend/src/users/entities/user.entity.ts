@@ -8,6 +8,7 @@ import {
 } from 'typeorm';
 import { Domain } from '../../domains/entities/domain.entity';
 import { TlsCrt } from '../../certs/tls/entities/tls-crt.entity';
+import type { NotificationPreferences } from '@krakenkey/shared';
 
 @Entity()
 export class User {
@@ -25,6 +26,9 @@ export class User {
 
   @Column({ type: 'varchar', nullable: true })
   displayName: string | null;
+
+  @Column({ type: 'jsonb', default: '{}' })
+  notificationPreferences: NotificationPreferences;
 
   @CreateDateColumn()
   createdAt: Date;

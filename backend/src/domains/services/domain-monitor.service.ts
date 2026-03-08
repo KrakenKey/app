@@ -46,6 +46,19 @@ export class DomainMonitorService {
           this.logger.warn(
             `Domain ${domain.hostname} (id: ${domain.id}) failed re-verification — TXT record not found, marked as unverified`,
           );
+<<<<<<< Updated upstream
+=======
+
+          if (domain.owner?.email) {
+            await this.emailService.sendDomainVerificationFailed({
+              userId: domain.owner.id,
+              username: domain.owner.username,
+              email: domain.owner.email,
+              hostname: domain.hostname,
+              verificationCode: domain.verificationCode,
+            });
+          }
+>>>>>>> Stashed changes
         }
       } catch (err) {
         this.logger.error(

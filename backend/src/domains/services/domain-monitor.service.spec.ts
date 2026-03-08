@@ -70,6 +70,36 @@ describe('DomainMonitorService', () => {
       expect(mockRepository.update).toHaveBeenCalledWith('d1', {
         isVerified: false,
       });
+<<<<<<< Updated upstream
+=======
+      expect(
+        mockEmailService.sendDomainVerificationFailed,
+      ).toHaveBeenCalledWith({
+        userId: 'u1',
+        username: 'testuser',
+        email: 'test@example.com',
+        hostname: 'example.com',
+        verificationCode: 'krakenkey-site-verification=abc',
+      });
+    });
+
+    it('skips email when domain has no owner', async () => {
+      const domainNoOwner = {
+        ...verifiedDomain,
+        owner: undefined as any,
+      };
+      mockRepository.find.mockResolvedValue([domainNoOwner]);
+      mockDomainsService.checkVerificationRecord.mockResolvedValue(false);
+
+      await service.checkVerifiedDomains();
+
+      expect(mockRepository.update).toHaveBeenCalledWith('d1', {
+        isVerified: false,
+      });
+      expect(
+        mockEmailService.sendDomainVerificationFailed,
+      ).not.toHaveBeenCalled();
+>>>>>>> Stashed changes
     });
 
     it('continues processing other domains when one errors', async () => {
