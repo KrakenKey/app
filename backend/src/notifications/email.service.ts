@@ -8,6 +8,7 @@ import {
   certExpiryWarningTemplate,
   certFailedTemplate,
   certRevokedTemplate,
+  domainVerificationFailedTemplate,
 } from './templates';
 
 export interface CertEmailContext {
@@ -18,6 +19,13 @@ export interface CertEmailContext {
   expiresAt?: Date;
   daysUntilExpiry?: number;
   errorMessage?: string;
+}
+
+export interface DomainVerificationFailedContext {
+  username: string;
+  email: string;
+  hostname: string;
+  verificationCode: string;
 }
 
 @Injectable()
@@ -106,6 +114,16 @@ export class EmailService {
       ctx.email,
       `Certificate revoked: ${ctx.commonName}`,
       certRevokedTemplate(ctx),
+    );
+  }
+
+  async sendDomainVerificationFailed(
+    ctx: DomainVerificationFailedContext,
+  ): Promise<void> {
+    await this.send(
+      ctx.email,
+      `Domain verification failed: ${ctx.hostname}`,
+      domainVerificationFailedTemplate(ctx),
     );
   }
 }

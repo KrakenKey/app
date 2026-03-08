@@ -3,11 +3,13 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { DomainMonitorService } from './domain-monitor.service';
 import { DomainsService } from '../domains.service';
 import { Domain } from '../entities/domain.entity';
+import { EmailService } from '../../notifications/email.service';
 
 describe('DomainMonitorService', () => {
   let service: DomainMonitorService;
   let mockRepository: Record<string, jest.Mock>;
   let mockDomainsService: Record<string, jest.Mock>;
+  let mockEmailService: Record<string, jest.Mock>;
 
   const verifiedDomain: Domain = {
     id: 'd1',
@@ -15,7 +17,16 @@ describe('DomainMonitorService', () => {
     verificationCode: 'krakenkey-site-verification=abc',
     isVerified: true,
     userId: 'u1',
-    owner: {} as any,
+    owner: {
+      id: 'u1',
+      username: 'testuser',
+      email: 'test@example.com',
+      groups: [],
+      displayName: null,
+      createdAt: new Date(),
+      apiKeys: [],
+      tlsCrts: [],
+    },
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -30,6 +41,10 @@ describe('DomainMonitorService', () => {
       checkVerificationRecord: jest.fn(),
     };
 
+    mockEmailService = {
+      sendDomainVerificationFailed: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DomainMonitorService,
@@ -40,6 +55,10 @@ describe('DomainMonitorService', () => {
         {
           provide: DomainsService,
           useValue: mockDomainsService,
+        },
+        {
+          provide: EmailService,
+          useValue: mockEmailService,
         },
       ],
     }).compile();
@@ -59,9 +78,12 @@ describe('DomainMonitorService', () => {
       await service.checkVerifiedDomains();
 
       expect(mockRepository.update).not.toHaveBeenCalled();
+      expect(
+        mockEmailService.sendDomainVerificationFailed,
+      ).not.toHaveBeenCalled();
     });
 
-    it('marks domain as unverified when TXT record is missing', async () => {
+    it('marks domain as unverified and sends email when TXT record is missing', async () => {
       mockRepository.find.mockResolvedValue([verifiedDomain]);
       mockDomainsService.checkVerificationRecord.mockResolvedValue(false);
 
@@ -70,6 +92,32 @@ describe('DomainMonitorService', () => {
       expect(mockRepository.update).toHaveBeenCalledWith('d1', {
         isVerified: false,
       });
+      expect(
+        mockEmailService.sendDomainVerificationFailed,
+      ).toHaveBeenCalledWith({
+        username: 'testuser',
+        email: 'test@example.com',
+        hostname: 'example.com',
+        verificationCode: 'krakenkey-site-verification=abc',
+      });
+    });
+
+    it('skips email when domain has no owner', async () => {
+      const domainNoOwner = {
+        ...verifiedDomain,
+        owner: undefined as any,
+      };
+      mockRepository.find.mockResolvedValue([domainNoOwner]);
+      mockDomainsService.checkVerificationRecord.mockResolvedValue(false);
+
+      await service.checkVerifiedDomains();
+
+      expect(mockRepository.update).toHaveBeenCalledWith('d1', {
+        isVerified: false,
+      });
+      expect(
+        mockEmailService.sendDomainVerificationFailed,
+      ).not.toHaveBeenCalled();
     });
 
     it('continues processing other domains when one errors', async () => {
