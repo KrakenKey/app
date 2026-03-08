@@ -6,6 +6,7 @@ import { TlsCrt } from '../entities/tls-crt.entity';
 import { TlsService } from '../tls.service';
 import { CertStatus } from '@krakenkey/shared';
 import { MetricsService } from '../../../metrics/metrics.service';
+import { EmailService } from '../../../notifications/email.service';
 
 @Injectable()
 export class CertMonitorService {
@@ -16,6 +17,7 @@ export class CertMonitorService {
     private readonly tlsCrtRepository: Repository<TlsCrt>,
     private readonly tlsService: TlsService,
     private readonly metricsService: MetricsService,
+    private readonly emailService: EmailService,
   ) {}
 
   /**
@@ -39,6 +41,7 @@ export class CertMonitorService {
         autoRenew: true,
         expiresAt: LessThan(threshold),
       },
+      relations: ['user'],
     });
 
     // Update nearest expiry gauge
@@ -58,6 +61,25 @@ export class CertMonitorService {
     );
 
     for (const cert of expiring) {
+      if (cert.user && cert.expiresAt) {
+        const daysUntilExpiry = Math.floor(
+          (cert.expiresAt.getTime() - Date.now()) / 86_400_000,
+        );
+        const commonName =
+          cert.parsedCsr?.subject?.find((a) => a.shortName === 'CN')
+            ?.value as string ??
+          cert.parsedCsr?.extensions?.[0]?.altNames?.[0]?.value ??
+          `cert #${cert.id}`;
+        this.emailService.sendCertExpiryWarning({
+          username: cert.user.username,
+          email: cert.user.email,
+          certId: cert.id,
+          commonName,
+          expiresAt: cert.expiresAt,
+          daysUntilExpiry,
+        });
+      }
+
       try {
         await this.tlsService.renewInternal(cert.id);
         this.logger.log(`Queued renewal for certificate #${cert.id}`);
