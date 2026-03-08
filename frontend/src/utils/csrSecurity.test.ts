@@ -47,7 +47,8 @@ MIIDXTCCAkWgAwIBAgIJAJC1HiIAZAiUMA0GCSqGSIb3Qw0BAQsFADA=
     });
 
     it('should redact long hexadecimal strings (potential key material)', () => {
-      const hexKey = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2';
+      const hexKey =
+        'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2';
       const message = `Key material: ${hexKey}`;
       const sanitized = sanitizeErrorMessage(message);
 
@@ -65,7 +66,7 @@ MIIDXTCCAkWgAwIBAgIJAJC1HiIAZAiUMA0GCSqGSIb3Qw0BAQsFADA=
       for (const error of cryptoErrors) {
         const sanitized = sanitizeErrorMessage(error);
         expect(sanitized).toBe(
-          'Cryptographic operation failed. Please try again or contact support.'
+          'Cryptographic operation failed. Please try again or contact support.',
         );
       }
     });
@@ -75,7 +76,7 @@ MIIDXTCCAkWgAwIBAgIJAJC1HiIAZAiUMA0GCSqGSIb3Qw0BAQsFADA=
       const sanitized = sanitizeErrorMessage(message);
 
       expect(sanitized).toBe(
-        'Cryptographic operation failed. Please try again or contact support.'
+        'Cryptographic operation failed. Please try again or contact support.',
       );
     });
 
@@ -106,7 +107,8 @@ MIIDXTCCAkWgAwIBAgIJAJC1HiIAZAiUMA0GCSqGSIb3Qw0BAQsFADA=
     });
 
     it('should handle errors with mixed sensitive content', () => {
-      const message = 'Failed with key -----BEGIN PRIVATE KEY-----\nSECRET\n-----END PRIVATE KEY----- and hex abc123def456abc123def456abc123def456';
+      const message =
+        'Failed with key -----BEGIN PRIVATE KEY-----\nSECRET\n-----END PRIVATE KEY----- and hex abc123def456abc123def456abc123def456';
       const sanitized = sanitizeErrorMessage(message);
 
       expect(sanitized).not.toContain('SECRET');
@@ -120,7 +122,10 @@ MIIDXTCCAkWgAwIBAgIJAJC1HiIAZAiUMA0GCSqGSIb3Qw0BAQsFADA=
       const requestedDomains = ['sub.example.com'];
 
       // Verifying example.com covers sub.example.com
-      const error = validateDomainAuthorization(requestedDomains, verifiedDomains);
+      const error = validateDomainAuthorization(
+        requestedDomains,
+        verifiedDomains,
+      );
       expect(error).toBeNull();
     });
 
@@ -129,15 +134,18 @@ MIIDXTCCAkWgAwIBAgIJAJC1HiIAZAiUMA0GCSqGSIb3Qw0BAQsFADA=
       const requestedDomains = ['example.com'];
 
       // Verifying www.example.com does NOT cover example.com
-      const error = validateDomainAuthorization(requestedDomains, verifiedDomains);
+      const error = validateDomainAuthorization(
+        requestedDomains,
+        verifiedDomains,
+      );
       expect(error).not.toBeNull();
     });
 
     it('should not allow similar-looking domains', () => {
       const verifiedDomains = ['example.com'];
       const attackDomains = [
-        'examp1e.com',     // l -> 1
-        'examplе.com',     // Cyrillic 'е'
+        'examp1e.com', // l -> 1
+        'examplе.com', // Cyrillic 'е'
         'example.com.evil.com',
         'evil-example.com',
       ];
@@ -150,7 +158,10 @@ MIIDXTCCAkWgAwIBAgIJAJC1HiIAZAiUMA0GCSqGSIb3Qw0BAQsFADA=
 
     it('should treat domains as case-insensitive (RFC 4343)', () => {
       const verifiedDomains = ['example.com'];
-      const error = validateDomainAuthorization(['EXAMPLE.COM'], verifiedDomains);
+      const error = validateDomainAuthorization(
+        ['EXAMPLE.COM'],
+        verifiedDomains,
+      );
 
       // DNS names are case-insensitive per RFC 4343
       expect(error).toBeNull();

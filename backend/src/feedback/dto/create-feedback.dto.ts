@@ -1,4 +1,11 @@
-import { IsNotEmpty, IsString, IsInt, Min, Max } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsString,
+  IsInt,
+  Min,
+  Max,
+  MaxLength,
+} from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateFeedbackDto {
@@ -8,6 +15,7 @@ export class CreateFeedbackDto {
   })
   @IsNotEmpty()
   @IsString()
+  @MaxLength(5000)
   message: string;
 
   @ApiProperty({

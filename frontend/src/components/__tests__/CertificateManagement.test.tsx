@@ -8,8 +8,8 @@ import { API_URL } from '../../services/api';
 import CertificateManagement from '../CertificateManagement';
 
 // Mock AuthContext
-vi.mock('../../context/AuthContext', async () => {
-  const actual = await vi.importActual('../../context/AuthContext');
+vi.mock('../../hooks/useAuth', async () => {
+  const actual = await vi.importActual('../../hooks/useAuth');
   return {
     ...actual,
     useAuth: () => ({
@@ -48,9 +48,7 @@ describe('CertificateManagement', () => {
     render(<CertificateManagement />);
 
     await waitFor(() => {
-      expect(
-        screen.getByText(/No certificates yet/),
-      ).toBeInTheDocument();
+      expect(screen.getByText(/No certificates yet/)).toBeInTheDocument();
     });
   });
 
@@ -58,7 +56,9 @@ describe('CertificateManagement', () => {
     render(<CertificateManagement />);
 
     await waitFor(() => {
-      expect(screen.getByText(`Your Certificates (${mockCerts.length})`)).toBeInTheDocument();
+      expect(
+        screen.getByText(`Your Certificates (${mockCerts.length})`),
+      ).toBeInTheDocument();
     });
   });
 
@@ -84,7 +84,10 @@ describe('CertificateManagement', () => {
     });
 
     const textarea = screen.getByPlaceholderText(/BEGIN CERTIFICATE REQUEST/);
-    await user.type(textarea, '-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----');
+    await user.type(
+      textarea,
+      '-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----',
+    );
     await user.click(screen.getByText('Submit CSR'));
 
     await waitFor(() => {
@@ -142,7 +145,9 @@ describe('CertificateManagement', () => {
     render(<CertificateManagement />);
 
     await waitFor(() => {
-      expect(screen.getByText(/example.com, www.example.com/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/example.com, www.example.com/),
+      ).toBeInTheDocument();
     });
   });
 });

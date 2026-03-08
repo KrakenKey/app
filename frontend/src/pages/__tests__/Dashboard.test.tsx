@@ -4,10 +4,13 @@ import { mockUser } from '../../test/mocks/data';
 import Overview from '../Overview';
 
 // Stable reference to avoid infinite useEffect([user]) loop
-const stableUser = { ...mockUser, resourceCounts: { domains: 2, certificates: 1, apiKeys: 1 } };
+const stableUser = {
+  ...mockUser,
+  resourceCounts: { domains: 2, certificates: 1, apiKeys: 1 },
+};
 
-vi.mock('../../context/AuthContext', async () => {
-  const actual = await vi.importActual('../../context/AuthContext');
+vi.mock('../../hooks/useAuth', async () => {
+  const actual = await vi.importActual('../../hooks/useAuth');
   return {
     ...actual,
     useAuth: () => ({
@@ -30,7 +33,9 @@ describe('Overview', () => {
 
   it('renders user greeting', () => {
     render(<Overview />);
-    expect(screen.getByText(`Welcome back, ${mockUser.username}`)).toBeInTheDocument();
+    expect(
+      screen.getByText(`Welcome back, ${mockUser.username}`),
+    ).toBeInTheDocument();
   });
 
   it('renders resource count cards', async () => {

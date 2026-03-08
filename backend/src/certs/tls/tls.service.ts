@@ -42,6 +42,8 @@ import { EmailService } from '../../notifications/email.service';
  */
 @Injectable()
 export class TlsService {
+  private readonly logger = new Logger(TlsService.name);
+
   constructor(
     @InjectRepository(TlsCrt)
     private readonly TlsCrtRepository: Repository<TlsCrt>,
@@ -184,8 +186,8 @@ export class TlsService {
 
       if (cert.user) {
         const commonName =
-          cert.parsedCsr?.subject?.find((a) => a.shortName === 'CN')
-            ?.value as string ??
+          (cert.parsedCsr?.subject?.find((a) => a.shortName === 'CN')
+            ?.value as string) ??
           cert.parsedCsr?.extensions?.[0]?.altNames?.[0]?.value ??
           `cert #${cert.id}`;
         await this.emailService.sendCertRevoked({
@@ -196,8 +198,7 @@ export class TlsService {
         });
       }
     } catch (err) {
-      const logger = new Logger(TlsService.name);
-      logger.error(
+      this.logger.error(
         `ACME revocation failed for cert #${cert.id}: ${err instanceof Error ? err.message : String(err)}`,
       );
       await this.TlsCrtRepository.update(cert.id, {
@@ -323,10 +324,7 @@ export class TlsService {
    * SYSTEM USE ONLY. Do not use this in Controllers.
    * Bypasses all ownership checks. Intended for background jobs (Queue Processors) only.
    */
-  async findOneInternal(
-    id: number,
-    options?: { relations?: string[] },
-  ) {
+  async findOneInternal(id: number, options?: { relations?: string[] }) {
     const tlsCrt = await this.TlsCrtRepository.findOne({
       where: { id },
       relations: options?.relations,

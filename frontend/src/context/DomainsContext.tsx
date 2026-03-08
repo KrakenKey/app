@@ -1,4 +1,10 @@
-import { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from 'react';
+import {
+  createContext,
+  useState,
+  useCallback,
+  useMemo,
+  type ReactNode,
+} from 'react';
 import api from '../services/api';
 import { API_ROUTES, type Domain } from '@krakenkey/shared';
 
@@ -16,7 +22,9 @@ interface DomainsContextValue {
   refetchDomains: () => Promise<void>;
 }
 
-const DomainsContext = createContext<DomainsContextValue | undefined>(undefined);
+export const DomainsContext = createContext<DomainsContextValue | undefined>(
+  undefined,
+);
 
 interface DomainsProviderProps {
   children: ReactNode;
@@ -64,7 +72,7 @@ export function DomainsProvider({ children }: DomainsProviderProps) {
 
   const verifiedDomains = useMemo(
     () => domains.filter((d) => d.isVerified),
-    [domains]
+    [domains],
   );
 
   const value = useMemo(
@@ -76,24 +84,10 @@ export function DomainsProvider({ children }: DomainsProviderProps) {
       fetchDomains,
       refetchDomains,
     }),
-    [domains, verifiedDomains, loading, error, fetchDomains, refetchDomains]
+    [domains, verifiedDomains, loading, error, fetchDomains, refetchDomains],
   );
 
   return (
-    <DomainsContext.Provider value={value}>
-      {children}
-    </DomainsContext.Provider>
+    <DomainsContext.Provider value={value}>{children}</DomainsContext.Provider>
   );
-}
-
-/**
- * Hook to access domains context.
- * Must be used within a DomainsProvider.
- */
-export function useDomains() {
-  const context = useContext(DomainsContext);
-  if (!context) {
-    throw new Error('useDomains must be used within a DomainsProvider');
-  }
-  return context;
 }

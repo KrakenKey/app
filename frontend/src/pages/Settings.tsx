@@ -1,6 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Globe, Shield, Key, AlertTriangle } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
+import {
+  Settings as SettingsIcon,
+  Globe,
+  Shield,
+  Key,
+  AlertTriangle,
+} from 'lucide-react';
+import { useAuth } from '../hooks/useAuth';
 import api from '../services/api';
 import { toast } from '../utils/toast';
 import type { UserProfile } from '@krakenkey/shared';
@@ -65,7 +71,10 @@ const Settings: React.FC = () => {
   if (loading) {
     return (
       <div>
-        <PageHeader title="Account Settings" icon={<SettingsIcon className="w-6 h-6" />} />
+        <PageHeader
+          title="Account Settings"
+          icon={<SettingsIcon className="w-6 h-6" />}
+        />
         <p className="text-zinc-400">Loading...</p>
       </div>
     );
@@ -74,7 +83,10 @@ const Settings: React.FC = () => {
   if (!profile || !user) {
     return (
       <div>
-        <PageHeader title="Account Settings" icon={<SettingsIcon className="w-6 h-6" />} />
+        <PageHeader
+          title="Account Settings"
+          icon={<SettingsIcon className="w-6 h-6" />}
+        />
         <p className="text-zinc-400">Unable to load profile.</p>
       </div>
     );
@@ -82,7 +94,10 @@ const Settings: React.FC = () => {
 
   return (
     <div>
-      <PageHeader title="Account Settings" icon={<SettingsIcon className="w-6 h-6" />} />
+      <PageHeader
+        title="Account Settings"
+        icon={<SettingsIcon className="w-6 h-6" />}
+      />
 
       {/* Profile Info */}
       <Card className="mb-6">
@@ -109,7 +124,10 @@ const Settings: React.FC = () => {
       {/* Display Name */}
       <Card className="mb-6">
         <h2 className="text-sm font-medium text-zinc-400 mb-4">Display Name</h2>
-        <form onSubmit={handleUpdateDisplayName} className="flex flex-col sm:flex-row gap-3">
+        <form
+          onSubmit={handleUpdateDisplayName}
+          className="flex flex-col sm:flex-row gap-3"
+        >
           <Input
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
@@ -128,13 +146,30 @@ const Settings: React.FC = () => {
         <h2 className="text-sm font-medium text-zinc-400 mb-4">Resources</h2>
         <div className="grid grid-cols-3 gap-4">
           {[
-            { count: profile.resourceCounts.domains, label: 'Domains', icon: Globe, color: 'text-cyan-400' },
-            { count: profile.resourceCounts.certificates, label: 'Certificates', icon: Shield, color: 'text-emerald-400' },
-            { count: profile.resourceCounts.apiKeys, label: 'API Keys', icon: Key, color: 'text-amber-400' },
+            {
+              count: profile.resourceCounts.domains,
+              label: 'Domains',
+              icon: Globe,
+              color: 'text-cyan-400',
+            },
+            {
+              count: profile.resourceCounts.certificates,
+              label: 'Certificates',
+              icon: Shield,
+              color: 'text-emerald-400',
+            },
+            {
+              count: profile.resourceCounts.apiKeys,
+              label: 'API Keys',
+              icon: Key,
+              color: 'text-amber-400',
+            },
           ].map(({ count, label, icon: Icon, color }) => (
             <div key={label} className="bg-zinc-950 rounded-lg p-4 text-center">
               <Icon className={`w-4 h-4 ${color} mx-auto mb-2`} />
-              <span className="block text-2xl font-bold text-zinc-100">{count}</span>
+              <span className="block text-2xl font-bold text-zinc-100">
+                {count}
+              </span>
               <span className="text-xs text-zinc-500">{label}</span>
             </div>
           ))}
@@ -158,7 +193,8 @@ const Settings: React.FC = () => {
         ) : (
           <div className="space-y-3">
             <p className="text-sm text-zinc-300">
-              To confirm, type your username <strong className="text-zinc-100">{user.username}</strong> below:
+              To confirm, type your username{' '}
+              <strong className="text-zinc-100">{user.username}</strong> below:
             </p>
             <Input
               value={deleteConfirmText}

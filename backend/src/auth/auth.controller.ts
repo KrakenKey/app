@@ -81,10 +81,7 @@ export class AuthController {
   @ApiResponse({ status: 200, description: 'Updated user profile' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
-  updateProfile(
-    @Req() req: RequestWithUser,
-    @Body() dto: UpdateProfileDto,
-  ) {
+  updateProfile(@Req() req: RequestWithUser, @Body() dto: UpdateProfileDto) {
     return this.authService.updateProfile(req.user.userId, dto);
   }
 

@@ -6,6 +6,7 @@ import {
   JoinColumn,
   CreateDateColumn,
 } from 'typeorm';
+import { ApiHideProperty } from '@nestjs/swagger';
 import { User } from '../../../users/entities/user.entity';
 import type { CertStatus, ParsedCsr } from '@krakenkey/shared';
 
@@ -14,6 +15,7 @@ export class TlsCrt {
   @PrimaryGeneratedColumn()
   id: number;
 
+  @ApiHideProperty()
   @Column()
   rawCsr: string;
 

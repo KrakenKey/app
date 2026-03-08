@@ -53,8 +53,10 @@ vi.mock('../utils/csrGenerator', async (importOriginal) => {
 });
 
 const mockCsrResult: GeneratedCsrResult = {
-  csrPem: '-----BEGIN CERTIFICATE REQUEST-----\nMOCK_CSR\n-----END CERTIFICATE REQUEST-----',
-  privateKeyPem: '-----BEGIN PRIVATE KEY-----\nSECRET_KEY\n-----END PRIVATE KEY-----',
+  csrPem:
+    '-----BEGIN CERTIFICATE REQUEST-----\nMOCK_CSR\n-----END CERTIFICATE REQUEST-----',
+  privateKeyPem:
+    '-----BEGIN PRIVATE KEY-----\nSECRET_KEY\n-----END PRIVATE KEY-----',
   publicKeyPem: '-----BEGIN PUBLIC KEY-----\nPUBLIC\n-----END PUBLIC KEY-----',
   algorithm: 'RSA',
   keySize: 2048,
@@ -76,7 +78,7 @@ describe('CsrGenerator - Security Tests', () => {
           onCsrGenerated={mockOnCsrGenerated}
           onCancel={mockOnCancel}
         />
-      </DomainsProvider>
+      </DomainsProvider>,
     );
   };
 
@@ -88,44 +90,55 @@ describe('CsrGenerator - Security Tests', () => {
       expect(container.innerHTML).not.toContain('BEGIN PRIVATE KEY');
     });
 
-    it('should only pass CSR PEM to onCsrGenerated (not private key)', { timeout: 10000 }, async () => {
-      vi.mocked(csrGenerator.generateCsr).mockResolvedValue(mockCsrResult);
+    it(
+      'should only pass CSR PEM to onCsrGenerated (not private key)',
+      { timeout: 10000 },
+      async () => {
+        vi.mocked(csrGenerator.generateCsr).mockResolvedValue(mockCsrResult);
 
-      renderComponent();
+        renderComponent();
 
-      // Fill CN and generate
-      const cnInput = screen.getByPlaceholderText('example.com');
-      await userEvent.type(cnInput, 'example.com');
+        // Fill CN and generate
+        const cnInput = screen.getByPlaceholderText('example.com');
+        await userEvent.type(cnInput, 'example.com');
 
-      const generateButton = screen.getByText('Generate CSR');
-      await userEvent.click(generateButton);
+        const generateButton = screen.getByText('Generate CSR');
+        await userEvent.click(generateButton);
 
-      // Wait for private key modal
-      await waitFor(() => {
-        expect(screen.getByText(/Save Your Private Key/i)).toBeInTheDocument();
-      });
+        // Wait for private key modal
+        await waitFor(() => {
+          expect(
+            screen.getByText(/Save Your Private Key/i),
+          ).toBeInTheDocument();
+        });
 
-      // Wait 3+ seconds for checkbox to appear
-      await waitFor(() => {
-        expect(screen.getByText(/I have securely saved/i)).toBeInTheDocument();
-      }, { timeout: 4000 });
+        // Wait 3+ seconds for checkbox to appear
+        await waitFor(
+          () => {
+            expect(
+              screen.getByText(/I have securely saved/i),
+            ).toBeInTheDocument();
+          },
+          { timeout: 4000 },
+        );
 
-      // Check the box
-      const checkbox = screen.getByRole('checkbox');
-      await userEvent.click(checkbox);
+        // Check the box
+        const checkbox = screen.getByRole('checkbox');
+        await userEvent.click(checkbox);
 
-      // Click continue
-      const continueButton = screen.getByText('Continue');
-      await userEvent.click(continueButton);
+        // Click continue
+        const continueButton = screen.getByText('Continue');
+        await userEvent.click(continueButton);
 
-      // Verify callback only received CSR PEM, not private key
-      await waitFor(() => {
-        expect(mockOnCsrGenerated).toHaveBeenCalledTimes(1);
-        const callArg = mockOnCsrGenerated.mock.calls[0][0];
-        expect(callArg).toContain('CERTIFICATE REQUEST');
-        expect(callArg).not.toContain('PRIVATE KEY');
-      });
-    });
+        // Verify callback only received CSR PEM, not private key
+        await waitFor(() => {
+          expect(mockOnCsrGenerated).toHaveBeenCalledTimes(1);
+          const callArg = mockOnCsrGenerated.mock.calls[0][0];
+          expect(callArg).toContain('CERTIFICATE REQUEST');
+          expect(callArg).not.toContain('PRIVATE KEY');
+        });
+      },
+    );
   });
 
   describe('Checkpoint Security (3-second delay)', () => {
@@ -169,9 +182,12 @@ describe('CsrGenerator - Security Tests', () => {
       });
 
       // After 3+ seconds, checkbox should appear
-      await waitFor(() => {
-        expect(screen.getByRole('checkbox')).toBeInTheDocument();
-      }, { timeout: 4000 });
+      await waitFor(
+        () => {
+          expect(screen.getByRole('checkbox')).toBeInTheDocument();
+        },
+        { timeout: 4000 },
+      );
     });
   });
 

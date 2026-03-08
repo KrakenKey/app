@@ -21,6 +21,7 @@ import { CreateTlsCrtDto } from './dto/create-tls-crt.dto';
 import { UpdateTlsCrtDto } from './dto/update-tls-crt.dto';
 import { RevokeTlsCrtDto } from './dto/revoke-tls-crt.dto';
 import { JwtOrApiKeyGuard } from '../../auth/guards/jwt-or-api-key.guard';
+import type { RequestWithUser } from '../../auth/interfaces/request-with-user.interface';
 import { RateLimitCategoryDecorator } from '../../throttler/decorators/rate-limit-category.decorator';
 import { RateLimitCategory } from '../../throttler/interfaces/rate-limit-category.enum';
 
@@ -39,7 +40,7 @@ export class TlsController {
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
-  findAll(@Request() req: { user: { userId: string } }) {
+  findAll(@Request() req: RequestWithUser) {
     return this.tlsService.findAll(req.user.userId);
   }
 
@@ -49,7 +50,7 @@ export class TlsController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @RateLimitCategoryDecorator(RateLimitCategory.EXPENSIVE)
   create(
-    @Request() req: { user: { userId: string } },
+    @Request() req: RequestWithUser,
     @Body() createTlsCrtDto: CreateTlsCrtDto,
   ) {
     return this.tlsService.create(req.user.userId, createTlsCrtDto);
@@ -62,10 +63,7 @@ export class TlsController {
   @ApiResponse({ status: 400, description: 'Certificate not yet issued' })
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
-  getDetails(
-    @Request() req: { user: { userId: string } },
-    @Param('id') id: string,
-  ) {
+  getDetails(@Request() req: RequestWithUser, @Param('id') id: string) {
     return this.tlsService.getDetails(+id, req.user.userId);
   }
 
@@ -75,10 +73,7 @@ export class TlsController {
   @ApiResponse({ status: 200, description: 'Certificate details' })
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
-  findOne(
-    @Request() req: { user: { userId: string } },
-    @Param('id') id: string,
-  ) {
+  findOne(@Request() req: RequestWithUser, @Param('id') id: string) {
     return this.tlsService.findOne(+id, req.user.userId);
   }
 
@@ -89,7 +84,7 @@ export class TlsController {
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
   update(
-    @Request() req: { user: { userId: string } },
+    @Request() req: RequestWithUser,
     @Param('id') id: string,
     @Body() updateTlsCrtDto: UpdateTlsCrtDto,
   ) {
@@ -104,7 +99,7 @@ export class TlsController {
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @RateLimitCategoryDecorator(RateLimitCategory.EXPENSIVE)
   revoke(
-    @Request() req: { user: { userId: string } },
+    @Request() req: RequestWithUser,
     @Param('id') id: string,
     @Body() revokeTlsCrtDto: RevokeTlsCrtDto,
   ) {
@@ -121,10 +116,7 @@ export class TlsController {
   })
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
-  remove(
-    @Request() req: { user: { userId: string } },
-    @Param('id') id: string,
-  ) {
+  remove(@Request() req: RequestWithUser, @Param('id') id: string) {
     return this.tlsService.remove(+id, req.user.userId);
   }
 
@@ -134,7 +126,7 @@ export class TlsController {
   @ApiResponse({ status: 200, description: 'Certificate renewal initiated' })
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @RateLimitCategoryDecorator(RateLimitCategory.EXPENSIVE)
-  renew(@Request() req: { user: { userId: string } }, @Param('id') id: string) {
+  renew(@Request() req: RequestWithUser, @Param('id') id: string) {
     return this.tlsService.renew(+id, req.user.userId);
   }
 
@@ -145,7 +137,7 @@ export class TlsController {
   @ApiResponse({ status: 400, description: 'Certificate not in failed state' })
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @RateLimitCategoryDecorator(RateLimitCategory.EXPENSIVE)
-  retry(@Request() req: { user: { userId: string } }, @Param('id') id: string) {
+  retry(@Request() req: RequestWithUser, @Param('id') id: string) {
     return this.tlsService.retry(+id, req.user.userId);
   }
 }

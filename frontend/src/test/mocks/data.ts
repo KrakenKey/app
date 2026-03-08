@@ -35,7 +35,8 @@ export const mockDomains: Domain[] = [
 export const mockCerts: TlsCert[] = [
   {
     id: 1,
-    rawCsr: '-----BEGIN CERTIFICATE REQUEST-----\nfake-csr\n-----END CERTIFICATE REQUEST-----',
+    rawCsr:
+      '-----BEGIN CERTIFICATE REQUEST-----\nfake-csr\n-----END CERTIFICATE REQUEST-----',
     parsedCsr: {
       subject: [{ name: 'commonName', shortName: 'CN', value: 'example.com' }],
       attributes: [],
@@ -50,7 +51,8 @@ export const mockCerts: TlsCert[] = [
         },
       ],
     },
-    crtPem: '-----BEGIN CERTIFICATE-----\nfake-cert-pem\n-----END CERTIFICATE-----',
+    crtPem:
+      '-----BEGIN CERTIFICATE-----\nfake-cert-pem\n-----END CERTIFICATE-----',
     status: 'issued',
     expiresAt: '2026-01-01T00:00:00.000Z',
     lastRenewedAt: null,
@@ -64,7 +66,8 @@ export const mockCerts: TlsCert[] = [
   },
   {
     id: 2,
-    rawCsr: '-----BEGIN CERTIFICATE REQUEST-----\nfake-csr-2\n-----END CERTIFICATE REQUEST-----',
+    rawCsr:
+      '-----BEGIN CERTIFICATE REQUEST-----\nfake-csr-2\n-----END CERTIFICATE REQUEST-----',
     parsedCsr: {
       subject: [{ name: 'commonName', shortName: 'CN', value: 'pending.com' }],
       attributes: [],

@@ -12,8 +12,8 @@ const { mockDeleteAccount, mockApi, mockToast } = vi.hoisted(() => ({
 
 const stableUser = { ...mockUser };
 
-vi.mock('../../context/AuthContext', async () => {
-  const actual = await vi.importActual('../../context/AuthContext');
+vi.mock('../../hooks/useAuth', async () => {
+  const actual = await vi.importActual('../../hooks/useAuth');
   return {
     ...actual,
     useAuth: () => ({
@@ -66,7 +66,9 @@ describe('Settings', () => {
     });
     expect(screen.getByText(mockProfile.email)).toBeInTheDocument();
     expect(screen.getByText(mockProfile.groups.join(', '))).toBeInTheDocument();
-    expect(screen.getByText(new Date(mockProfile.createdAt).toLocaleDateString())).toBeInTheDocument();
+    expect(
+      screen.getByText(new Date(mockProfile.createdAt).toLocaleDateString()),
+    ).toBeInTheDocument();
   });
 
   it('renders resource counts', async () => {
@@ -81,7 +83,9 @@ describe('Settings', () => {
   it('populates display name from profile', async () => {
     render(<Settings />);
     await waitFor(() => {
-      expect(screen.getByPlaceholderText('Enter display name')).toHaveValue('Test Display Name');
+      expect(screen.getByPlaceholderText('Enter display name')).toHaveValue(
+        'Test Display Name',
+      );
     });
   });
 
@@ -93,7 +97,9 @@ describe('Settings', () => {
 
     render(<Settings />);
     await waitFor(() => {
-      expect(screen.getByPlaceholderText('Enter display name')).toBeInTheDocument();
+      expect(
+        screen.getByPlaceholderText('Enter display name'),
+      ).toBeInTheDocument();
     });
 
     const input = screen.getByPlaceholderText('Enter display name');
@@ -126,7 +132,9 @@ describe('Settings', () => {
 
     await user.click(screen.getByText('Delete Account'));
 
-    expect(screen.getByText(/To confirm, type your username/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/To confirm, type your username/),
+    ).toBeInTheDocument();
     expect(screen.getByText('Cancel')).toBeInTheDocument();
     expect(screen.getByText('Permanently Delete Account')).toBeInTheDocument();
   });
@@ -158,7 +166,10 @@ describe('Settings', () => {
     });
 
     await user.click(screen.getByText('Delete Account'));
-    await user.type(screen.getByPlaceholderText(mockUser.username), mockUser.username);
+    await user.type(
+      screen.getByPlaceholderText(mockUser.username),
+      mockUser.username,
+    );
     await user.click(screen.getByText('Permanently Delete Account'));
 
     await waitFor(() => {

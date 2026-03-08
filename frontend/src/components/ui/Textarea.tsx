@@ -6,13 +6,23 @@ interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   helpText?: string;
 }
 
-export function Textarea({ label, error, helpText, className = '', id, ...props }: TextareaProps) {
+export function Textarea({
+  label,
+  error,
+  helpText,
+  className = '',
+  id,
+  ...props
+}: TextareaProps) {
   const textareaId = id || label?.toLowerCase().replace(/\s+/g, '-');
 
   return (
     <div className="flex flex-col gap-1.5">
       {label && (
-        <label htmlFor={textareaId} className="text-sm font-medium text-zinc-300">
+        <label
+          htmlFor={textareaId}
+          className="text-sm font-medium text-zinc-300"
+        >
           {label}
         </label>
       )}
@@ -22,7 +32,9 @@ export function Textarea({ label, error, helpText, className = '', id, ...props 
         {...props}
       />
       {error && <p className="text-xs text-red-400">{error}</p>}
-      {helpText && !error && <p className="text-xs text-zinc-500">{helpText}</p>}
+      {helpText && !error && (
+        <p className="text-xs text-zinc-500">{helpText}</p>
+      )}
     </div>
   );
 }

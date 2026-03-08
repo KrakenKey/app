@@ -48,7 +48,9 @@ export default function Feedback() {
         />
         <Card className="border-emerald-500/20 bg-emerald-500/10 text-center">
           <Check className="w-8 h-8 text-emerald-400 mx-auto mb-3" />
-          <p className="text-emerald-400 font-medium">Thank you for your feedback!</p>
+          <p className="text-emerald-400 font-medium">
+            Thank you for your feedback!
+          </p>
         </Card>
         <Button
           variant="primary"
@@ -99,7 +101,12 @@ export default function Feedback() {
             </div>
           </div>
 
-          <Button type="submit" variant="primary" disabled={submitting} className="mt-4">
+          <Button
+            type="submit"
+            variant="primary"
+            disabled={submitting}
+            className="mt-4"
+          >
             {submitting ? 'Submitting...' : 'Submit Feedback'}
           </Button>
         </form>

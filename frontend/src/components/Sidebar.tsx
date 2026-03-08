@@ -10,7 +10,7 @@ import {
   Menu,
   X,
 } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../hooks/useAuth';
 
 const navItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Overview', end: true },
@@ -56,11 +56,16 @@ export function Sidebar({ open, onClose }: SidebarProps) {
         {/* Brand */}
         <div className="px-5 py-6 flex items-center justify-between">
           <button
-            onClick={() => { navigate('/dashboard'); onClose(); }}
+            onClick={() => {
+              navigate('/dashboard');
+              onClose();
+            }}
             className="flex items-center gap-2.5 cursor-pointer bg-transparent border-none"
           >
             <img src="/favicon.svg" alt="" className="w-7 h-7" />
-            <span className="text-lg font-bold text-zinc-100 tracking-tight">KrakenKey</span>
+            <span className="text-lg font-bold text-zinc-100 tracking-tight">
+              KrakenKey
+            </span>
           </button>
           <button
             onClick={onClose}
@@ -103,7 +108,9 @@ export function Sidebar({ open, onClose }: SidebarProps) {
               {user?.username?.charAt(0).toUpperCase() || '?'}
             </div>
             <div className="min-w-0">
-              <p className="text-sm font-medium text-zinc-200 truncate">{user?.displayName || user?.username}</p>
+              <p className="text-sm font-medium text-zinc-200 truncate">
+                {user?.displayName || user?.username}
+              </p>
               <p className="text-xs text-zinc-500 truncate">{user?.email}</p>
             </div>
           </div>

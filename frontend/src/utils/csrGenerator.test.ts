@@ -21,7 +21,11 @@ import {
   getSecurityLevel,
   getGenerationTime,
 } from './csrGenerator';
-import type { KeyType, CsrSubjectFields, CsrSanFields } from '@krakenkey/shared';
+import type {
+  KeyType,
+  CsrSubjectFields,
+  CsrSanFields,
+} from '@krakenkey/shared';
 
 describe('csrGenerator', () => {
   describe('isBrowserCompatible', () => {
@@ -52,7 +56,9 @@ describe('csrGenerator', () => {
         publicKey: { type: 'public' } as CryptoKey,
       };
 
-      vi.spyOn(crypto.subtle, 'generateKey').mockResolvedValue(mockKeyPair as CryptoKeyPair);
+      vi.spyOn(crypto.subtle, 'generateKey').mockResolvedValue(
+        mockKeyPair as CryptoKeyPair,
+      );
 
       const keyPair = await generateKeyPair('RSA-2048');
 
@@ -64,7 +70,7 @@ describe('csrGenerator', () => {
           hash: 'SHA-256',
         },
         true,
-        ['sign', 'verify']
+        ['sign', 'verify'],
       );
       expect(keyPair).toEqual(mockKeyPair);
     });
@@ -75,7 +81,9 @@ describe('csrGenerator', () => {
         publicKey: { type: 'public' } as CryptoKey,
       };
 
-      vi.spyOn(crypto.subtle, 'generateKey').mockResolvedValue(mockKeyPair as CryptoKeyPair);
+      vi.spyOn(crypto.subtle, 'generateKey').mockResolvedValue(
+        mockKeyPair as CryptoKeyPair,
+      );
 
       const keyPair = await generateKeyPair('RSA-4096');
 
@@ -87,7 +95,7 @@ describe('csrGenerator', () => {
           hash: 'SHA-256',
         },
         true,
-        ['sign', 'verify']
+        ['sign', 'verify'],
       );
       expect(keyPair).toEqual(mockKeyPair);
     });
@@ -98,7 +106,9 @@ describe('csrGenerator', () => {
         publicKey: { type: 'public' } as CryptoKey,
       };
 
-      vi.spyOn(crypto.subtle, 'generateKey').mockResolvedValue(mockKeyPair as CryptoKeyPair);
+      vi.spyOn(crypto.subtle, 'generateKey').mockResolvedValue(
+        mockKeyPair as CryptoKeyPair,
+      );
 
       const keyPair = await generateKeyPair('ECDSA-P256');
 
@@ -108,7 +118,7 @@ describe('csrGenerator', () => {
           namedCurve: 'P-256',
         },
         true,
-        ['sign', 'verify']
+        ['sign', 'verify'],
       );
       expect(keyPair).toEqual(mockKeyPair);
     });
@@ -119,7 +129,9 @@ describe('csrGenerator', () => {
         publicKey: { type: 'public' } as CryptoKey,
       };
 
-      vi.spyOn(crypto.subtle, 'generateKey').mockResolvedValue(mockKeyPair as CryptoKeyPair);
+      vi.spyOn(crypto.subtle, 'generateKey').mockResolvedValue(
+        mockKeyPair as CryptoKeyPair,
+      );
 
       const keyPair = await generateKeyPair('ECDSA-P384');
 
@@ -129,13 +141,15 @@ describe('csrGenerator', () => {
           namedCurve: 'P-384',
         },
         true,
-        ['sign', 'verify']
+        ['sign', 'verify'],
       );
       expect(keyPair).toEqual(mockKeyPair);
     });
 
     it('should throw error for unsupported key type', async () => {
-      await expect(generateKeyPair('INVALID' as KeyType)).rejects.toThrow('Unsupported key type');
+      await expect(generateKeyPair('INVALID' as KeyType)).rejects.toThrow(
+        'Unsupported key type',
+      );
     });
 
     it('should throw error when browser is not compatible', async () => {
@@ -143,16 +157,22 @@ describe('csrGenerator', () => {
       // @ts-expect-error - testing edge case
       delete globalThis.window;
 
-      await expect(generateKeyPair('RSA-2048')).rejects.toThrow('WebCrypto API not supported');
+      await expect(generateKeyPair('RSA-2048')).rejects.toThrow(
+        'WebCrypto API not supported',
+      );
 
       // Restore
       globalThis.window = originalWindow;
     });
 
     it('should handle key generation failure', async () => {
-      vi.spyOn(crypto.subtle, 'generateKey').mockRejectedValue(new Error('Crypto failure'));
+      vi.spyOn(crypto.subtle, 'generateKey').mockRejectedValue(
+        new Error('Crypto failure'),
+      );
 
-      await expect(generateKeyPair('RSA-2048')).rejects.toThrow('Key generation failed');
+      await expect(generateKeyPair('RSA-2048')).rejects.toThrow(
+        'Key generation failed',
+      );
     });
   });
 
@@ -165,7 +185,10 @@ describe('csrGenerator', () => {
 
       const pem = await exportPrivateKeyToPem(mockPrivateKey);
 
-      expect(crypto.subtle.exportKey).toHaveBeenCalledWith('pkcs8', mockPrivateKey);
+      expect(crypto.subtle.exportKey).toHaveBeenCalledWith(
+        'pkcs8',
+        mockPrivateKey,
+      );
       expect(pem).toContain('-----BEGIN PRIVATE KEY-----');
       expect(pem).toContain('-----END PRIVATE KEY-----');
     });
@@ -173,9 +196,13 @@ describe('csrGenerator', () => {
     it('should handle export failure', async () => {
       const mockPrivateKey = { type: 'private' } as CryptoKey;
 
-      vi.spyOn(crypto.subtle, 'exportKey').mockRejectedValue(new Error('Export failed'));
+      vi.spyOn(crypto.subtle, 'exportKey').mockRejectedValue(
+        new Error('Export failed'),
+      );
 
-      await expect(exportPrivateKeyToPem(mockPrivateKey)).rejects.toThrow('Private key export failed');
+      await expect(exportPrivateKeyToPem(mockPrivateKey)).rejects.toThrow(
+        'Private key export failed',
+      );
     });
   });
 
@@ -188,7 +215,10 @@ describe('csrGenerator', () => {
 
       const pem = await exportPublicKeyToPem(mockPublicKey);
 
-      expect(crypto.subtle.exportKey).toHaveBeenCalledWith('spki', mockPublicKey);
+      expect(crypto.subtle.exportKey).toHaveBeenCalledWith(
+        'spki',
+        mockPublicKey,
+      );
       expect(pem).toContain('-----BEGIN PUBLIC KEY-----');
       expect(pem).toContain('-----END PUBLIC KEY-----');
     });
@@ -196,15 +226,20 @@ describe('csrGenerator', () => {
     it('should handle export failure', async () => {
       const mockPublicKey = { type: 'public' } as CryptoKey;
 
-      vi.spyOn(crypto.subtle, 'exportKey').mockRejectedValue(new Error('Export failed'));
+      vi.spyOn(crypto.subtle, 'exportKey').mockRejectedValue(
+        new Error('Export failed'),
+      );
 
-      await expect(exportPublicKeyToPem(mockPublicKey)).rejects.toThrow('Public key export failed');
+      await expect(exportPublicKeyToPem(mockPublicKey)).rejects.toThrow(
+        'Public key export failed',
+      );
     });
   });
 
   describe('sanitizeErrorMessage', () => {
     it('should redact PEM blocks from error messages', () => {
-      const message = 'Error: -----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgk...\n-----END PRIVATE KEY-----';
+      const message =
+        'Error: -----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgk...\n-----END PRIVATE KEY-----';
       const sanitized = sanitizeErrorMessage(message);
 
       expect(sanitized).not.toContain('BEGIN PRIVATE KEY');
@@ -212,7 +247,8 @@ describe('csrGenerator', () => {
     });
 
     it('should redact long hex strings from error messages', () => {
-      const message = 'Error: Key material 3082025e02010002818100ab1234567890abcdef1234567890abcdef';
+      const message =
+        'Error: Key material 3082025e02010002818100ab1234567890abcdef1234567890abcdef';
       const sanitized = sanitizeErrorMessage(message);
 
       expect(sanitized).not.toContain('ab1234567890abcdef');
@@ -223,7 +259,9 @@ describe('csrGenerator', () => {
       const message = 'SubtleCrypto.generateKey failed: invalid algorithm';
       const sanitized = sanitizeErrorMessage(message);
 
-      expect(sanitized).toBe('Cryptographic operation failed. Please try again or contact support.');
+      expect(sanitized).toBe(
+        'Cryptographic operation failed. Please try again or contact support.',
+      );
     });
 
     it('should leave safe error messages unchanged', () => {
@@ -254,11 +292,15 @@ describe('csrGenerator', () => {
     });
 
     it('should return correct security level for ECDSA-P256', () => {
-      expect(getSecurityLevel('ECDSA-P256')).toBe('~128-bit security (~3072-bit RSA equivalent)');
+      expect(getSecurityLevel('ECDSA-P256')).toBe(
+        '~128-bit security (~3072-bit RSA equivalent)',
+      );
     });
 
     it('should return correct security level for ECDSA-P384', () => {
-      expect(getSecurityLevel('ECDSA-P384')).toBe('~192-bit security (~7600-bit RSA equivalent)');
+      expect(getSecurityLevel('ECDSA-P384')).toBe(
+        '~192-bit security (~7600-bit RSA equivalent)',
+      );
     });
 
     it('should return "Unknown" for invalid key type', () => {
@@ -309,8 +351,10 @@ describe('csrGenerator', () => {
       // @ts-expect-error - testing edge case
       delete globalThis.window;
 
-      await expect(generateCsr('RSA-2048', mockSubject, mockSans)).rejects.toThrow(
-        'Your browser does not support cryptographic operations'
+      await expect(
+        generateCsr('RSA-2048', mockSubject, mockSans),
+      ).rejects.toThrow(
+        'Your browser does not support cryptographic operations',
       );
 
       // Restore
@@ -319,10 +363,14 @@ describe('csrGenerator', () => {
 
     it('should sanitize errors from generateCsr', async () => {
       vi.spyOn(crypto.subtle, 'generateKey').mockRejectedValue(
-        new Error('Crypto error with -----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----')
+        new Error(
+          'Crypto error with -----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----',
+        ),
       );
 
-      await expect(generateCsr('RSA-2048', mockSubject, mockSans)).rejects.toThrow();
+      await expect(
+        generateCsr('RSA-2048', mockSubject, mockSans),
+      ).rejects.toThrow();
 
       // Error should be sanitized (no PEM blocks)
       try {

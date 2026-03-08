@@ -66,7 +66,9 @@ describe('UsersController', () => {
     });
 
     it('allows admin access to other users', () => {
-      const adminReq = { user: { userId: 'admin-user', groups: ['authentik Admins'] } } as any;
+      const adminReq = {
+        user: { userId: 'admin-user', groups: ['authentik Admins'] },
+      } as any;
       const user = { id: userId, username: 'alice' };
       mockService.findOne.mockReturnValue(user);
 
@@ -83,7 +85,7 @@ describe('UsersController', () => {
       const dto = { username: 'bob' };
       mockService.update.mockReturnValue({ affected: 1 });
 
-      controller.update(userId, dto as any, mockReq);
+      void controller.update(userId, dto as any, mockReq);
 
       expect(mockService.update).toHaveBeenCalledWith(userId, dto);
     });
@@ -98,9 +100,12 @@ describe('UsersController', () => {
   // ─── remove ───────────────────────────────────────────────────────────
   describe('remove', () => {
     it('delegates to accountDeletionService when authorized', () => {
-      mockAccountDeletion.deleteAccount.mockResolvedValue({ deleted: true, certsRevoked: 0 });
+      mockAccountDeletion.deleteAccount.mockResolvedValue({
+        deleted: true,
+        certsRevoked: 0,
+      });
 
-      controller.remove(userId, mockReq);
+      void controller.remove(userId, mockReq);
 
       expect(mockAccountDeletion.deleteAccount).toHaveBeenCalledWith(userId);
     });

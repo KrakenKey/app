@@ -9,7 +9,13 @@ interface ModalProps {
   className?: string;
 }
 
-export function Modal({ open, onClose, title, children, className = '' }: ModalProps) {
+export function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  className = '',
+}: ModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {

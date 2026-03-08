@@ -69,7 +69,9 @@ describe('api service', () => {
       server.use(
         http.get(`${API_URL}/auth/profile`, () => {
           return new HttpResponse(
-            JSON.stringify({ message: ['Field is required', 'Invalid format'] }),
+            JSON.stringify({
+              message: ['Field is required', 'Invalid format'],
+            }),
             { status: 422 },
           );
         }),

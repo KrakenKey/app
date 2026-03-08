@@ -1,4 +1,10 @@
-import { IsNotEmpty, IsString, IsOptional, IsISO8601 } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsString,
+  IsOptional,
+  IsISO8601,
+  MaxLength,
+} from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateApiKeyDto {
@@ -10,6 +16,7 @@ export class CreateApiKeyDto {
   @IsOptional()
   @IsString()
   @IsNotEmpty()
+  @MaxLength(100)
   name: string = 'default';
 
   @ApiPropertyOptional({

@@ -138,7 +138,7 @@ describe('TlsService', () => {
     const createDto = { csrPem: 'valid-csr-pem' };
 
     it('should successfully create certificate when domain is authorized', async () => {
-      jest.spyOn(csrUtilService, 'validateAndParse').mockReturnValue({
+      jest.spyOn(csrUtilService, 'validateAndParse').mockResolvedValue({
         raw: 'pem-data',
         parsed: {} as ParsedCsr,
         domains: ['example.com'],
@@ -184,7 +184,7 @@ describe('TlsService', () => {
     });
 
     it('should throw error when CSR contains unauthorized domain', async () => {
-      jest.spyOn(csrUtilService, 'validateAndParse').mockReturnValue({
+      jest.spyOn(csrUtilService, 'validateAndParse').mockResolvedValue({
         raw: 'pem-data',
         parsed: {} as ParsedCsr,
         domains: ['example.com', 'unauthorized.com'],
@@ -210,7 +210,7 @@ describe('TlsService', () => {
     });
 
     it('should allow CSR with multiple authorized domains', async () => {
-      jest.spyOn(csrUtilService, 'validateAndParse').mockReturnValue({
+      jest.spyOn(csrUtilService, 'validateAndParse').mockResolvedValue({
         raw: 'pem-data',
         parsed: {} as ParsedCsr,
         domains: ['example.com', 'www.example.com', 'api.example.com'],
@@ -243,7 +243,7 @@ describe('TlsService', () => {
     });
 
     it('should accept ECDSA CSRs with correct bit length', async () => {
-      jest.spyOn(csrUtilService, 'validateAndParse').mockReturnValue({
+      jest.spyOn(csrUtilService, 'validateAndParse').mockResolvedValue({
         raw: 'pem-data',
         parsed: {} as ParsedCsr,
         domains: ['example.com'],
@@ -572,9 +572,9 @@ describe('TlsService', () => {
       const cert = { id: 1, status: 'issued', user: { id: 'u1' } };
       mockRepository.findOne.mockResolvedValue(cert);
 
-      expect(
-        await service.findOneInternal(1, { relations: ['user'] }),
-      ).toEqual(cert);
+      expect(await service.findOneInternal(1, { relations: ['user'] })).toEqual(
+        cert,
+      );
       expect(mockRepository.findOne).toHaveBeenCalledWith({
         where: { id: 1 },
         relations: ['user'],

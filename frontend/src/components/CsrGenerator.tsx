@@ -1,7 +1,19 @@
 import { useState, useEffect } from 'react';
-import { AlertTriangle, Download, Copy, Plus, Trash2, Loader2 } from 'lucide-react';
-import type { KeyType, CsrSubjectFields, CsrSanFields, CsrPreviewData } from '@krakenkey/shared';
-import { useDomains } from '../context/DomainsContext';
+import {
+  AlertTriangle,
+  Download,
+  Copy,
+  Plus,
+  Trash2,
+  Loader2,
+} from 'lucide-react';
+import type {
+  KeyType,
+  CsrSubjectFields,
+  CsrSanFields,
+  CsrPreviewData,
+} from '@krakenkey/shared';
+import { useDomains } from '../hooks/useDomains';
 import {
   generateCsr,
   isBrowserCompatible,
@@ -27,7 +39,10 @@ interface CsrGeneratorProps {
   onCancel: () => void;
 }
 
-export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorProps) {
+export default function CsrGenerator({
+  onCsrGenerated,
+  onCancel,
+}: CsrGeneratorProps) {
   const [compatible, setCompatible] = useState(true);
 
   // Form state
@@ -58,14 +73,18 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
   const [showSaveCheckbox, setShowSaveCheckbox] = useState(false);
   const [privateKeySaved, setPrivateKeySaved] = useState(false);
 
-  const { verifiedDomains, loading: domainsLoading, fetchDomains } = useDomains();
+  const {
+    verifiedDomains,
+    loading: domainsLoading,
+    fetchDomains,
+  } = useDomains();
 
   useEffect(() => {
     if (!isBrowserCompatible()) {
       setCompatible(false);
       setError(
         'Your browser does not support cryptographic operations. ' +
-        'Please upgrade to the latest version of Chrome, Firefox, Safari, or Edge.'
+          'Please upgrade to the latest version of Chrome, Firefox, Safari, or Edge.',
       );
     }
     fetchDomains();
@@ -100,25 +119,28 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
       return;
     }
 
-    const totalSans = sanDnsNames.filter(d => d.trim()).length
-      + sanIpAddresses.filter(i => i.trim()).length
-      + sanEmailAddresses.filter(e => e.trim()).length;
+    const totalSans =
+      sanDnsNames.filter((d) => d.trim()).length +
+      sanIpAddresses.filter((i) => i.trim()).length +
+      sanEmailAddresses.filter((e) => e.trim()).length;
     if (totalSans > 100) {
-      setError('Too many Subject Alternative Names. Maximum 100 entries allowed.');
+      setError(
+        'Too many Subject Alternative Names. Maximum 100 entries allowed.',
+      );
       toast.error('Too many SAN entries');
       return;
     }
 
     const sanErrors: string[] = [];
-    for (const dns of sanDnsNames.filter(d => d.trim())) {
+    for (const dns of sanDnsNames.filter((d) => d.trim())) {
       const err = validateDnsName(dns);
       if (err) sanErrors.push(`DNS "${dns}": ${err}`);
     }
-    for (const ip of sanIpAddresses.filter(i => i.trim())) {
+    for (const ip of sanIpAddresses.filter((i) => i.trim())) {
       const err = validateIpAddress(ip);
       if (err) sanErrors.push(`IP "${ip}": ${err}`);
     }
-    for (const email of sanEmailAddresses.filter(e => e.trim())) {
+    for (const email of sanEmailAddresses.filter((e) => e.trim())) {
       const err = validateEmail(email);
       if (err) sanErrors.push(`Email "${email}": ${err}`);
     }
@@ -128,9 +150,15 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
       return;
     }
 
-    const allDomains = [commonName.trim(), ...sanDnsNames.filter(d => d.trim())];
-    const verifiedDomainNames = verifiedDomains.map(d => d.hostname);
-    const authError = validateDomainAuthorization(allDomains, verifiedDomainNames);
+    const allDomains = [
+      commonName.trim(),
+      ...sanDnsNames.filter((d) => d.trim()),
+    ];
+    const verifiedDomainNames = verifiedDomains.map((d) => d.hostname);
+    const authError = validateDomainAuthorization(
+      allDomains,
+      verifiedDomainNames,
+    );
     if (authError) {
       setError(authError);
       toast.error('Domain authorization failed');
@@ -138,9 +166,9 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
     }
 
     const sans: CsrSanFields = {
-      dnsNames: sanDnsNames.filter(d => d.trim()),
-      ipAddresses: sanIpAddresses.filter(ip => ip.trim()),
-      emailAddresses: sanEmailAddresses.filter(e => e.trim()),
+      dnsNames: sanDnsNames.filter((d) => d.trim()),
+      ipAddresses: sanIpAddresses.filter((ip) => ip.trim()),
+      emailAddresses: sanEmailAddresses.filter((e) => e.trim()),
     };
 
     try {
@@ -161,7 +189,8 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
       setShowPrivateKeyModal(true);
       toast.success('CSR generated successfully!');
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'CSR generation failed';
+      const message =
+        err instanceof Error ? err.message : 'CSR generation failed';
       setError(message);
       toast.error(message);
     } finally {
@@ -202,7 +231,9 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
         <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 mb-4 text-red-400">
           {error}
         </div>
-        <Button variant="secondary" onClick={onCancel}>Close</Button>
+        <Button variant="secondary" onClick={onCancel}>
+          Close
+        </Button>
       </div>
     );
   }
@@ -210,28 +241,42 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
   if (generatedCsr && csrPreview && !showPrivateKeyModal) {
     return (
       <div className="max-w-3xl mx-auto">
-        <h3 className="text-lg font-semibold text-zinc-100 mb-4">CSR Generated Successfully</h3>
+        <h3 className="text-lg font-semibold text-zinc-100 mb-4">
+          CSR Generated Successfully
+        </h3>
 
         <Card className="mb-4">
-          <h4 className="text-sm font-medium text-zinc-400 mb-3">CSR Preview</h4>
+          <h4 className="text-sm font-medium text-zinc-400 mb-3">
+            CSR Preview
+          </h4>
           <div className="space-y-2 text-sm mb-4">
             <div className="flex gap-2">
               <span className="text-zinc-500 min-w-[180px]">Common Name:</span>
-              <span className="text-zinc-200 font-mono">{csrPreview.commonName}</span>
+              <span className="text-zinc-200 font-mono">
+                {csrPreview.commonName}
+              </span>
             </div>
             {csrPreview.sans.length > 0 && (
               <div className="flex gap-2">
-                <span className="text-zinc-500 min-w-[180px]">Subject Alternative Names:</span>
-                <span className="text-zinc-200 font-mono">{csrPreview.sans.join(', ')}</span>
+                <span className="text-zinc-500 min-w-[180px]">
+                  Subject Alternative Names:
+                </span>
+                <span className="text-zinc-200 font-mono">
+                  {csrPreview.sans.join(', ')}
+                </span>
               </div>
             )}
             <div className="flex gap-2">
               <span className="text-zinc-500 min-w-[180px]">Key Type:</span>
-              <span className="text-zinc-200 font-mono">{csrPreview.keyType}</span>
+              <span className="text-zinc-200 font-mono">
+                {csrPreview.keyType}
+              </span>
             </div>
             <div className="flex gap-2">
               <span className="text-zinc-500 min-w-[180px]">Key Size:</span>
-              <span className="text-zinc-200 font-mono">{csrPreview.keySize} bits ({csrPreview.securityLevel})</span>
+              <span className="text-zinc-200 font-mono">
+                {csrPreview.keySize} bits ({csrPreview.securityLevel})
+              </span>
             </div>
           </div>
 
@@ -257,7 +302,8 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
         </Card>
 
         <div className="bg-cyan-500/10 border border-cyan-500/30 rounded-lg p-4 text-sm text-cyan-400">
-          The CSR has been populated in the certificate request form. Review it and click "Submit CSR" to request your certificate.
+          The CSR has been populated in the certificate request form. Review it
+          and click "Submit CSR" to request your certificate.
         </div>
       </div>
     );
@@ -265,9 +311,12 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
 
   return (
     <div className="max-w-3xl mx-auto">
-      <h3 className="text-lg font-semibold text-zinc-100 mb-1">Generate Certificate Signing Request</h3>
+      <h3 className="text-lg font-semibold text-zinc-100 mb-1">
+        Generate Certificate Signing Request
+      </h3>
       <p className="text-sm text-zinc-500 mb-6">
-        Generate a CSR with a new cryptographic key pair. Your private key will be generated locally and never sent to the server.
+        Generate a CSR with a new cryptographic key pair. Your private key will
+        be generated locally and never sent to the server.
       </p>
 
       {error && (
@@ -278,7 +327,9 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
 
       {/* Subject Fields */}
       <Card className="mb-6">
-        <h4 className="text-sm font-medium text-zinc-200 mb-4">Subject Information</h4>
+        <h4 className="text-sm font-medium text-zinc-200 mb-4">
+          Subject Information
+        </h4>
 
         <div className="mb-4">
           <label className="block text-sm font-medium text-zinc-300 mb-1.5">
@@ -291,15 +342,20 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
             disabled={generating}
           />
           {fieldErrors.commonName && (
-            <span className="block text-xs text-red-400 mt-1">{fieldErrors.commonName}</span>
+            <span className="block text-xs text-red-400 mt-1">
+              {fieldErrors.commonName}
+            </span>
           )}
           <span className="block text-xs text-zinc-600 mt-1">
-            Must be a verified domain. This is the primary domain for your certificate.
+            Must be a verified domain. This is the primary domain for your
+            certificate.
           </span>
         </div>
 
         <div className="mb-4">
-          <label className="block text-sm font-medium text-zinc-300 mb-1.5">Organization (O)</label>
+          <label className="block text-sm font-medium text-zinc-300 mb-1.5">
+            Organization (O)
+          </label>
           <Input
             value={organization}
             onChange={(e) => setOrganization(e.target.value)}
@@ -310,7 +366,9 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1.5">Organizational Unit (OU)</label>
+            <label className="block text-sm font-medium text-zinc-300 mb-1.5">
+              Organizational Unit (OU)
+            </label>
             <Input
               value={organizationalUnit}
               onChange={(e) => setOrganizationalUnit(e.target.value)}
@@ -319,7 +377,9 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1.5">Locality (L)</label>
+            <label className="block text-sm font-medium text-zinc-300 mb-1.5">
+              Locality (L)
+            </label>
             <Input
               value={locality}
               onChange={(e) => setLocality(e.target.value)}
@@ -331,7 +391,9 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1.5">State/Province (ST)</label>
+            <label className="block text-sm font-medium text-zinc-300 mb-1.5">
+              State/Province (ST)
+            </label>
             <Input
               value={state}
               onChange={(e) => setState(e.target.value)}
@@ -340,7 +402,9 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1.5">Country (C)</label>
+            <label className="block text-sm font-medium text-zinc-300 mb-1.5">
+              Country (C)
+            </label>
             <Input
               value={country}
               onChange={(e) => setCountry(e.target.value)}
@@ -349,23 +413,32 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
               disabled={generating}
             />
             {fieldErrors.country && (
-              <span className="block text-xs text-red-400 mt-1">{fieldErrors.country}</span>
+              <span className="block text-xs text-red-400 mt-1">
+                {fieldErrors.country}
+              </span>
             )}
-            <span className="block text-xs text-zinc-600 mt-1">2-letter ISO code (e.g., US, GB, FR)</span>
+            <span className="block text-xs text-zinc-600 mt-1">
+              2-letter ISO code (e.g., US, GB, FR)
+            </span>
           </div>
         </div>
       </Card>
 
       {/* Subject Alternative Names */}
       <Card className="mb-6">
-        <h4 className="text-sm font-medium text-zinc-200 mb-1">Subject Alternative Names (Optional)</h4>
+        <h4 className="text-sm font-medium text-zinc-200 mb-1">
+          Subject Alternative Names (Optional)
+        </h4>
         <p className="text-xs text-zinc-500 mb-4">
-          Add additional domains, IP addresses, or email addresses to your certificate.
+          Add additional domains, IP addresses, or email addresses to your
+          certificate.
         </p>
 
         {/* DNS Names */}
         <div className="mb-5">
-          <label className="block text-sm font-medium text-zinc-300 mb-2">DNS Names</label>
+          <label className="block text-sm font-medium text-zinc-300 mb-2">
+            DNS Names
+          </label>
           {sanDnsNames.map((dns, idx) => (
             <div key={idx} className="flex gap-2 mb-2">
               <Input
@@ -383,18 +456,27 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
                 size="sm"
                 variant="danger"
                 icon={<Trash2 className="w-3.5 h-3.5" />}
-                onClick={() => setSanDnsNames(sanDnsNames.filter((_, i) => i !== idx))}
+                onClick={() =>
+                  setSanDnsNames(sanDnsNames.filter((_, i) => i !== idx))
+                }
               />
             </div>
           ))}
-          <Button size="sm" variant="ghost" icon={<Plus className="w-3.5 h-3.5" />} onClick={() => setSanDnsNames([...sanDnsNames, ''])}>
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<Plus className="w-3.5 h-3.5" />}
+            onClick={() => setSanDnsNames([...sanDnsNames, ''])}
+          >
             Add DNS Name
           </Button>
         </div>
 
         {/* IP Addresses */}
         <div className="mb-5">
-          <label className="block text-sm font-medium text-zinc-300 mb-2">IP Addresses</label>
+          <label className="block text-sm font-medium text-zinc-300 mb-2">
+            IP Addresses
+          </label>
           {sanIpAddresses.map((ip, idx) => (
             <div key={idx} className="flex gap-2 mb-2">
               <Input
@@ -412,18 +494,27 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
                 size="sm"
                 variant="danger"
                 icon={<Trash2 className="w-3.5 h-3.5" />}
-                onClick={() => setSanIpAddresses(sanIpAddresses.filter((_, i) => i !== idx))}
+                onClick={() =>
+                  setSanIpAddresses(sanIpAddresses.filter((_, i) => i !== idx))
+                }
               />
             </div>
           ))}
-          <Button size="sm" variant="ghost" icon={<Plus className="w-3.5 h-3.5" />} onClick={() => setSanIpAddresses([...sanIpAddresses, ''])}>
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<Plus className="w-3.5 h-3.5" />}
+            onClick={() => setSanIpAddresses([...sanIpAddresses, ''])}
+          >
             Add IP Address
           </Button>
         </div>
 
         {/* Email Addresses */}
         <div>
-          <label className="block text-sm font-medium text-zinc-300 mb-2">Email Addresses</label>
+          <label className="block text-sm font-medium text-zinc-300 mb-2">
+            Email Addresses
+          </label>
           {sanEmailAddresses.map((email, idx) => (
             <div key={idx} className="flex gap-2 mb-2">
               <Input
@@ -441,11 +532,20 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
                 size="sm"
                 variant="danger"
                 icon={<Trash2 className="w-3.5 h-3.5" />}
-                onClick={() => setSanEmailAddresses(sanEmailAddresses.filter((_, i) => i !== idx))}
+                onClick={() =>
+                  setSanEmailAddresses(
+                    sanEmailAddresses.filter((_, i) => i !== idx),
+                  )
+                }
               />
             </div>
           ))}
-          <Button size="sm" variant="ghost" icon={<Plus className="w-3.5 h-3.5" />} onClick={() => setSanEmailAddresses([...sanEmailAddresses, ''])}>
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<Plus className="w-3.5 h-3.5" />}
+            onClick={() => setSanEmailAddresses([...sanEmailAddresses, ''])}
+          >
             Add Email Address
           </Button>
         </div>
@@ -453,10 +553,14 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
 
       {/* Key Type Selector */}
       <Card className="mb-6">
-        <h4 className="text-sm font-medium text-zinc-200 mb-4">Cryptographic Key Type</h4>
+        <h4 className="text-sm font-medium text-zinc-200 mb-4">
+          Cryptographic Key Type
+        </h4>
 
         <div className="space-y-2">
-          {(['ECDSA-P384', 'ECDSA-P256', 'RSA-4096', 'RSA-2048'] as KeyType[]).map((kt) => (
+          {(
+            ['ECDSA-P384', 'ECDSA-P256', 'RSA-4096', 'RSA-2048'] as KeyType[]
+          ).map((kt) => (
             <label
               key={kt}
               className={`flex items-center gap-3 p-3 rounded-lg border-2 cursor-pointer transition-colors ${
@@ -474,11 +578,15 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
                 disabled={generating}
                 className="accent-cyan-500"
               />
-              <span className="font-mono text-sm font-medium text-zinc-200 min-w-[100px]">{kt}</span>
+              <span className="font-mono text-sm font-medium text-zinc-200 min-w-[100px]">
+                {kt}
+              </span>
               <span className="text-xs text-zinc-500 ml-auto">
                 {getSecurityLevel(kt)} &bull; {getGenerationTime(kt)}
               </span>
-              {kt === 'ECDSA-P384' && <Badge variant="success">Recommended</Badge>}
+              {kt === 'ECDSA-P384' && (
+                <Badge variant="success">Recommended</Badge>
+              )}
             </label>
           ))}
         </div>
@@ -486,19 +594,26 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
         {keyType === 'RSA-2048' && (
           <div className="mt-3 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-sm text-amber-400 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-            RSA 2048 is the minimum strength allowed by Let's Encrypt. For better security, we recommend RSA 4096 or ECDSA P-384.
+            RSA 2048 is the minimum strength allowed by Let's Encrypt. For
+            better security, we recommend RSA 4096 or ECDSA P-384.
           </div>
         )}
       </Card>
 
       {/* Actions */}
       <div className="flex justify-end gap-3">
-        <Button variant="secondary" onClick={onCancel} disabled={generating}>Cancel</Button>
+        <Button variant="secondary" onClick={onCancel} disabled={generating}>
+          Cancel
+        </Button>
         <Button
           variant="primary"
           onClick={handleGenerate}
           disabled={generating || domainsLoading}
-          icon={generating ? <Loader2 className="w-4 h-4 animate-spin" /> : undefined}
+          icon={
+            generating ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : undefined
+          }
         >
           {generating ? 'Generating...' : 'Generate CSR'}
         </Button>
@@ -517,14 +632,18 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
         </h3>
 
         <div className="bg-amber-500/10 border-2 border-amber-500/30 rounded-lg p-4 mb-4 space-y-2">
-          <p className="text-sm font-bold text-amber-400">CRITICAL: SAVE THIS PRIVATE KEY NOW</p>
-          <p className="text-sm text-zinc-300">
-            This private key will NOT be shown again and is NOT stored by KrakenKey.
-            You are the sole custodian. Without it, your certificate is useless.
+          <p className="text-sm font-bold text-amber-400">
+            CRITICAL: SAVE THIS PRIVATE KEY NOW
           </p>
           <p className="text-sm text-zinc-300">
-            <strong className="text-amber-400">Security Warning:</strong> Clipboard history tools may retain this key.
-            If you copy it, securely delete it from clipboard history after pasting.
+            This private key will NOT be shown again and is NOT stored by
+            KrakenKey. You are the sole custodian. Without it, your certificate
+            is useless.
+          </p>
+          <p className="text-sm text-zinc-300">
+            <strong className="text-amber-400">Security Warning:</strong>{' '}
+            Clipboard history tools may retain this key. If you copy it,
+            securely delete it from clipboard history after pasting.
           </p>
         </div>
 
@@ -539,10 +658,18 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
         />
 
         <div className="flex gap-3 mb-5">
-          <Button variant="primary" icon={<Download className="w-4 h-4" />} onClick={handleDownloadPrivateKey}>
+          <Button
+            variant="primary"
+            icon={<Download className="w-4 h-4" />}
+            onClick={handleDownloadPrivateKey}
+          >
             Download Private Key
           </Button>
-          <Button variant="secondary" icon={<Copy className="w-4 h-4" />} onClick={handleCopyPrivateKey}>
+          <Button
+            variant="secondary"
+            icon={<Copy className="w-4 h-4" />}
+            onClick={handleCopyPrivateKey}
+          >
             Copy to Clipboard
           </Button>
         </div>
@@ -555,7 +682,8 @@ export default function CsrGenerator({ onCsrGenerated, onCancel }: CsrGeneratorP
               onChange={(e) => setPrivateKeySaved(e.target.checked)}
               className="accent-cyan-500"
             />
-            I have securely saved my private key and understand it will not be shown again.
+            I have securely saved my private key and understand it will not be
+            shown again.
           </label>
         ) : (
           <div className="p-3 bg-cyan-500/10 border border-cyan-500/30 rounded-lg text-center text-sm text-cyan-400 mb-4">

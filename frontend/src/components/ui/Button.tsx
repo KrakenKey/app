@@ -2,10 +2,13 @@ import type { ButtonHTMLAttributes, ReactNode } from 'react';
 
 const variantClasses = {
   primary: 'bg-accent text-zinc-950 hover:bg-accent-hover font-semibold',
-  secondary: 'bg-zinc-800 text-zinc-100 border border-zinc-700 hover:bg-zinc-700',
-  danger: 'bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20',
+  secondary:
+    'bg-zinc-800 text-zinc-100 border border-zinc-700 hover:bg-zinc-700',
+  danger:
+    'bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20',
   ghost: 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800',
-  outline: 'border border-zinc-700 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100',
+  outline:
+    'border border-zinc-700 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100',
 } as const;
 
 const sizeClasses = {

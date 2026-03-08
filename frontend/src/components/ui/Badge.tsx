@@ -23,12 +23,19 @@ interface BadgeProps {
   className?: string;
 }
 
-export function Badge({ variant = 'neutral', children, dot = true, className = '' }: BadgeProps) {
+export function Badge({
+  variant = 'neutral',
+  children,
+  dot = true,
+  className = '',
+}: BadgeProps) {
   return (
     <span
       className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${variantClasses[variant]} ${className}`}
     >
-      {dot && <span className={`w-1.5 h-1.5 rounded-full ${dotClasses[variant]}`} />}
+      {dot && (
+        <span className={`w-1.5 h-1.5 rounded-full ${dotClasses[variant]}`} />
+      )}
       {children}
     </span>
   );

@@ -66,8 +66,8 @@ export class CertMonitorService {
           (cert.expiresAt.getTime() - Date.now()) / 86_400_000,
         );
         const commonName =
-          cert.parsedCsr?.subject?.find((a) => a.shortName === 'CN')
-            ?.value as string ??
+          (cert.parsedCsr?.subject?.find((a) => a.shortName === 'CN')
+            ?.value as string) ??
           cert.parsedCsr?.extensions?.[0]?.altNames?.[0]?.value ??
           `cert #${cert.id}`;
         await this.emailService.sendCertExpiryWarning({
