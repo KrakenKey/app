@@ -5,6 +5,7 @@ import { TlsService } from '../tls.service';
 import { TlsCrt } from '../entities/tls-crt.entity';
 import { CertStatus } from '@krakenkey/shared';
 import { MetricsService } from '../../../metrics/metrics.service';
+import { EmailService } from '../../../notifications/email.service';
 
 describe('CertMonitorService', () => {
   let service: CertMonitorService;
@@ -46,6 +47,12 @@ describe('CertMonitorService', () => {
             certExpiryDays: { set: jest.fn() },
           },
         },
+        {
+          provide: EmailService,
+          useValue: {
+            sendCertExpiryWarning: jest.fn(),
+          },
+        },
       ],
     }).compile();
 
@@ -77,6 +84,7 @@ describe('CertMonitorService', () => {
           autoRenew: true,
           expiresAt: expect.any(Object), // LessThan(threshold)
         },
+        relations: ['user'],
       });
     });
 

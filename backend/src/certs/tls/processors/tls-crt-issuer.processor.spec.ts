@@ -1,5 +1,6 @@
 import { CertIssuerConsumer } from './tls-crt-issuer.processor';
 import { MetricsService } from '../../../metrics/metrics.service';
+import { EmailService } from '../../../notifications/email.service';
 
 describe('CertIssuerConsumer', () => {
   let processor: CertIssuerConsumer;
@@ -11,6 +12,11 @@ describe('CertIssuerConsumer', () => {
   const mockMetricsService = {
     certIssuanceTotal: { inc: jest.fn() },
   } as unknown as MetricsService;
+  const mockEmailService = {
+    sendCertIssued: jest.fn(),
+    sendCertRenewed: jest.fn(),
+    sendCertFailed: jest.fn(),
+  } as unknown as EmailService;
 
   const mockCsrRecord = {
     id: 1,
@@ -46,6 +52,7 @@ describe('CertIssuerConsumer', () => {
       mockCsrUtil as any,
       mockCertUtil as any,
       mockMetricsService,
+      mockEmailService,
     );
   });
 
@@ -59,7 +66,7 @@ describe('CertIssuerConsumer', () => {
       const result = await processor.process(job);
 
       expect(result).toEqual({ success: true });
-      expect(mockTlsService.findOneInternal).toHaveBeenCalledWith(1);
+      expect(mockTlsService.findOneInternal).toHaveBeenCalledWith(1, { relations: ['user'] });
       expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
         1,
         { crtPem: null },

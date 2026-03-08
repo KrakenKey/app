@@ -13,6 +13,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { TlsCrt } from './entities/tls-crt.entity';
 import { getQueueToken } from '@nestjs/bullmq';
 import type { ParsedCsr } from '@krakenkey/shared';
+import { EmailService } from '../../notifications/email.service';
 
 describe('TlsService', () => {
   let service: TlsService;
@@ -30,6 +31,7 @@ describe('TlsService', () => {
       save: jest.fn().mockResolvedValue({ id: 1, status: 'pending' }),
       create: jest.fn().mockReturnValue({}),
       find: jest.fn().mockResolvedValue([]),
+      findOne: jest.fn().mockResolvedValue(null),
       findOneBy: jest.fn().mockResolvedValue(null),
       update: jest.fn().mockResolvedValue({ affected: 1 }),
       delete: jest.fn().mockResolvedValue({ affected: 1 }),
@@ -94,6 +96,16 @@ describe('TlsService', () => {
         {
           provide: getQueueToken('tlsCertIssuance'),
           useValue: mockQueue,
+        },
+        {
+          provide: EmailService,
+          useValue: {
+            sendCertIssued: jest.fn(),
+            sendCertRenewed: jest.fn(),
+            sendCertExpiryWarning: jest.fn(),
+            sendCertFailed: jest.fn(),
+            sendCertRevoked: jest.fn(),
+          },
         },
       ],
     }).compile();
@@ -345,7 +357,7 @@ describe('TlsService', () => {
     };
 
     it('revokes an issued cert successfully', async () => {
-      mockRepository.findOneBy.mockResolvedValue({ ...issuedCert });
+      mockRepository.findOne.mockResolvedValue({ ...issuedCert });
 
       const result = await service.revoke(1, userId, 4);
 
@@ -362,7 +374,7 @@ describe('TlsService', () => {
     });
 
     it('defaults revocation reason to 0 when not provided', async () => {
-      mockRepository.findOneBy.mockResolvedValue({ ...issuedCert });
+      mockRepository.findOne.mockResolvedValue({ ...issuedCert });
 
       await service.revoke(1, userId);
 
@@ -374,7 +386,7 @@ describe('TlsService', () => {
     });
 
     it('throws BadRequestException when cert is not issued', async () => {
-      mockRepository.findOneBy.mockResolvedValue({
+      mockRepository.findOne.mockResolvedValue({
         ...issuedCert,
         status: 'pending',
       });
@@ -385,7 +397,7 @@ describe('TlsService', () => {
     });
 
     it('throws BadRequestException when cert has no PEM data', async () => {
-      mockRepository.findOneBy.mockResolvedValue({
+      mockRepository.findOne.mockResolvedValue({
         ...issuedCert,
         crtPem: null,
       });
@@ -396,7 +408,7 @@ describe('TlsService', () => {
     });
 
     it('reverts to issued and throws InternalServerErrorException on ACME failure', async () => {
-      mockRepository.findOneBy.mockResolvedValue({ ...issuedCert });
+      mockRepository.findOne.mockResolvedValue({ ...issuedCert });
       mockAcme.revoke.mockRejectedValue(new Error('ACME error'));
 
       await expect(service.revoke(1, userId)).rejects.toThrow(
@@ -547,17 +559,33 @@ describe('TlsService', () => {
   describe('findOneInternal', () => {
     it('finds cert by id without userId check', async () => {
       const cert = { id: 1, status: 'issued' };
-      mockRepository.findOneBy.mockResolvedValue(cert);
+      mockRepository.findOne.mockResolvedValue(cert);
 
       expect(await service.findOneInternal(1)).toEqual(cert);
-      expect(mockRepository.findOneBy).toHaveBeenCalledWith({ id: 1 });
+      expect(mockRepository.findOne).toHaveBeenCalledWith({
+        where: { id: 1 },
+        relations: undefined,
+      });
+    });
+
+    it('accepts relations option', async () => {
+      const cert = { id: 1, status: 'issued', user: { id: 'u1' } };
+      mockRepository.findOne.mockResolvedValue(cert);
+
+      expect(
+        await service.findOneInternal(1, { relations: ['user'] }),
+      ).toEqual(cert);
+      expect(mockRepository.findOne).toHaveBeenCalledWith({
+        where: { id: 1 },
+        relations: ['user'],
+      });
     });
   });
 
   describe('updateInternal', () => {
     it('updates and returns cert without userId check', async () => {
       const cert = { id: 1, status: 'issuing' };
-      mockRepository.findOneBy.mockResolvedValue(cert);
+      mockRepository.findOne.mockResolvedValue(cert);
 
       const result = await service.updateInternal(
         1,
@@ -581,7 +609,7 @@ describe('TlsService', () => {
         rawCsr: 'pem',
         renewalCount: 0,
       };
-      mockRepository.findOneBy.mockResolvedValue(cert);
+      mockRepository.findOne.mockResolvedValue(cert);
 
       await service.renewInternal(1);
 
@@ -598,7 +626,7 @@ describe('TlsService', () => {
     });
 
     it('silently skips non-issued certs', async () => {
-      mockRepository.findOneBy.mockResolvedValue({
+      mockRepository.findOne.mockResolvedValue({
         id: 1,
         status: 'pending',
         rawCsr: 'pem',
@@ -610,7 +638,7 @@ describe('TlsService', () => {
     });
 
     it('silently skips certs without CSR', async () => {
-      mockRepository.findOneBy.mockResolvedValue({
+      mockRepository.findOne.mockResolvedValue({
         id: 1,
         status: 'issued',
         rawCsr: null,
@@ -622,7 +650,7 @@ describe('TlsService', () => {
     });
 
     it('silently skips when cert not found', async () => {
-      mockRepository.findOneBy.mockResolvedValue(null);
+      mockRepository.findOne.mockResolvedValue(null);
 
       await service.renewInternal(1);
 
