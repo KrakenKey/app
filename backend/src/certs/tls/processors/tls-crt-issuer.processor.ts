@@ -130,9 +130,9 @@ export class CertIssuerConsumer extends WorkerHost {
           expiresAt,
         };
         if (isRenewal) {
-          this.emailService.sendCertRenewed(ctx);
+          await this.emailService.sendCertRenewed(ctx);
         } else {
-          this.emailService.sendCertIssued(ctx);
+          await this.emailService.sendCertIssued(ctx);
         }
       }
 
@@ -146,7 +146,7 @@ export class CertIssuerConsumer extends WorkerHost {
         CertStatus.FAILED,
       );
       if (csrRecord.user) {
-        this.emailService.sendCertFailed({
+        await this.emailService.sendCertFailed({
           username: csrRecord.user.username,
           email: csrRecord.user.email,
           certId,

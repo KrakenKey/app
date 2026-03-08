@@ -70,7 +70,7 @@ export class CertMonitorService {
             ?.value as string ??
           cert.parsedCsr?.extensions?.[0]?.altNames?.[0]?.value ??
           `cert #${cert.id}`;
-        this.emailService.sendCertExpiryWarning({
+        await this.emailService.sendCertExpiryWarning({
           username: cert.user.username,
           email: cert.user.email,
           certId: cert.id,
