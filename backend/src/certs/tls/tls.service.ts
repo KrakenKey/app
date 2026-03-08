@@ -28,6 +28,7 @@ import type {
   TlsCertDetails,
 } from '@krakenkey/shared';
 import { AcmeIssuerStrategy } from './strategies/acme-issuer.strategy';
+import { EmailService } from '../../notifications/email.service';
 
 /**
  * Manages TLS certificate lifecycle through a job queue.
@@ -50,6 +51,7 @@ export class TlsService {
     private readonly certUtilService: CertUtilService,
     private readonly domainsService: DomainsService,
     private readonly acmeIssuerStrategy: AcmeIssuerStrategy,
+    private readonly emailService: EmailService,
   ) {}
 
   /**
@@ -145,7 +147,15 @@ export class TlsService {
   }
 
   async revoke(id: number, userId: string, reason?: number) {
-    const cert = await this.findOne(id, userId);
+    const cert = await this.TlsCrtRepository.findOne({
+      where: { id, userId },
+      relations: ['user'],
+    });
+    if (!cert) {
+      throw new NotFoundException(
+        `Certificate #${id} not found or access denied`,
+      );
+    }
 
     if (cert.status !== CertStatus.ISSUED) {
       throw new BadRequestException(
@@ -171,6 +181,20 @@ export class TlsService {
         revocationReason: reason ?? 0,
         revokedAt: new Date(),
       });
+
+      if (cert.user) {
+        const commonName =
+          cert.parsedCsr?.subject?.find((a) => a.shortName === 'CN')
+            ?.value as string ??
+          cert.parsedCsr?.extensions?.[0]?.altNames?.[0]?.value ??
+          `cert #${cert.id}`;
+        await this.emailService.sendCertRevoked({
+          username: cert.user.username,
+          email: cert.user.email,
+          certId: cert.id,
+          commonName,
+        });
+      }
     } catch (err) {
       const logger = new Logger(TlsService.name);
       logger.error(
@@ -299,8 +323,14 @@ export class TlsService {
    * SYSTEM USE ONLY. Do not use this in Controllers.
    * Bypasses all ownership checks. Intended for background jobs (Queue Processors) only.
    */
-  async findOneInternal(id: number) {
-    const tlsCrt = await this.TlsCrtRepository.findOneBy({ id });
+  async findOneInternal(
+    id: number,
+    options?: { relations?: string[] },
+  ) {
+    const tlsCrt = await this.TlsCrtRepository.findOne({
+      where: { id },
+      relations: options?.relations,
+    });
     return tlsCrt;
   }
 

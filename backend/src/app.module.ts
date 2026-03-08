@@ -14,6 +14,7 @@ import { KKThrottlerModule } from './throttler/throttler.module';
 import { HealthModule } from './health/health.module';
 import { FeedbackModule } from './feedback/feedback.module';
 import { MetricsModule } from './metrics/metrics.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -64,6 +65,7 @@ import { MetricsModule } from './metrics/metrics.module';
     DomainsModule,
     FeedbackModule,
     MetricsModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

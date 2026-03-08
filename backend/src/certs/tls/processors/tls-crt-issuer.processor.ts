@@ -11,6 +11,8 @@ import { Inject } from '@nestjs/common';
 import { CertStatus } from '@krakenkey/shared';
 import type { TlsCertJobPayload } from '@krakenkey/shared';
 import { MetricsService } from '../../../metrics/metrics.service';
+import { EmailService } from '../../../notifications/email.service';
+import type { CertEmailContext } from '../../../notifications/email.service';
 
 /**
  * Background job processor for certificate issuance and renewal.
@@ -29,6 +31,7 @@ export class CertIssuerConsumer extends WorkerHost {
     private readonly csrUtilService: CsrUtilService,
     private readonly certUtilService: CertUtilService,
     private readonly metricsService: MetricsService,
+    private readonly emailService: EmailService,
   ) {
     super();
   }
@@ -49,10 +52,18 @@ export class CertIssuerConsumer extends WorkerHost {
     const isRenewal = job.name === 'tlsCertRenewal';
 
     const { certId } = job.data;
-    const csrRecord = (await this.tlsService.findOneInternal(certId)) as TlsCrt;
+    const csrRecord = (await this.tlsService.findOneInternal(certId, {
+      relations: ['user'],
+    })) as TlsCrt;
     if (!csrRecord) {
       throw new Error(`CSR with ID ${certId} not found`);
     }
+
+    const commonName =
+      csrRecord.parsedCsr?.subject?.find((a) => a.shortName === 'CN')
+        ?.value as string ??
+      csrRecord.parsedCsr?.extensions?.[0]?.altNames?.[0]?.value ??
+      `cert #${certId}`;
 
     // Validate CSR format before attempting ACME
     const raw = csrRecord.rawCsr ?? '';
@@ -109,6 +120,22 @@ export class CertIssuerConsumer extends WorkerHost {
       );
 
       this.metricsService.certIssuanceTotal.inc({ status: 'issued' });
+
+      if (csrRecord.user) {
+        const ctx: CertEmailContext = {
+          username: csrRecord.user.username,
+          email: csrRecord.user.email,
+          certId,
+          commonName,
+          expiresAt,
+        };
+        if (isRenewal) {
+          await this.emailService.sendCertRenewed(ctx);
+        } else {
+          await this.emailService.sendCertIssued(ctx);
+        }
+      }
+
       return { success: true };
     } catch (err: unknown) {
       this.metricsService.certIssuanceTotal.inc({ status: 'failed' });
@@ -118,6 +145,16 @@ export class CertIssuerConsumer extends WorkerHost {
         { crtPem: null },
         CertStatus.FAILED,
       );
+      if (csrRecord.user) {
+        await this.emailService.sendCertFailed({
+          username: csrRecord.user.username,
+          email: csrRecord.user.email,
+          certId,
+          commonName,
+          errorMessage: err instanceof Error ? err.message : String(err),
+        });
+      }
+
       if (err instanceof Error) {
         console.error(
           `Error ${isRenewal ? 'renewing' : 'issuing'} certificate:`,
