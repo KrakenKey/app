@@ -1,4 +1,7 @@
-import type { CertEmailContext } from '../email.service';
+import type {
+  CertEmailContext,
+  DomainVerificationFailedContext,
+} from '../email.service';
 
 function escapeHtml(str: string): string {
   return str
@@ -106,6 +109,27 @@ export function certRevokedTemplate(ctx: CertEmailContext): string {
       detail('Certificate ID', String(ctx.certId)),
       detail('Common Name', ctx.commonName),
       p('If you did not request this, please contact support immediately.'),
+    ].join(''),
+  );
+}
+
+export function domainVerificationFailedTemplate(
+  ctx: DomainVerificationFailedContext,
+): string {
+  return layout(
+    'Domain Verification Failed',
+    [
+      p(
+        `Hi ${ctx.username}, the DNS verification record for your domain is no longer detected.`,
+      ),
+      detail('Domain', ctx.hostname),
+      p(
+        'The domain has been marked as unverified. New certificate requests for this domain will be blocked until the TXT record is restored and the domain is re-verified.',
+      ),
+      detail('Expected TXT Record', ctx.verificationCode),
+      p(
+        'Please add the TXT record back to your DNS configuration and re-verify the domain in KrakenKey.',
+      ),
     ].join(''),
   );
 }
