@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsString, IsFQDN } from 'class-validator';
+import { IsFQDN, IsNotEmpty, MaxLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateDomainDto {
@@ -7,6 +7,7 @@ export class CreateDomainDto {
     example: 'example.com',
   })
   @IsNotEmpty()
-  @IsString()
+  @IsFQDN()
+  @MaxLength(253)
   hostname: string;
 }

@@ -6,8 +6,8 @@ const mockHandleCallback = vi.fn();
 const mockNavigate = vi.fn();
 let mockSearchParams = new URLSearchParams('code=test-code-123');
 
-vi.mock('../../context/AuthContext', async () => {
-  const actual = await vi.importActual('../../context/AuthContext');
+vi.mock('../../hooks/useAuth', async () => {
+  const actual = await vi.importActual('../../hooks/useAuth');
   return {
     ...actual,
     useAuth: () => ({

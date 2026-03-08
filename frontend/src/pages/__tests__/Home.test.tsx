@@ -7,8 +7,8 @@ import Home from '../Home';
 const mockLogin = vi.fn();
 const mockRegister = vi.fn();
 
-vi.mock('../../context/AuthContext', async () => {
-  const actual = await vi.importActual('../../context/AuthContext');
+vi.mock('../../hooks/useAuth', async () => {
+  const actual = await vi.importActual('../../hooks/useAuth');
   return {
     ...actual,
     useAuth: () => ({

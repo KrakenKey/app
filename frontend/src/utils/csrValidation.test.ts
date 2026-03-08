@@ -55,8 +55,12 @@ describe('csrValidation', () => {
 
     it('should reject invalid wildcard formats', () => {
       expect(validateCommonName('*example.com')).toContain('valid domain name');
-      expect(validateCommonName('*.*.example.com')).toContain('valid domain name');
-      expect(validateCommonName('foo.*.example.com')).toContain('valid domain name');
+      expect(validateCommonName('*.*.example.com')).toContain(
+        'valid domain name',
+      );
+      expect(validateCommonName('foo.*.example.com')).toContain(
+        'valid domain name',
+      );
     });
 
     it('should handle Unicode domains (punycode not supported)', () => {
@@ -91,10 +95,18 @@ describe('csrValidation', () => {
     });
 
     it('should reject organization names with control characters', () => {
-      expect(validateOrganization('Test\nCorp')).toContain('invalid characters');
-      expect(validateOrganization('Test\tCorp')).toContain('invalid characters');
-      expect(validateOrganization('Test\x00Corp')).toContain('invalid characters');
-      expect(validateOrganization('Test\x7FCorp')).toContain('invalid characters');
+      expect(validateOrganization('Test\nCorp')).toContain(
+        'invalid characters',
+      );
+      expect(validateOrganization('Test\tCorp')).toContain(
+        'invalid characters',
+      );
+      expect(validateOrganization('Test\x00Corp')).toContain(
+        'invalid characters',
+      );
+      expect(validateOrganization('Test\x7FCorp')).toContain(
+        'invalid characters',
+      );
     });
 
     it('should allow special printable characters', () => {
@@ -180,7 +192,9 @@ describe('csrValidation', () => {
     });
 
     it('should accept valid IPv6 addresses', () => {
-      expect(validateIpAddress('2001:0db8:85a3:0000:0000:8a2e:0370:7334')).toBeNull();
+      expect(
+        validateIpAddress('2001:0db8:85a3:0000:0000:8a2e:0370:7334'),
+      ).toBeNull();
       expect(validateIpAddress('::1')).toBeNull();
       expect(validateIpAddress('fe80::1')).toBeNull();
     });
@@ -245,11 +259,15 @@ describe('csrValidation', () => {
 
   describe('isDomainVerified', () => {
     it('should return true for verified domains', () => {
-      expect(isDomainVerified('example.com', ['example.com', 'test.com'])).toBe(true);
+      expect(isDomainVerified('example.com', ['example.com', 'test.com'])).toBe(
+        true,
+      );
     });
 
     it('should return false for unverified domains', () => {
-      expect(isDomainVerified('unknown.com', ['example.com', 'test.com'])).toBe(false);
+      expect(isDomainVerified('unknown.com', ['example.com', 'test.com'])).toBe(
+        false,
+      );
     });
 
     it('should trim domain before checking', () => {
@@ -282,7 +300,11 @@ describe('csrValidation', () => {
   });
 
   describe('validateDomainAuthorization', () => {
-    const verifiedDomains = ['example.com', 'www.example.com', 'api.example.com'];
+    const verifiedDomains = [
+      'example.com',
+      'www.example.com',
+      'api.example.com',
+    ];
 
     it('should return null when all domains are verified', () => {
       const domains = ['example.com', 'www.example.com'];
@@ -345,11 +367,13 @@ describe('csrValidation', () => {
 
   describe('validateSubjectFields', () => {
     it('should return null for valid subject', () => {
-      expect(validateSubjectFields({
-        commonName: 'example.com',
-        organization: 'Test Inc',
-        country: 'US',
-      })).toBeNull();
+      expect(
+        validateSubjectFields({
+          commonName: 'example.com',
+          organization: 'Test Inc',
+          country: 'US',
+        }),
+      ).toBeNull();
     });
 
     it('should return errors for invalid CN', () => {
@@ -404,11 +428,15 @@ describe('csrValidation', () => {
     });
 
     it('should handle null bytes in domain names', () => {
-      expect(validateCommonName('example.com\0evil.com')).toContain('valid domain name');
+      expect(validateCommonName('example.com\0evil.com')).toContain(
+        'valid domain name',
+      );
     });
 
     it('should handle control chars in organization', () => {
-      expect(validateOrganization('Test\x00Corp')).toContain('invalid characters');
+      expect(validateOrganization('Test\x00Corp')).toContain(
+        'invalid characters',
+      );
     });
 
     it('should reject control chars in organizational unit', () => {

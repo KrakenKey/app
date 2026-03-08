@@ -8,6 +8,7 @@ import {
 import { FeedbackService } from './feedback.service';
 import { CreateFeedbackDto } from './dto/create-feedback.dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-or-api-key.guard';
+import type { RequestWithUser } from '../auth/interfaces/request-with-user.interface';
 import { RateLimitCategoryDecorator } from '../throttler/decorators/rate-limit-category.decorator';
 import { RateLimitCategory } from '../throttler/interfaces/rate-limit-category.enum';
 
@@ -23,7 +24,10 @@ export class FeedbackController {
   @ApiResponse({ status: 201, description: 'Feedback submitted successfully' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
-  create(@Request() req, @Body() createFeedbackDto: CreateFeedbackDto) {
+  create(
+    @Request() req: RequestWithUser,
+    @Body() createFeedbackDto: CreateFeedbackDto,
+  ) {
     return this.feedbackService.create(req.user.userId, createFeedbackDto);
   }
 }

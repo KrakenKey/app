@@ -78,9 +78,14 @@ export class UsersController {
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Delete a user account with cascade (own record or admin)' })
+  @ApiOperation({
+    summary: 'Delete a user account with cascade (own record or admin)',
+  })
   @ApiParam({ name: 'id', description: 'User ID' })
-  @ApiResponse({ status: 200, description: 'User and all associated data deleted' })
+  @ApiResponse({
+    status: 200,
+    description: 'User and all associated data deleted',
+  })
   @ApiResponse({ status: 403, description: 'Access denied' })
   @ApiResponse({ status: 404, description: 'User not found' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)

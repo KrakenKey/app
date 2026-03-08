@@ -3,7 +3,8 @@ import type { ReactNode } from 'react';
 import { BrowserRouter } from 'react-router-dom';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../test/mocks/server';
-import { AuthProvider, useAuth } from '../AuthContext';
+import { AuthProvider } from '../AuthContext';
+import { useAuth } from '../../hooks/useAuth';
 import { mockUser } from '../../test/mocks/data';
 import { API_URL } from '../../services/api';
 
@@ -131,5 +132,4 @@ describe('AuthContext', () => {
       }),
     ).rejects.toThrow();
   });
-
 });

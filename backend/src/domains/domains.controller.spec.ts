@@ -80,7 +80,7 @@ describe('DomainsController', () => {
     it('passes userId and id to domainsService.delete()', () => {
       mockService.delete.mockReturnValue(undefined);
 
-      controller.remove(mockReq, 'd1');
+      void controller.remove(mockReq, 'd1');
 
       expect(mockService.delete).toHaveBeenCalledWith(userId, 'd1');
     });

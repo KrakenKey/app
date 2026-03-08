@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Key, Plus, Trash2, Copy, AlertTriangle } from 'lucide-react';
-import api from '../services/api';
 import { toast } from '../utils/toast';
-import { API_ROUTES } from '@krakenkey/shared';
-import type { ApiKey, CreateApiKeyResponse } from '@krakenkey/shared';
+import type { ApiKey } from '@krakenkey/shared';
+import { getExpirationBadge } from '../utils/expiration';
+import { copyToClipboard } from '../utils/clipboard';
+import { useActionSet } from '../hooks/useActionSet';
+import * as apiKeyService from '../services/apiKeyService';
 import { Card } from './ui/Card';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
@@ -16,7 +18,7 @@ export default function ApiKeyManagement() {
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
-  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
+  const deletingIds = useActionSet<string>();
   const [newKeyName, setNewKeyName] = useState('');
   const [newKeyExpiry, setNewKeyExpiry] = useState('');
   const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
@@ -24,8 +26,8 @@ export default function ApiKeyManagement() {
   const fetchKeys = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await api.get<ApiKey[]>(API_ROUTES.API_KEYS.BASE);
-      setKeys(response.data);
+      const data = await apiKeyService.fetchApiKeys();
+      setKeys(data);
     } catch (error) {
       console.error('Failed to fetch API keys:', error);
     } finally {
@@ -47,15 +49,11 @@ export default function ApiKeyManagement() {
 
     try {
       setCreating(true);
-      const payload: { name: string; expiresAt?: string } = { name };
-      if (newKeyExpiry) {
-        payload.expiresAt = new Date(newKeyExpiry + 'T23:59:59Z').toISOString();
-      }
-      const response = await api.post<CreateApiKeyResponse>(
-        API_ROUTES.API_KEYS.BASE,
-        payload,
+      const data = await apiKeyService.createApiKey(
+        name,
+        newKeyExpiry || undefined,
       );
-      setNewlyCreatedKey(response.data.apiKey);
+      setNewlyCreatedKey(data.apiKey);
       toast.success(`API key "${name}" created!`);
       setNewKeyName('');
       setNewKeyExpiry('');
@@ -68,43 +66,30 @@ export default function ApiKeyManagement() {
   };
 
   const handleDelete = async (key: ApiKey) => {
-    if (!confirm(`Are you sure you want to delete API key "${key.name}"? This cannot be undone.`)) {
+    if (
+      !confirm(
+        `Are you sure you want to delete API key "${key.name}"? This cannot be undone.`,
+      )
+    ) {
       return;
     }
 
     try {
-      setDeletingIds((prev) => new Set(prev).add(key.id));
-      await api.delete(API_ROUTES.API_KEYS.BY_ID(key.id));
+      deletingIds.add(key.id);
+      await apiKeyService.deleteApiKey(key.id);
       toast.success(`API key "${key.name}" deleted.`);
       setKeys((prev) => prev.filter((k) => k.id !== key.id));
     } catch (error) {
       console.error('Failed to delete API key:', error);
     } finally {
-      setDeletingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(key.id);
-        return next;
-      });
+      deletingIds.remove(key.id);
     }
   };
 
   const handleCopyKey = () => {
     if (newlyCreatedKey) {
-      navigator.clipboard.writeText(newlyCreatedKey);
-      toast.success('API key copied to clipboard!');
+      copyToClipboard(newlyCreatedKey);
     }
-  };
-
-  const getExpirationBadge = (expiresAt: string | null): { label: string; variant: 'success' | 'warning' | 'danger' | 'neutral' } => {
-    if (!expiresAt) return { label: 'Never', variant: 'neutral' };
-    const expiry = new Date(expiresAt);
-    const now = new Date();
-    const daysLeft = Math.floor((expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-
-    if (daysLeft < 0) return { label: `Expired ${Math.abs(daysLeft)}d ago`, variant: 'danger' };
-    if (daysLeft < 7) return { label: `${daysLeft}d remaining`, variant: 'danger' };
-    if (daysLeft <= 30) return { label: `${daysLeft}d remaining`, variant: 'warning' };
-    return { label: expiry.toLocaleDateString(), variant: 'neutral' };
   };
 
   if (loading) {
@@ -126,7 +111,9 @@ export default function ApiKeyManagement() {
 
       {/* Create Key Form */}
       <Card className="mb-6">
-        <h3 className="text-sm font-medium text-zinc-400 mb-4">Create New API Key</h3>
+        <h3 className="text-sm font-medium text-zinc-400 mb-4">
+          Create New API Key
+        </h3>
         <form onSubmit={handleCreate}>
           <div className="flex flex-col sm:flex-row gap-3">
             <Input
@@ -144,7 +131,12 @@ export default function ApiKeyManagement() {
               disabled={creating}
               min={new Date().toISOString().split('T')[0]}
             />
-            <Button type="submit" variant="primary" disabled={creating} icon={<Plus className="w-3.5 h-3.5" />}>
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={creating}
+              icon={<Plus className="w-3.5 h-3.5" />}
+            >
               {creating ? 'Creating...' : 'Create Key'}
             </Button>
           </div>
@@ -155,15 +147,26 @@ export default function ApiKeyManagement() {
       {newlyCreatedKey && (
         <Card className="mb-6 border-emerald-500/20 bg-emerald-500/5">
           <div className="flex flex-col gap-3">
-            <p className="text-sm font-medium text-emerald-400">Your new API key:</p>
+            <p className="text-sm font-medium text-emerald-400">
+              Your new API key:
+            </p>
             <code className="block bg-zinc-950 rounded-lg px-4 py-3 font-mono text-sm text-zinc-200 break-all">
               {newlyCreatedKey}
             </code>
             <div className="flex gap-2">
-              <Button size="sm" variant="secondary" icon={<Copy className="w-3.5 h-3.5" />} onClick={handleCopyKey}>
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<Copy className="w-3.5 h-3.5" />}
+                onClick={handleCopyKey}
+              >
                 Copy
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => setNewlyCreatedKey(null)}>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setNewlyCreatedKey(null)}
+              >
                 Dismiss
               </Button>
             </div>
@@ -177,7 +180,9 @@ export default function ApiKeyManagement() {
 
       {/* Keys List */}
       <Card>
-        <h3 className="text-sm font-medium text-zinc-400 mb-4">Your API Keys ({keys.length})</h3>
+        <h3 className="text-sm font-medium text-zinc-400 mb-4">
+          Your API Keys ({keys.length})
+        </h3>
 
         {keys.length === 0 ? (
           <EmptyState
@@ -198,8 +203,12 @@ export default function ApiKeyManagement() {
                 const expBadge = getExpirationBadge(key.expiresAt);
                 return (
                   <TableRow key={key.id}>
-                    <TableCell className="font-medium text-zinc-200">{key.name}</TableCell>
-                    <TableCell>{new Date(key.createdAt).toLocaleDateString()}</TableCell>
+                    <TableCell className="font-medium text-zinc-200">
+                      {key.name}
+                    </TableCell>
+                    <TableCell>
+                      {new Date(key.createdAt).toLocaleDateString()}
+                    </TableCell>
                     <TableCell>
                       <Badge variant={expBadge.variant}>{expBadge.label}</Badge>
                     </TableCell>

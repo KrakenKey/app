@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useState, useEffect } from 'react';
 import api from '../services/api';
 import axios from 'axios';
 import type { User, AuthCallbackResponse } from '@krakenkey/shared';
@@ -14,7 +14,9 @@ interface AuthContextType {
   isLoading: boolean;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+export const AuthContext = createContext<AuthContextType | undefined>(
+  undefined,
+);
 
 /**
  * AuthProvider manages authentication state for the entire app.
@@ -26,7 +28,9 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
  * We store id_token (not access_token) in localStorage because it's always a JWT
  * with user claims that the backend can validate.
  */
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -34,15 +38,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const checkAuth = async () => {
       const token = localStorage.getItem('access_token');
-      console.log("Auth check: token exists in localStorage:", !!token);
+      console.log('Auth check: token exists in localStorage:', !!token);
       if (token) {
         try {
-          console.log("Validating token with /auth/profile");
+          console.log('Validating token with /auth/profile');
           const response = await api.get('/auth/profile');
-          console.log("Token valid, user authenticated:", response.data.email);
+          console.log('Token valid, user authenticated:', response.data.email);
           setUser(response.data);
         } catch (error) {
-          console.error("Token validation failed, logging out", error);
+          console.error('Token validation failed, logging out', error);
           logout();
         }
       }
@@ -78,15 +82,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const handleCallback = async (code: string) => {
     try {
       setIsLoading(true);
-      console.log("OAuth callback: exchanging code for tokens");
+      console.log('OAuth callback: exchanging code for tokens');
 
-      const response = await api.get<AuthCallbackResponse>(`/auth/callback?code=${code}`);
-      console.log("Received response from /auth/callback");
+      const response = await api.get<AuthCallbackResponse>(
+        `/auth/callback?code=${code}`,
+      );
+      console.log('Received response from /auth/callback');
 
       const { access_token, id_token } = response.data;
-      console.log("Tokens received:", {
+      console.log('Tokens received:', {
         has_access_token: !!access_token,
-        has_id_token: !!id_token
+        has_id_token: !!id_token,
       });
 
       // Prefer id_token because it's always a JWT with user claims.
@@ -94,25 +100,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const tokenToUse = id_token || access_token;
 
       if (tokenToUse) {
-        console.log("Using token type:", tokenToUse === id_token ? "id_token" : "access_token");
+        console.log(
+          'Using token type:',
+          tokenToUse === id_token ? 'id_token' : 'access_token',
+        );
 
         localStorage.setItem('access_token', tokenToUse);
-        console.log("Token saved to localStorage");
+        console.log('Token saved to localStorage');
 
-        console.log("Fetching user profile");
+        console.log('Fetching user profile');
         const userRes = await api.get('/auth/profile');
-        console.log("Profile received:", userRes.data.email);
+        console.log('Profile received:', userRes.data.email);
 
         setUser(userRes.data);
-        console.log("Authentication complete");
+        console.log('Authentication complete');
       } else {
-        console.error("No token received from callback");
+        console.error('No token received from callback');
       }
     } catch (error) {
-      console.error("Login failed:", error);
+      console.error('Login failed:', error);
       if (axios.isAxiosError(error)) {
-        console.error("Response data:", error.response?.data);
-        console.error("Response status:", error.response?.status);
+        console.error('Response data:', error.response?.data);
+        console.error('Response status:', error.response?.status);
       }
       throw error;
     } finally {
@@ -139,16 +148,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: !!user, login, register, logout, handleCallback, deleteAccount, isLoading }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        isAuthenticated: !!user,
+        login,
+        register,
+        logout,
+        handleCallback,
+        deleteAccount,
+        isLoading,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
-};
-
-export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
 };

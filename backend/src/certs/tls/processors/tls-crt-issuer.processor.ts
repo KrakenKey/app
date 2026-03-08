@@ -7,7 +7,7 @@ import { CsrUtilService } from '../util/csr-util.service';
 import { CertUtilService } from '../util/cert-util.service';
 import { AcmeIssuerStrategy } from '../strategies/acme-issuer.strategy';
 import type { DnsProvider } from '../interfaces/dns-provider.interface';
-import { Inject } from '@nestjs/common';
+import { Inject, Logger } from '@nestjs/common';
 import { CertStatus } from '@krakenkey/shared';
 import type { TlsCertJobPayload } from '@krakenkey/shared';
 import { MetricsService } from '../../../metrics/metrics.service';
@@ -24,6 +24,8 @@ import type { CertEmailContext } from '../../../notifications/email.service';
  */
 @Processor('tlsCertIssuance')
 export class CertIssuerConsumer extends WorkerHost {
+  private readonly logger = new Logger(CertIssuerConsumer.name);
+
   constructor(
     private readonly tlsService: TlsService,
     private readonly acmeStrategy: AcmeIssuerStrategy,
@@ -60,14 +62,16 @@ export class CertIssuerConsumer extends WorkerHost {
     }
 
     const commonName =
-      csrRecord.parsedCsr?.subject?.find((a) => a.shortName === 'CN')
-        ?.value as string ??
+      (csrRecord.parsedCsr?.subject?.find((a) => a.shortName === 'CN')
+        ?.value as string) ??
       csrRecord.parsedCsr?.extensions?.[0]?.altNames?.[0]?.value ??
       `cert #${certId}`;
 
     // Validate CSR format before attempting ACME
     const raw = csrRecord.rawCsr ?? '';
-    console.log(`CSR preview: ${raw.slice(0, 60).replace(/\n/g, ' ')}...`);
+    this.logger.debug(
+      `CSR preview: ${raw.slice(0, 60).replace(/\n/g, ' ')}...`,
+    );
     if (!raw.includes('-----BEGIN') || !raw.includes('-----END')) {
       await this.tlsService.updateInternal(
         csrRecord.id,
@@ -83,7 +87,7 @@ export class CertIssuerConsumer extends WorkerHost {
       const statusDuringProcess = isRenewal
         ? CertStatus.RENEWING
         : CertStatus.ISSUING;
-      console.log(
+      this.logger.log(
         `Processing certificate ${certId} with status: ${statusDuringProcess}`,
       );
 
@@ -115,7 +119,7 @@ export class CertIssuerConsumer extends WorkerHost {
         CertStatus.ISSUED,
       );
 
-      console.log(
+      this.logger.log(
         `Certificate ${isRenewal ? 'renewed' : 'issued'} for ID: ${certId}, expires: ${expiresAt.toISOString()}`,
       );
 
@@ -156,13 +160,12 @@ export class CertIssuerConsumer extends WorkerHost {
       }
 
       if (err instanceof Error) {
-        console.error(
-          `Error ${isRenewal ? 'renewing' : 'issuing'} certificate:`,
-          err.message,
+        this.logger.error(
+          `Error ${isRenewal ? 'renewing' : 'issuing'} certificate #${certId}: ${err.message}`,
         );
         throw err;
       }
-      console.error('Unknown error:', err);
+      this.logger.error(`Unknown error processing certificate #${certId}`, err);
       throw new Error('Unknown error processing certificate');
     }
   }

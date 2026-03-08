@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
@@ -13,6 +14,8 @@ import { MetricsService } from '../metrics/metrics.service';
 
 @Injectable()
 export class DomainsService {
+  private readonly logger = new Logger(DomainsService.name);
+
   constructor(
     @InjectRepository(Domain)
     private domainsRepository: Repository<Domain>,
@@ -95,36 +98,36 @@ export class DomainsService {
       return domain;
     }
 
+    let records: string[][];
     try {
-      const records = await resolveTxt(domain.hostname);
-
-      // TXT records can be split into 255-character chunks (DNS spec).
-      // Join chunks to get the full record content.
-      const flatRecords = records.map((chunk) => chunk.join(''));
-
-      console.log('DNS lookup for:', domain.hostname);
-      console.log('Found TXT records:', flatRecords);
-      console.log('Looking for:', domain.verificationCode);
-
-      const hasVerification = flatRecords.some((record) =>
-        record.includes(domain.verificationCode),
-      );
-
-      if (hasVerification) {
-        domain.isVerified = true;
-        this.metricsService.domainsVerifiedTotal.inc({ status: 'verified' });
-        return await this.domainsRepository.save(domain);
-      } else {
-        this.metricsService.domainsVerifiedTotal.inc({ status: 'failed' });
-        throw new BadRequestException(
-          `Verification record not found. Expected: "${domain.verificationCode}", Found: ${JSON.stringify(flatRecords)}`,
-        );
-      }
+      records = await resolveTxt(domain.hostname);
     } catch (error) {
-      if (error instanceof BadRequestException) throw error;
       this.metricsService.domainsVerifiedTotal.inc({ status: 'failed' });
       throw new BadRequestException(`DNS lookup failed: ${error.message}`);
     }
+
+    // TXT records can be split into 255-character chunks (DNS spec).
+    // Join chunks to get the full record content.
+    const flatRecords = records.map((chunk) => chunk.join(''));
+
+    this.logger.debug(
+      `DNS lookup for ${domain.hostname}: found ${flatRecords.length} TXT records`,
+    );
+
+    const hasVerification = flatRecords.some((record) =>
+      record.includes(domain.verificationCode),
+    );
+
+    if (!hasVerification) {
+      this.metricsService.domainsVerifiedTotal.inc({ status: 'failed' });
+      throw new BadRequestException(
+        `Verification record not found. Expected: "${domain.verificationCode}", Found: ${JSON.stringify(flatRecords)}`,
+      );
+    }
+
+    domain.isVerified = true;
+    this.metricsService.domainsVerifiedTotal.inc({ status: 'verified' });
+    return this.domainsRepository.save(domain);
   }
 
   /**

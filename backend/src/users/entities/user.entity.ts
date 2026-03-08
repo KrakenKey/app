@@ -1,4 +1,4 @@
-import { UserApiKey } from 'src/auth/entities/user-api-key.entity';
+import { UserApiKey } from '../../auth/entities/user-api-key.entity';
 import {
   Entity,
   PrimaryColumn,

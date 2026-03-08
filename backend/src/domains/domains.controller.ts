@@ -18,6 +18,7 @@ import {
 import { DomainsService } from './domains.service';
 import { CreateDomainDto } from './dto/create-domain.dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-or-api-key.guard';
+import type { RequestWithUser } from '../auth/interfaces/request-with-user.interface';
 import { RateLimitCategoryDecorator } from '../throttler/decorators/rate-limit-category.decorator';
 import { RateLimitCategory } from '../throttler/interfaces/rate-limit-category.enum';
 
@@ -33,7 +34,10 @@ export class DomainsController {
   @ApiResponse({ status: 201, description: 'Domain registered' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
-  create(@Request() req, @Body() createDomainDto: CreateDomainDto) {
+  create(
+    @Request() req: RequestWithUser,
+    @Body() createDomainDto: CreateDomainDto,
+  ) {
     return this.domainsService.create(req.user.userId, createDomainDto);
   }
 
@@ -45,7 +49,7 @@ export class DomainsController {
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
-  findAll(@Request() req) {
+  findAll(@Request() req: RequestWithUser) {
     return this.domainsService.findAll(req.user.userId);
   }
 
@@ -55,7 +59,7 @@ export class DomainsController {
   @ApiResponse({ status: 200, description: 'Domain details' })
   @ApiResponse({ status: 404, description: 'Domain not found' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
-  findOne(@Request() req, @Param('id') id: string) {
+  findOne(@Request() req: RequestWithUser, @Param('id') id: string) {
     return this.domainsService.findOne(id, req.user.userId);
   }
 
@@ -65,7 +69,7 @@ export class DomainsController {
   @ApiResponse({ status: 200, description: 'Verification initiated' })
   @ApiResponse({ status: 404, description: 'Domain not found' })
   @RateLimitCategoryDecorator(RateLimitCategory.EXPENSIVE)
-  verify(@Request() req, @Param('id') id: string) {
+  verify(@Request() req: RequestWithUser, @Param('id') id: string) {
     return this.domainsService.verify(req.user.userId, id);
   }
 
@@ -75,7 +79,7 @@ export class DomainsController {
   @ApiResponse({ status: 200, description: 'Domain deleted' })
   @ApiResponse({ status: 404, description: 'Domain not found' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
-  remove(@Request() req, @Param('id') id: string) {
+  remove(@Request() req: RequestWithUser, @Param('id') id: string) {
     return this.domainsService.delete(req.user.userId, id);
   }
 }

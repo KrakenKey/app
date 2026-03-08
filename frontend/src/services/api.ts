@@ -2,7 +2,8 @@ import axios from 'axios';
 import { toast } from '../utils/toast';
 import type { ApiErrorResponse } from '@krakenkey/shared';
 
-export const API_URL = window.__env__?.KK_API_URL || 'https://api-dev.krakenkey.io';
+export const API_URL =
+  window.__env__?.KK_API_URL || 'https://api-dev.krakenkey.io';
 
 const api = axios.create({
   baseURL: API_URL,
@@ -38,7 +39,9 @@ api.interceptors.response.use(
     const { status } = error.response;
     const data = error.response.data as ApiErrorResponse | undefined;
     const rawMessage = data?.message || data?.error || 'Something went wrong';
-    const message = Array.isArray(rawMessage) ? rawMessage.join(', ') : rawMessage;
+    const message = Array.isArray(rawMessage)
+      ? rawMessage.join(', ')
+      : rawMessage;
 
     // Handle specific status codes
     switch (status) {
@@ -85,7 +88,7 @@ api.interceptors.response.use(
     }
 
     return Promise.reject(error);
-  }
+  },
 );
 
 export default api;

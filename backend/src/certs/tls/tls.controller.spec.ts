@@ -99,7 +99,7 @@ describe('TlsController', () => {
       const dto = { autoRenew: true };
       mockService.update.mockReturnValue({ id: 1 });
 
-      controller.update(mockReq, '1', dto as any);
+      void controller.update(mockReq, '1', dto as any);
 
       expect(mockService.update).toHaveBeenCalledWith(1, userId, dto);
     });
@@ -122,7 +122,7 @@ describe('TlsController', () => {
     it('passes numeric id and userId to service.remove()', () => {
       mockService.remove.mockReturnValue({ id: 1 });
 
-      controller.remove(mockReq, '1');
+      void controller.remove(mockReq, '1');
 
       expect(mockService.remove).toHaveBeenCalledWith(1, userId);
     });

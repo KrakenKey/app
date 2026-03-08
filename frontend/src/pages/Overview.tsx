@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LayoutDashboard, Globe, Shield, Key, Plus } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../hooks/useAuth';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { PageHeader } from '../components/ui/PageHeader';
@@ -16,26 +16,56 @@ interface ResourceCounts {
 export default function Overview() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [counts, setCounts] = useState<ResourceCounts | null>(null);
+  const [fetchedCounts, setFetchedCounts] = useState<ResourceCounts | null>(
+    null,
+  );
 
-  useEffect(() => {
+  const profileCounts = useMemo(() => {
     const profile = user as { resourceCounts?: ResourceCounts } | null;
-    if (profile?.resourceCounts) {
-      setCounts(profile.resourceCounts);
-    } else {
-      // Fallback: fetch from profile endpoint
-      api.get('/auth/profile').then((res) => {
-        if (res.data.resourceCounts) {
-          setCounts(res.data.resourceCounts);
-        }
-      }).catch(() => {});
-    }
+    return profile?.resourceCounts ?? null;
   }, [user]);
 
+  const fetchCounts = useCallback(() => {
+    api
+      .get('/auth/profile')
+      .then((res) => {
+        if (res.data.resourceCounts) {
+          setFetchedCounts(res.data.resourceCounts);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!profileCounts) {
+      fetchCounts();
+    }
+  }, [profileCounts, fetchCounts]);
+
+  const counts = profileCounts ?? fetchedCounts;
+
   const resources = [
-    { label: 'Domains', count: counts?.domains ?? 0, icon: Globe, path: '/dashboard/domains', color: 'text-cyan-400' },
-    { label: 'Certificates', count: counts?.certificates ?? 0, icon: Shield, path: '/dashboard/certificates', color: 'text-emerald-400' },
-    { label: 'API Keys', count: counts?.apiKeys ?? 0, icon: Key, path: '/dashboard/api-keys', color: 'text-amber-400' },
+    {
+      label: 'Domains',
+      count: counts?.domains ?? 0,
+      icon: Globe,
+      path: '/dashboard/domains',
+      color: 'text-cyan-400',
+    },
+    {
+      label: 'Certificates',
+      count: counts?.certificates ?? 0,
+      icon: Shield,
+      path: '/dashboard/certificates',
+      color: 'text-emerald-400',
+    },
+    {
+      label: 'API Keys',
+      count: counts?.apiKeys ?? 0,
+      icon: Key,
+      path: '/dashboard/api-keys',
+      color: 'text-amber-400',
+    },
   ];
 
   return (
@@ -66,7 +96,9 @@ export default function Overview() {
 
       {/* Quick actions */}
       <Card>
-        <h3 className="text-sm font-medium text-zinc-400 mb-4">Quick Actions</h3>
+        <h3 className="text-sm font-medium text-zinc-400 mb-4">
+          Quick Actions
+        </h3>
         <div className="flex flex-wrap gap-3">
           <Button
             variant="secondary"

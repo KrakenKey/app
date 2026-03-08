@@ -1,4 +1,9 @@
-import type { HTMLAttributes, ThHTMLAttributes, TdHTMLAttributes, ReactNode } from 'react';
+import type {
+  HTMLAttributes,
+  ThHTMLAttributes,
+  TdHTMLAttributes,
+  ReactNode,
+} from 'react';
 
 interface TableProps extends HTMLAttributes<HTMLTableElement> {
   children: ReactNode;
@@ -18,7 +23,11 @@ interface TableHeaderProps extends HTMLAttributes<HTMLTableSectionElement> {
   children: ReactNode;
 }
 
-export function TableHeader({ children, className = '', ...props }: TableHeaderProps) {
+export function TableHeader({
+  children,
+  className = '',
+  ...props
+}: TableHeaderProps) {
   return (
     <thead className={`bg-zinc-900/50 ${className}`} {...props}>
       {children}
@@ -30,7 +39,11 @@ interface TableRowProps extends HTMLAttributes<HTMLTableRowElement> {
   children: ReactNode;
 }
 
-export function TableRow({ children, className = '', ...props }: TableRowProps) {
+export function TableRow({
+  children,
+  className = '',
+  ...props
+}: TableRowProps) {
   return (
     <tr
       className={`border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors duration-100 ${className}`}
@@ -45,7 +58,11 @@ interface TableHeadProps extends ThHTMLAttributes<HTMLTableCellElement> {
   children?: ReactNode;
 }
 
-export function TableHead({ children, className = '', ...props }: TableHeadProps) {
+export function TableHead({
+  children,
+  className = '',
+  ...props
+}: TableHeadProps) {
   return (
     <th
       className={`px-4 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider ${className}`}
@@ -60,7 +77,11 @@ interface TableCellProps extends TdHTMLAttributes<HTMLTableCellElement> {
   children?: ReactNode;
 }
 
-export function TableCell({ children, className = '', ...props }: TableCellProps) {
+export function TableCell({
+  children,
+  className = '',
+  ...props
+}: TableCellProps) {
   return (
     <td className={`px-4 py-3 text-zinc-300 ${className}`} {...props}>
       {children}

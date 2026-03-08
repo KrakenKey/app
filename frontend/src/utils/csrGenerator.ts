@@ -20,9 +20,11 @@ import type {
  * Checks if WebCrypto API is available in the current browser
  */
 export function isBrowserCompatible(): boolean {
-  return typeof window !== 'undefined' &&
-         window.crypto !== undefined &&
-         window.crypto.subtle !== undefined;
+  return (
+    typeof window !== 'undefined' &&
+    window.crypto !== undefined &&
+    window.crypto.subtle !== undefined
+  );
 }
 
 /**
@@ -33,7 +35,9 @@ export function isBrowserCompatible(): boolean {
  * @returns Promise<CryptoKeyPair> - Key pair with private and public keys
  * @throws Error if key generation fails or browser doesn't support the algorithm
  */
-export async function generateKeyPair(keyType: KeyType): Promise<CryptoKeyPair> {
+export async function generateKeyPair(
+  keyType: KeyType,
+): Promise<CryptoKeyPair> {
   if (!isBrowserCompatible()) {
     throw new Error('WebCrypto API not supported in this browser');
   }
@@ -41,7 +45,7 @@ export async function generateKeyPair(keyType: KeyType): Promise<CryptoKeyPair> 
   try {
     switch (keyType) {
       case 'RSA-2048':
-        return await crypto.subtle.generateKey(
+        return (await crypto.subtle.generateKey(
           {
             name: 'RSASSA-PKCS1-v1_5',
             modulusLength: 2048,
@@ -49,11 +53,11 @@ export async function generateKeyPair(keyType: KeyType): Promise<CryptoKeyPair> 
             hash: 'SHA-256',
           },
           true, // extractable
-          ['sign', 'verify']
-        ) as CryptoKeyPair;
+          ['sign', 'verify'],
+        )) as CryptoKeyPair;
 
       case 'RSA-4096':
-        return await crypto.subtle.generateKey(
+        return (await crypto.subtle.generateKey(
           {
             name: 'RSASSA-PKCS1-v1_5',
             modulusLength: 4096,
@@ -61,28 +65,28 @@ export async function generateKeyPair(keyType: KeyType): Promise<CryptoKeyPair> 
             hash: 'SHA-256',
           },
           true,
-          ['sign', 'verify']
-        ) as CryptoKeyPair;
+          ['sign', 'verify'],
+        )) as CryptoKeyPair;
 
       case 'ECDSA-P256':
-        return await crypto.subtle.generateKey(
+        return (await crypto.subtle.generateKey(
           {
             name: 'ECDSA',
             namedCurve: 'P-256',
           },
           true,
-          ['sign', 'verify']
-        ) as CryptoKeyPair;
+          ['sign', 'verify'],
+        )) as CryptoKeyPair;
 
       case 'ECDSA-P384':
-        return await crypto.subtle.generateKey(
+        return (await crypto.subtle.generateKey(
           {
             name: 'ECDSA',
             namedCurve: 'P-384',
           },
           true,
-          ['sign', 'verify']
-        ) as CryptoKeyPair;
+          ['sign', 'verify'],
+        )) as CryptoKeyPair;
 
       default:
         throw new Error(`Unsupported key type: ${keyType}`);
@@ -107,23 +111,28 @@ export async function createCsr(
   keyPair: CryptoKeyPair,
   subject: CsrSubjectFields,
   sans: CsrSanFields,
-  keyType: KeyType
+  keyType: KeyType,
 ): Promise<string> {
   try {
     // Build subject DN (Distinguished Name) string
     // Escape special chars per RFC 4514: comma, plus, quotes, backslash, angle brackets, semicolon
     const escapeDnValue = (val: string): string =>
-      val.replace(/([,+="\\<>;#])/g, '\\$1')
-         .replace(/^ /, '\\ ')   // Leading space
-         .replace(/ $/, '\\ ');   // Trailing space
+      val
+        .replace(/([,+="\\<>;#])/g, '\\$1')
+        .replace(/^ /, '\\ ') // Leading space
+        .replace(/ $/, '\\ '); // Trailing space
 
     const subjectParts: string[] = [];
     subjectParts.push(`CN=${escapeDnValue(subject.commonName)}`);
-    if (subject.organization) subjectParts.push(`O=${escapeDnValue(subject.organization)}`);
-    if (subject.organizationalUnit) subjectParts.push(`OU=${escapeDnValue(subject.organizationalUnit)}`);
-    if (subject.locality) subjectParts.push(`L=${escapeDnValue(subject.locality)}`);
+    if (subject.organization)
+      subjectParts.push(`O=${escapeDnValue(subject.organization)}`);
+    if (subject.organizationalUnit)
+      subjectParts.push(`OU=${escapeDnValue(subject.organizationalUnit)}`);
+    if (subject.locality)
+      subjectParts.push(`L=${escapeDnValue(subject.locality)}`);
     if (subject.state) subjectParts.push(`ST=${escapeDnValue(subject.state)}`);
-    if (subject.country) subjectParts.push(`C=${escapeDnValue(subject.country)}`);
+    if (subject.country)
+      subjectParts.push(`C=${escapeDnValue(subject.country)}`);
 
     const subjectDn = subjectParts.join(',');
 
@@ -132,9 +141,15 @@ export async function createCsr(
     if (keyType.startsWith('RSA')) {
       signingAlgorithm = { name: 'RSASSA-PKCS1-v1_5' } as Algorithm;
     } else if (keyType === 'ECDSA-P256') {
-      signingAlgorithm = { name: 'ECDSA', hash: { name: 'SHA-256' } } as EcdsaParams;
+      signingAlgorithm = {
+        name: 'ECDSA',
+        hash: { name: 'SHA-256' },
+      } as EcdsaParams;
     } else if (keyType === 'ECDSA-P384') {
-      signingAlgorithm = { name: 'ECDSA', hash: { name: 'SHA-384' } } as EcdsaParams;
+      signingAlgorithm = {
+        name: 'ECDSA',
+        hash: { name: 'SHA-384' },
+      } as EcdsaParams;
     } else {
       throw new Error(`Unknown key type for signing: ${keyType}`);
     }
@@ -144,26 +159,24 @@ export async function createCsr(
 
     // Add all DNS names (including CN, per RFC 2818)
     const allDnsNames = new Set([subject.commonName, ...sans.dnsNames]);
-    allDnsNames.forEach(dns => {
+    allDnsNames.forEach((dns) => {
       if (dns) sanEntries.push({ type: 'dns', value: dns });
     });
 
     // Add IP addresses
-    sans.ipAddresses.forEach(ip => {
+    sans.ipAddresses.forEach((ip) => {
       if (ip) sanEntries.push({ type: 'ip', value: ip });
     });
 
     // Add email addresses
-    sans.emailAddresses.forEach(email => {
+    sans.emailAddresses.forEach((email) => {
       if (email) sanEntries.push({ type: 'email', value: email });
     });
 
     // Create extensions array
     const extensions: x509.Extension[] = [];
     if (sanEntries.length > 0) {
-      extensions.push(
-        new x509.SubjectAlternativeNameExtension(sanEntries)
-      );
+      extensions.push(new x509.SubjectAlternativeNameExtension(sanEntries));
     }
 
     // Generate CSR
@@ -192,7 +205,9 @@ export async function createCsr(
  * @returns Promise<string> - PEM-encoded private key
  * @throws Error if export fails
  */
-export async function exportPrivateKeyToPem(privateKey: CryptoKey): Promise<string> {
+export async function exportPrivateKeyToPem(
+  privateKey: CryptoKey,
+): Promise<string> {
   try {
     const exported = await crypto.subtle.exportKey('pkcs8', privateKey);
     return pemEncode(exported, 'PRIVATE KEY');
@@ -209,7 +224,9 @@ export async function exportPrivateKeyToPem(privateKey: CryptoKey): Promise<stri
  * @returns Promise<string> - PEM-encoded public key
  * @throws Error if export fails
  */
-export async function exportPublicKeyToPem(publicKey: CryptoKey): Promise<string> {
+export async function exportPublicKeyToPem(
+  publicKey: CryptoKey,
+): Promise<string> {
   try {
     const exported = await crypto.subtle.exportKey('spki', publicKey);
     return pemEncode(exported, 'PUBLIC KEY');
@@ -259,12 +276,12 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
 export async function generateCsr(
   keyType: KeyType,
   subject: CsrSubjectFields,
-  sans: CsrSanFields
+  sans: CsrSanFields,
 ): Promise<GeneratedCsrResult> {
   if (!isBrowserCompatible()) {
     throw new Error(
       'Your browser does not support cryptographic operations. ' +
-      'Please use a modern browser (Chrome, Firefox, Safari, or Edge).'
+        'Please use a modern browser (Chrome, Firefox, Safari, or Edge).',
     );
   }
 
@@ -281,10 +298,14 @@ export async function generateCsr(
 
     // Determine algorithm and key size
     const algorithm = keyType.startsWith('RSA') ? 'RSA' : 'ECDSA';
-    const keySize = keyType === 'RSA-2048' ? 2048 :
-                    keyType === 'RSA-4096' ? 4096 :
-                    keyType === 'ECDSA-P256' ? 256 :
-                    384; // ECDSA-P384
+    const keySize =
+      keyType === 'RSA-2048'
+        ? 2048
+        : keyType === 'RSA-4096'
+          ? 4096
+          : keyType === 'ECDSA-P256'
+            ? 256
+            : 384; // ECDSA-P384
 
     return {
       csrPem,
@@ -309,15 +330,17 @@ export function sanitizeErrorMessage(message: string): string {
   // Remove PEM blocks
   let sanitized = message.replace(
     /-----BEGIN[\s\S]*?-----END[^-]+-----/g,
-    '[REDACTED]'
+    '[REDACTED]',
   );
 
   // Remove long hex strings (likely key material)
   sanitized = sanitized.replace(/[0-9a-fA-F]{33,}/g, '[HEX_REDACTED]');
 
   // Generic message for crypto-related errors
-  if (sanitized.toLowerCase().includes('crypto') ||
-      sanitized.toLowerCase().includes('subtle')) {
+  if (
+    sanitized.toLowerCase().includes('crypto') ||
+    sanitized.toLowerCase().includes('subtle')
+  ) {
     return 'Cryptographic operation failed. Please try again or contact support.';
   }
 

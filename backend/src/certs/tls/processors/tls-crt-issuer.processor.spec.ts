@@ -66,7 +66,9 @@ describe('CertIssuerConsumer', () => {
       const result = await processor.process(job);
 
       expect(result).toEqual({ success: true });
-      expect(mockTlsService.findOneInternal).toHaveBeenCalledWith(1, { relations: ['user'] });
+      expect(mockTlsService.findOneInternal).toHaveBeenCalledWith(1, {
+        relations: ['user'],
+      });
       expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
         1,
         { crtPem: null },

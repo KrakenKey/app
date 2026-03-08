@@ -46,9 +46,9 @@ export class CertUtilService {
 
   private curveToKeySize(curve?: string): number {
     const sizes: Record<string, number> = {
-      'prime256v1': 256,
-      'secp384r1': 384,
-      'secp521r1': 521,
+      prime256v1: 256,
+      secp384r1: 384,
+      secp521r1: 521,
     };
     return curve ? (sizes[curve] ?? 0) : 0;
   }
@@ -61,9 +61,7 @@ export class CertUtilService {
       const details = cert.publicKey.asymmetricKeyDetails;
       const keySize =
         (details as { modulusLength?: number })?.modulusLength ??
-        this.curveToKeySize(
-          (details as { namedCurve?: string })?.namedCurve,
-        );
+        this.curveToKeySize((details as { namedCurve?: string })?.namedCurve);
 
       return {
         serialNumber: cert.serialNumber,

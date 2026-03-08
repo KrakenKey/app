@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  ExecutionContext,
-  Inject,
-} from '@nestjs/common';
+import { Injectable, ExecutionContext, Inject } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Logger } from '@nestjs/common';
 import { MetricsService } from '../../metrics/metrics.service';

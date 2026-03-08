@@ -8,8 +8,8 @@ import { API_URL } from '../../services/api';
 import DomainManagement from '../DomainManagement';
 
 // Mock AuthContext so the component can render outside a real auth flow
-vi.mock('../../context/AuthContext', async () => {
-  const actual = await vi.importActual('../../context/AuthContext');
+vi.mock('../../hooks/useAuth', async () => {
+  const actual = await vi.importActual('../../hooks/useAuth');
   return {
     ...actual,
     useAuth: () => ({
@@ -50,9 +50,7 @@ describe('DomainManagement', () => {
     render(<DomainManagement />);
 
     await waitFor(() => {
-      expect(
-        screen.getByText(/No domains yet/),
-      ).toBeInTheDocument();
+      expect(screen.getByText(/No domains yet/)).toBeInTheDocument();
     });
   });
 
@@ -60,7 +58,9 @@ describe('DomainManagement', () => {
     render(<DomainManagement />);
 
     await waitFor(() => {
-      expect(screen.getByText(`Your Domains (${mockDomains.length})`)).toBeInTheDocument();
+      expect(
+        screen.getByText(`Your Domains (${mockDomains.length})`),
+      ).toBeInTheDocument();
     });
   });
 

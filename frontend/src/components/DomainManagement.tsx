@@ -1,9 +1,18 @@
 import { useState, useEffect } from 'react';
-import { Globe, Plus, CheckCircle2, AlertCircle, Trash2, Copy, ChevronDown, ChevronRight } from 'lucide-react';
-import api from '../services/api';
+import {
+  Globe,
+  Plus,
+  CheckCircle2,
+  AlertCircle,
+  Trash2,
+  Copy,
+  ChevronDown,
+  ChevronRight,
+} from 'lucide-react';
 import { toast } from '../utils/toast';
-import { API_ROUTES } from '@krakenkey/shared';
-import type { Domain, CreateDomainRequest } from '@krakenkey/shared';
+import type { Domain } from '@krakenkey/shared';
+import { copyToClipboard } from '../utils/clipboard';
+import * as domainService from '../services/domainService';
 import { Card } from './ui/Card';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
@@ -32,8 +41,8 @@ export default function DomainManagement() {
   const fetchDomains = async () => {
     try {
       setLoading(true);
-      const response = await api.get<Domain[]>(API_ROUTES.DOMAINS.BASE);
-      setDomains(response.data);
+      const data = await domainService.fetchDomains();
+      setDomains(data);
     } catch (error) {
       console.error('Failed to fetch domains:', error);
     } finally {
@@ -51,11 +60,10 @@ export default function DomainManagement() {
 
     try {
       setAddingDomain(true);
-      const payload: CreateDomainRequest = { hostname: newHostname.trim() };
-      const response = await api.post<Domain>(API_ROUTES.DOMAINS.BASE, payload);
+      const newDomain = await domainService.addDomain(newHostname.trim());
 
-      toast.success(`Domain ${response.data.hostname} added successfully!`);
-      setDomains([...domains, response.data]);
+      toast.success(`Domain ${newDomain.hostname} added successfully!`);
+      setDomains([...domains, newDomain]);
       setNewHostname('');
     } catch (error) {
       console.error('Failed to add domain:', error);
@@ -67,11 +75,13 @@ export default function DomainManagement() {
   const handleVerifyDomain = async (domain: Domain) => {
     try {
       setVerifyingId(domain.id);
-      const response = await api.post<Domain>(API_ROUTES.DOMAINS.VERIFY(domain.id));
+      const updatedDomain = await domainService.verifyDomain(domain.id);
 
-      if (response.data.isVerified) {
+      if (updatedDomain.isVerified) {
         toast.success(`Domain ${domain.hostname} verified successfully!`);
-        setDomains(domains.map(d => d.id === domain.id ? response.data : d));
+        setDomains(
+          domains.map((d) => (d.id === domain.id ? updatedDomain : d)),
+        );
       }
     } catch (error) {
       console.error('Failed to verify domain:', error);
@@ -86,17 +96,12 @@ export default function DomainManagement() {
     }
 
     try {
-      await api.delete(API_ROUTES.DOMAINS.DELETE(domain.id));
+      await domainService.deleteDomain(domain.id);
       toast.success(`Domain ${domain.hostname} deleted`);
-      setDomains(domains.filter(d => d.id !== domain.id));
+      setDomains(domains.filter((d) => d.id !== domain.id));
     } catch (error) {
       console.error('Failed to delete domain:', error);
     }
-  };
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    toast.success('Copied to clipboard!');
   };
 
   if (loading) {
@@ -118,8 +123,13 @@ export default function DomainManagement() {
 
       {/* Add Domain Form */}
       <Card className="mb-6">
-        <h3 className="text-sm font-medium text-zinc-400 mb-4">Add New Domain</h3>
-        <form onSubmit={handleAddDomain} className="flex flex-col sm:flex-row gap-3">
+        <h3 className="text-sm font-medium text-zinc-400 mb-4">
+          Add New Domain
+        </h3>
+        <form
+          onSubmit={handleAddDomain}
+          className="flex flex-col sm:flex-row gap-3"
+        >
           <Input
             placeholder="example.com"
             value={newHostname}
@@ -127,7 +137,12 @@ export default function DomainManagement() {
             disabled={addingDomain}
             className="flex-1"
           />
-          <Button type="submit" variant="primary" disabled={addingDomain} icon={<Plus className="w-3.5 h-3.5" />}>
+          <Button
+            type="submit"
+            variant="primary"
+            disabled={addingDomain}
+            icon={<Plus className="w-3.5 h-3.5" />}
+          >
             {addingDomain ? 'Adding...' : 'Add Domain'}
           </Button>
         </form>
@@ -135,7 +150,9 @@ export default function DomainManagement() {
 
       {/* Domains List */}
       <div>
-        <h3 className="text-sm font-medium text-zinc-400 mb-4">Your Domains ({domains.length})</h3>
+        <h3 className="text-sm font-medium text-zinc-400 mb-4">
+          Your Domains ({domains.length})
+        </h3>
 
         {domains.length === 0 ? (
           <Card>
@@ -172,7 +189,13 @@ interface DomainCardProps {
   isVerifying: boolean;
 }
 
-function DomainCard({ domain, onVerify, onDelete, onCopy, isVerifying }: DomainCardProps) {
+function DomainCard({
+  domain,
+  onVerify,
+  onDelete,
+  onCopy,
+  isVerifying,
+}: DomainCardProps) {
   const [showInstructions, setShowInstructions] = useState(false);
 
   return (
@@ -180,20 +203,38 @@ function DomainCard({ domain, onVerify, onDelete, onCopy, isVerifying }: DomainC
       {/* Header */}
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center gap-3">
-          <h4 className="text-base font-medium text-zinc-100">{domain.hostname}</h4>
+          <h4 className="text-base font-medium text-zinc-100">
+            {domain.hostname}
+          </h4>
           {domain.isVerified ? (
-            <Badge variant="success" dot><CheckCircle2 className="w-3 h-3 mr-1 inline" />Verified</Badge>
+            <Badge variant="success" dot>
+              <CheckCircle2 className="w-3 h-3 mr-1 inline" />
+              Verified
+            </Badge>
           ) : (
-            <Badge variant="warning" dot><AlertCircle className="w-3 h-3 mr-1 inline" />Unverified</Badge>
+            <Badge variant="warning" dot>
+              <AlertCircle className="w-3 h-3 mr-1 inline" />
+              Unverified
+            </Badge>
           )}
         </div>
         <div className="flex gap-2">
           {!domain.isVerified && (
-            <Button size="sm" variant="secondary" onClick={() => onVerify(domain)} disabled={isVerifying}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => onVerify(domain)}
+              disabled={isVerifying}
+            >
               {isVerifying ? 'Verifying...' : 'Verify Now'}
             </Button>
           )}
-          <Button size="sm" variant="danger" icon={<Trash2 className="w-3.5 h-3.5" />} onClick={() => onDelete(domain)}>
+          <Button
+            size="sm"
+            variant="danger"
+            icon={<Trash2 className="w-3.5 h-3.5" />}
+            onClick={() => onDelete(domain)}
+          >
             Delete
           </Button>
         </div>
@@ -203,12 +244,16 @@ function DomainCard({ domain, onVerify, onDelete, onCopy, isVerifying }: DomainC
       <div className="text-sm space-y-1 mb-4">
         <div className="flex gap-2">
           <span className="text-zinc-500">Added:</span>
-          <span className="text-zinc-300">{new Date(domain.createdAt).toLocaleString()}</span>
+          <span className="text-zinc-300">
+            {new Date(domain.createdAt).toLocaleString()}
+          </span>
         </div>
         {domain.isVerified && (
           <div className="flex gap-2">
             <span className="text-zinc-500">Verified:</span>
-            <span className="text-zinc-300">{new Date(domain.updatedAt).toLocaleString()}</span>
+            <span className="text-zinc-300">
+              {new Date(domain.updatedAt).toLocaleString()}
+            </span>
           </div>
         )}
       </div>
@@ -220,7 +265,11 @@ function DomainCard({ domain, onVerify, onDelete, onCopy, isVerifying }: DomainC
             onClick={() => setShowInstructions(!showInstructions)}
             className="flex items-center gap-1.5 text-sm text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer bg-transparent border-none p-0"
           >
-            {showInstructions ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+            {showInstructions ? (
+              <ChevronDown className="w-4 h-4" />
+            ) : (
+              <ChevronRight className="w-4 h-4" />
+            )}
             How to verify this domain
           </button>
 
@@ -228,49 +277,93 @@ function DomainCard({ domain, onVerify, onDelete, onCopy, isVerifying }: DomainC
             <div className="mt-4 space-y-6">
               <p className="text-sm text-zinc-400">
                 Add the following two DNS records to your domain. Both are{' '}
-                <strong className="text-zinc-300">persistent</strong> — add them once and leave them in place.
+                <strong className="text-zinc-300">persistent</strong> — add them
+                once and leave them in place.
               </p>
 
               {/* Record 1: TXT */}
               <div className="space-y-2">
-                <h5 className="text-sm font-medium text-zinc-200">Record 1: TXT — Domain Ownership Verification</h5>
+                <h5 className="text-sm font-medium text-zinc-200">
+                  Record 1: TXT — Domain Ownership Verification
+                </h5>
                 <p className="text-xs text-zinc-500">
-                  This proves you own the domain. Add this TXT record to the root of your domain.
+                  This proves you own the domain. Add this TXT record to the
+                  root of your domain.
                 </p>
                 <div className="bg-zinc-950 rounded-lg p-4 border border-zinc-800 space-y-2 text-sm">
-                  <div><span className="text-zinc-500">Type:</span> <span className="text-zinc-300">TXT</span></div>
-                  <div><span className="text-zinc-500">Name:</span> <code className="text-cyan-400">@</code> <span className="text-zinc-600">(or leave blank for apex domain)</span></div>
+                  <div>
+                    <span className="text-zinc-500">Type:</span>{' '}
+                    <span className="text-zinc-300">TXT</span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500">Name:</span>{' '}
+                    <code className="text-cyan-400">@</code>{' '}
+                    <span className="text-zinc-600">
+                      (or leave blank for apex domain)
+                    </span>
+                  </div>
                   <div className="flex items-center gap-2">
                     <span className="text-zinc-500">Value:</span>
-                    <code className="text-cyan-400 break-all">{domain.verificationCode}</code>
-                    <Button size="sm" variant="ghost" icon={<Copy className="w-3 h-3" />} onClick={() => onCopy(domain.verificationCode)} />
+                    <code className="text-cyan-400 break-all">
+                      {domain.verificationCode}
+                    </code>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      icon={<Copy className="w-3 h-3" />}
+                      onClick={() => onCopy(domain.verificationCode)}
+                    />
                   </div>
                 </div>
               </div>
 
               {/* Record 2: CNAME */}
               <div className="space-y-2">
-                <h5 className="text-sm font-medium text-zinc-200">Record 2: CNAME — Automated Certificate Issuance</h5>
+                <h5 className="text-sm font-medium text-zinc-200">
+                  Record 2: CNAME — Automated Certificate Issuance
+                </h5>
                 <p className="text-xs text-zinc-500">
-                  This delegates ACME DNS-01 challenges so KrakenKey can automatically issue and renew TLS certificates.
+                  This delegates ACME DNS-01 challenges so KrakenKey can
+                  automatically issue and renew TLS certificates.
                 </p>
                 <div className="bg-zinc-950 rounded-lg p-4 border border-zinc-800 space-y-2 text-sm">
-                  <div><span className="text-zinc-500">Type:</span> <span className="text-zinc-300">CNAME</span></div>
+                  <div>
+                    <span className="text-zinc-500">Type:</span>{' '}
+                    <span className="text-zinc-300">CNAME</span>
+                  </div>
                   <div className="flex items-center gap-2">
                     <span className="text-zinc-500">Name:</span>
-                    <code className="text-cyan-400 break-all">_acme-challenge.{domain.hostname}</code>
-                    <Button size="sm" variant="ghost" icon={<Copy className="w-3 h-3" />} onClick={() => onCopy(`_acme-challenge.${domain.hostname}`)} />
+                    <code className="text-cyan-400 break-all">
+                      _acme-challenge.{domain.hostname}
+                    </code>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      icon={<Copy className="w-3 h-3" />}
+                      onClick={() =>
+                        onCopy(`_acme-challenge.${domain.hostname}`)
+                      }
+                    />
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-zinc-500">Target:</span>
-                    <code className="text-cyan-400 break-all">{acmeCnameTarget(domain.hostname)}</code>
-                    <Button size="sm" variant="ghost" icon={<Copy className="w-3 h-3" />} onClick={() => onCopy(acmeCnameTarget(domain.hostname))} />
+                    <code className="text-cyan-400 break-all">
+                      {acmeCnameTarget(domain.hostname)}
+                    </code>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      icon={<Copy className="w-3 h-3" />}
+                      onClick={() => onCopy(acmeCnameTarget(domain.hostname))}
+                    />
                   </div>
                 </div>
               </div>
 
               <div className="text-sm text-zinc-400">
-                <p className="font-medium text-zinc-300 mb-1">After adding both records:</p>
+                <p className="font-medium text-zinc-300 mb-1">
+                  After adding both records:
+                </p>
                 <ol className="list-decimal list-inside space-y-1 text-zinc-500">
                   <li>Wait a few minutes for DNS to propagate</li>
                   <li>Click "Verify Now" above (this checks the TXT record)</li>
@@ -287,25 +380,44 @@ function DomainCard({ domain, onVerify, onDelete, onCopy, isVerifying }: DomainC
                     <ol className="list-decimal list-inside mt-1 space-y-0.5">
                       <li>Go to DNS settings for your domain</li>
                       <li>Click "Add record"</li>
-                      <li>Add TXT record (Type: TXT, Name: @, Content: verification code)</li>
-                      <li>Add CNAME record (Name: _acme-challenge, Target: value shown above)</li>
-                      <li>Make sure CNAME proxy status is <strong className="text-zinc-300">DNS only</strong> (grey cloud)</li>
+                      <li>
+                        Add TXT record (Type: TXT, Name: @, Content:
+                        verification code)
+                      </li>
+                      <li>
+                        Add CNAME record (Name: _acme-challenge, Target: value
+                        shown above)
+                      </li>
+                      <li>
+                        Make sure CNAME proxy status is{' '}
+                        <strong className="text-zinc-300">DNS only</strong>{' '}
+                        (grey cloud)
+                      </li>
                     </ol>
                   </div>
                   <div>
-                    <strong className="text-zinc-300">Route 53 / Other DNS:</strong>
+                    <strong className="text-zinc-300">
+                      Route 53 / Other DNS:
+                    </strong>
                     <ol className="list-decimal list-inside mt-1 space-y-0.5">
                       <li>Go to your DNS provider's control panel</li>
                       <li>Find DNS/Zone records section</li>
-                      <li>Add TXT record (Host: @, Value: verification code)</li>
-                      <li>Add CNAME record (Host: _acme-challenge, Value: target shown above)</li>
+                      <li>
+                        Add TXT record (Host: @, Value: verification code)
+                      </li>
+                      <li>
+                        Add CNAME record (Host: _acme-challenge, Value: target
+                        shown above)
+                      </li>
                     </ol>
                   </div>
                 </div>
               </details>
 
               <div className="space-y-2">
-                <p className="text-sm font-medium text-zinc-300">Test your DNS records:</p>
+                <p className="text-sm font-medium text-zinc-300">
+                  Test your DNS records:
+                </p>
                 <code className="block bg-zinc-950 rounded-lg px-3 py-2 font-mono text-xs text-zinc-400">
                   dig TXT {domain.hostname} +short
                 </code>
@@ -313,8 +425,8 @@ function DomainCard({ domain, onVerify, onDelete, onCopy, isVerifying }: DomainC
                   dig CNAME _acme-challenge.{domain.hostname} +short
                 </code>
                 <p className="text-xs text-zinc-600">
-                  The first command should show your verification code.
-                  The second should show the CNAME target after you add the record.
+                  The first command should show your verification code. The
+                  second should show the CNAME target after you add the record.
                 </p>
               </div>
             </div>

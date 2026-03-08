@@ -1,5 +1,11 @@
 import { http, HttpResponse } from 'msw';
-import { mockUser, mockTokens, mockDomains, mockCerts, mockApiKey } from './data';
+import {
+  mockUser,
+  mockTokens,
+  mockDomains,
+  mockCerts,
+  mockApiKey,
+} from './data';
 import { API_URL } from '../../services/api';
 
 export const handlers = [
@@ -17,7 +23,11 @@ export const handlers = [
   }),
 
   http.post(`${API_URL}/auth/api-keys`, () => {
-    return HttpResponse.json({ apiKey: mockApiKey, id: 'key-1', name: 'test-key' });
+    return HttpResponse.json({
+      apiKey: mockApiKey,
+      id: 'key-1',
+      name: 'test-key',
+    });
   }),
 
   // Domains

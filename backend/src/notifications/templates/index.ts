@@ -1,5 +1,14 @@
 import type { CertEmailContext } from '../email.service';
 
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function layout(title: string, body: string): string {
   return `<!DOCTYPE html>
 <html>
@@ -22,18 +31,20 @@ function layout(title: string, body: string): string {
 }
 
 function p(text: string): string {
-  return `<p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#a1a1aa">${text}</p>`;
+  return `<p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#a1a1aa">${escapeHtml(text)}</p>`;
 }
 
 function detail(label: string, value: string): string {
-  return `<div style="margin:0 0 8px;font-size:14px"><span style="color:#71717a">${label}:</span> <span style="color:#fafafa">${value}</span></div>`;
+  return `<div style="margin:0 0 8px;font-size:14px"><span style="color:#71717a">${escapeHtml(label)}:</span> <span style="color:#fafafa">${escapeHtml(value)}</span></div>`;
 }
 
 export function certIssuedTemplate(ctx: CertEmailContext): string {
   return layout(
     'Certificate Issued',
     [
-      p(`Hi ${ctx.username}, your TLS certificate has been successfully issued.`),
+      p(
+        `Hi ${ctx.username}, your TLS certificate has been successfully issued.`,
+      ),
       detail('Certificate ID', String(ctx.certId)),
       detail('Common Name', ctx.commonName),
       ctx.expiresAt
@@ -61,9 +72,7 @@ export function certExpiryWarningTemplate(ctx: CertEmailContext): string {
   return layout(
     'Certificate Expiring Soon',
     [
-      p(
-        `Hi ${ctx.username}, your TLS certificate will expire in <strong style="color:#f59e0b">${ctx.daysUntilExpiry} days</strong>.`,
-      ),
+      `<p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#a1a1aa">Hi ${escapeHtml(ctx.username)}, your TLS certificate will expire in <strong style="color:#f59e0b">${ctx.daysUntilExpiry ?? 0} days</strong>.</p>`,
       detail('Certificate ID', String(ctx.certId)),
       detail('Common Name', ctx.commonName),
       ctx.expiresAt
@@ -78,15 +87,13 @@ export function certFailedTemplate(ctx: CertEmailContext): string {
   return layout(
     'Certificate Issuance Failed',
     [
-      p(
-        `Hi ${ctx.username}, we were unable to issue your TLS certificate.`,
-      ),
+      p(`Hi ${ctx.username}, we were unable to issue your TLS certificate.`),
       detail('Certificate ID', String(ctx.certId)),
       detail('Common Name', ctx.commonName),
-      ctx.errorMessage
-        ? detail('Error', ctx.errorMessage)
-        : '',
-      p('The system will retry automatically. If this persists, please check your domain configuration.'),
+      ctx.errorMessage ? detail('Error', ctx.errorMessage) : '',
+      p(
+        'The system will retry automatically. If this persists, please check your domain configuration.',
+      ),
     ].join(''),
   );
 }

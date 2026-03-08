@@ -52,11 +52,7 @@ export class EmailService {
     );
   }
 
-  private async send(
-    to: string,
-    subject: string,
-    html: string,
-  ): Promise<void> {
+  private async send(to: string, subject: string, html: string): Promise<void> {
     if (!this.transporter) {
       this.logger.debug(`Email skipped (no SMTP): "${subject}" → ${to}`);
       return;

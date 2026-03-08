@@ -1,8 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class AddUserDisplayNameAndCreatedAt1772600000000
-  implements MigrationInterface
-{
+export class AddUserDisplayNameAndCreatedAt1772600000000 implements MigrationInterface {
   name = 'AddUserDisplayNameAndCreatedAt1772600000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

@@ -7,6 +7,7 @@ import {
   ManyToOne,
   JoinColumn,
 } from 'typeorm';
+import { ApiHideProperty } from '@nestjs/swagger';
 import { User } from '../../users/entities/user.entity';
 
 @Entity()
@@ -17,6 +18,7 @@ export class Domain {
   @Column()
   hostname: string;
 
+  @ApiHideProperty()
   @Column()
   verificationCode: string;
 

@@ -15,9 +15,11 @@ export function validateCommonName(cn: string): string | null {
   const trimmed = cn.trim();
 
   // Allow wildcard domains (*.example.com)
-  const wildcardPattern = /^\*\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/i;
+  const wildcardPattern =
+    /^\*\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/i;
   // Regular FQDN
-  const fqdnPattern = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/i;
+  const fqdnPattern =
+    /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/i;
 
   if (!wildcardPattern.test(trimmed) && !fqdnPattern.test(trimmed)) {
     return 'Common Name must be a valid domain name (e.g., example.com or *.example.com)';
@@ -42,6 +44,7 @@ export function validateOrganization(org: string): string | null {
   }
 
   // Reject control characters
+  // eslint-disable-next-line no-control-regex
   if (/[\x00-\x1F\x7F]/.test(trimmed)) {
     return 'Organization contains invalid characters';
   }
@@ -79,8 +82,10 @@ export function validateDnsName(dns: string): string | null {
   const trimmed = dns.trim();
 
   // Same as CN validation but stored separately for clarity
-  const wildcardPattern = /^\*\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/i;
-  const fqdnPattern = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/i;
+  const wildcardPattern =
+    /^\*\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/i;
+  const fqdnPattern =
+    /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/i;
 
   if (!wildcardPattern.test(trimmed) && !fqdnPattern.test(trimmed)) {
     return 'DNS name must be a valid domain (e.g., www.example.com or *.example.com)';
@@ -104,10 +109,12 @@ export function validateIpAddress(ip: string): string | null {
   const trimmed = ip.trim();
 
   // IPv4 pattern
-  const ipv4Pattern = /^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+  const ipv4Pattern =
+    /^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
 
   // IPv6 pattern (simplified - full IPv6 validation is complex)
-  const ipv6Pattern = /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|::)$/;
+  const ipv6Pattern =
+    /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|::)$/;
 
   if (!ipv4Pattern.test(trimmed) && !ipv6Pattern.test(trimmed)) {
     return 'Must be a valid IPv4 (e.g., 192.168.1.1) or IPv6 address';
@@ -127,7 +134,8 @@ export function validateEmail(email: string): string | null {
   const trimmed = email.trim();
 
   // Basic email validation (RFC 5322 simplified)
-  const emailPattern = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+  const emailPattern =
+    /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
 
   if (!emailPattern.test(trimmed)) {
     return 'Must be a valid email address (e.g., user@example.com)';
@@ -164,15 +172,19 @@ export function validateSubjectFields(subject: {
 
   if (subject.organizationalUnit) {
     if (subject.organizationalUnit.length > 64) {
-      errors.organizationalUnit = 'Organizational Unit must be 64 characters or less';
+      errors.organizationalUnit =
+        'Organizational Unit must be 64 characters or less';
+      // eslint-disable-next-line no-control-regex
     } else if (/[\x00-\x1F\x7F]/.test(subject.organizationalUnit)) {
-      errors.organizationalUnit = 'Organizational Unit contains invalid characters';
+      errors.organizationalUnit =
+        'Organizational Unit contains invalid characters';
     }
   }
 
   if (subject.locality) {
     if (subject.locality.length > 128) {
       errors.locality = 'Locality must be 128 characters or less';
+      // eslint-disable-next-line no-control-regex
     } else if (/[\x00-\x1F\x7F]/.test(subject.locality)) {
       errors.locality = 'Locality contains invalid characters';
     }
@@ -181,6 +193,7 @@ export function validateSubjectFields(subject: {
   if (subject.state) {
     if (subject.state.length > 128) {
       errors.state = 'State/Province must be 128 characters or less';
+      // eslint-disable-next-line no-control-regex
     } else if (/[\x00-\x1F\x7F]/.test(subject.state)) {
       errors.state = 'State/Province contains invalid characters';
     }
@@ -201,10 +214,15 @@ export function validateSubjectFields(subject: {
  * verifying "labxp.io" covers "sub.labxp.io", "*.labxp.io",
  * "a.b.labxp.io", etc.
  */
-export function isDomainVerified(domain: string, verifiedDomains: string[]): boolean {
+export function isDomainVerified(
+  domain: string,
+  verifiedDomains: string[],
+): boolean {
   const normalized = domain.trim().toLowerCase();
   // Strip wildcard prefix for matching (*.example.com -> example.com)
-  const baseDomain = normalized.startsWith('*.') ? normalized.slice(2) : normalized;
+  const baseDomain = normalized.startsWith('*.')
+    ? normalized.slice(2)
+    : normalized;
 
   return verifiedDomains.some((d) => {
     const allowed = d.toLowerCase();
@@ -217,9 +235,11 @@ export function isDomainVerified(domain: string, verifiedDomains: string[]): boo
  */
 export function validateDomainAuthorization(
   domains: string[],
-  verifiedDomains: string[]
+  verifiedDomains: string[],
 ): string | null {
-  const unauthorized = domains.filter(d => !isDomainVerified(d, verifiedDomains));
+  const unauthorized = domains.filter(
+    (d) => !isDomainVerified(d, verifiedDomains),
+  );
 
   if (unauthorized.length > 0) {
     return `These domains are not verified: ${unauthorized.join(', ')}. Please verify them first.`;

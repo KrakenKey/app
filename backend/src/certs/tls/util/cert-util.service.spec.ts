@@ -15,7 +15,7 @@ jest.mock('crypto', () => {
         validTo: mockValidTo,
         validFrom: '2025-06-15T00:00:00.000Z',
         serialNumber: '03A1B2C3D4E5F6',
-        issuer: 'C=US\nO=Let\'s Encrypt\nCN=R3',
+        issuer: "C=US\nO=Let's Encrypt\nCN=R3",
         subject: 'CN=example.com',
         fingerprint256: 'AB:CD:EF:01:23:45:67:89',
         publicKey: {

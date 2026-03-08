@@ -78,7 +78,11 @@ describe('AuthController', () => {
 
   describe('getProfile', () => {
     it('delegates to authService.getFullProfile()', async () => {
-      const profile = { id: 'u1', username: 'alice', resourceCounts: { domains: 0, certificates: 0, apiKeys: 0 } };
+      const profile = {
+        id: 'u1',
+        username: 'alice',
+        resourceCounts: { domains: 0, certificates: 0, apiKeys: 0 },
+      };
       mockAuthService.getFullProfile.mockResolvedValue(profile);
       const req = { user: { userId: 'u1' } } as any;
 

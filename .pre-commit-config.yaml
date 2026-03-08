@@ -22,7 +22,7 @@ repos:
         language: system
         pass_filenames: false
 
-      # ── ESLint ───────────────────────────────────────────────────────────
+      # ── ESLint + Prettier (via eslint-plugin-prettier) ─────────────────
       - id: eslint-backend
         name: eslint (backend)
         entry: bash -c 'cd backend && npx eslint --fix "${@/#backend\//}"' --
@@ -35,13 +35,11 @@ repos:
         language: system
         files: ^frontend/.*\.(ts|tsx)$
         types_or: [ts, tsx]
-
-      # ── Prettier (backend — has .prettierrc) ─────────────────────────────
-      - id: prettier-backend
-        name: prettier (backend)
-        entry: bash -c 'cd backend && npx prettier --write "${@/#backend\//}"' --
+      - id: eslint-shared
+        name: eslint (shared)
+        entry: bash -c 'cd shared && npx eslint --fix "${@/#shared\//}"' --
         language: system
-        files: ^backend/src/.*\.ts$
+        files: ^shared/.*\.ts$
         types: [ts]
 
       # ── Dockerfile linting ───────────────────────────────────────────────

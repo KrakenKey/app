@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import type { ReactNode } from 'react';
-import { AuthProvider, useAuth } from './context/AuthContext';
+import { AuthProvider } from './context/AuthContext';
+import { useAuth } from './hooks/useAuth';
 import { DomainsProvider } from './context/DomainsContext';
 import { DashboardLayout } from './layouts/DashboardLayout';
 import Home from './pages/Home';
@@ -12,7 +13,7 @@ import CertificateManagement from './components/CertificateManagement';
 import ApiKeyManagement from './components/ApiKeyManagement';
 import Feedback from './components/Feedback';
 
-const ProtectedRoute = ({ children }: { children: { } & ReactNode }) => {
+const ProtectedRoute = ({ children }: { children: {} & ReactNode }) => {
   const { isAuthenticated, isLoading } = useAuth();
 
   if (isLoading) {
