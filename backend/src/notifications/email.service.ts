@@ -10,6 +10,7 @@ import {
   certExpiryWarningTemplate,
   certFailedTemplate,
   certRevokedTemplate,
+  domainVerificationFailedTemplate,
 } from './templates';
 import { User } from '../users/entities/user.entity';
 import { NotificationType } from '@krakenkey/shared';
@@ -25,8 +26,6 @@ export interface CertEmailContext {
   errorMessage?: string;
 }
 
-<<<<<<< Updated upstream
-=======
 export interface DomainVerificationFailedContext {
   userId?: string;
   username: string;
@@ -35,7 +34,6 @@ export interface DomainVerificationFailedContext {
   verificationCode: string;
 }
 
->>>>>>> Stashed changes
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
@@ -163,8 +161,6 @@ export class EmailService {
       certRevokedTemplate(ctx),
     );
   }
-<<<<<<< Updated upstream
-=======
 
   async sendDomainVerificationFailed(
     ctx: DomainVerificationFailedContext,
@@ -182,5 +178,4 @@ export class EmailService {
       domainVerificationFailedTemplate(ctx),
     );
   }
->>>>>>> Stashed changes
 }

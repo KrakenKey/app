@@ -4,6 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Domain } from '../entities/domain.entity';
 import { DomainsService } from '../domains.service';
+import { EmailService } from '../../notifications/email.service';
 
 @Injectable()
 export class DomainMonitorService {
@@ -13,6 +14,7 @@ export class DomainMonitorService {
     @InjectRepository(Domain)
     private readonly domainsRepository: Repository<Domain>,
     private readonly domainsService: DomainsService,
+    private readonly emailService: EmailService,
   ) {}
 
   /**
@@ -28,6 +30,7 @@ export class DomainMonitorService {
   async checkVerifiedDomains(): Promise<void> {
     const verifiedDomains = await this.domainsRepository.find({
       where: { isVerified: true },
+      relations: ['owner'],
     });
 
     this.logger.log(
@@ -46,8 +49,6 @@ export class DomainMonitorService {
           this.logger.warn(
             `Domain ${domain.hostname} (id: ${domain.id}) failed re-verification — TXT record not found, marked as unverified`,
           );
-<<<<<<< Updated upstream
-=======
 
           if (domain.owner?.email) {
             await this.emailService.sendDomainVerificationFailed({
@@ -58,7 +59,6 @@ export class DomainMonitorService {
               verificationCode: domain.verificationCode,
             });
           }
->>>>>>> Stashed changes
         }
       } catch (err) {
         this.logger.error(
