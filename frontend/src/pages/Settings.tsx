@@ -5,15 +5,49 @@ import {
   Shield,
   Key,
   AlertTriangle,
+  Bell,
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import api from '../services/api';
 import { toast } from '../utils/toast';
-import type { UserProfile } from '@krakenkey/shared';
+import type { UserProfile, NotificationPreferences } from '@krakenkey/shared';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { PageHeader } from '../components/ui/PageHeader';
+
+const NOTIFICATION_OPTIONS = [
+  {
+    type: 'cert_issued' as const,
+    label: 'Certificate Issued',
+    description: 'When a new certificate is successfully issued',
+  },
+  {
+    type: 'cert_renewed' as const,
+    label: 'Certificate Renewed',
+    description: 'When a certificate is automatically renewed',
+  },
+  {
+    type: 'cert_failed' as const,
+    label: 'Certificate Failed',
+    description: 'When certificate issuance or renewal fails',
+  },
+  {
+    type: 'cert_expiry_warning' as const,
+    label: 'Expiry Warning',
+    description: 'When a certificate is expiring within 30 days',
+  },
+  {
+    type: 'cert_revoked' as const,
+    label: 'Certificate Revoked',
+    description: 'When a certificate is revoked',
+  },
+  {
+    type: 'domain_verification_failed' as const,
+    label: 'Domain Verification Failed',
+    description: 'When a domain loses its DNS verification',
+  },
+];
 
 const Settings: React.FC = () => {
   const { user, deleteAccount } = useAuth();
@@ -24,6 +58,7 @@ const Settings: React.FC = () => {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [deleting, setDeleting] = useState(false);
+  const [savingNotifications, setSavingNotifications] = useState(false);
 
   useEffect(() => {
     fetchProfile();
@@ -54,6 +89,25 @@ const Settings: React.FC = () => {
       toast.error('Failed to update display name');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleToggleNotification = async (type: string) => {
+    if (!profile) return;
+    const current =
+      profile.notificationPreferences?.[type as keyof NotificationPreferences] !== false;
+    const updated: NotificationPreferences = { [type]: !current };
+
+    setSavingNotifications(true);
+    try {
+      const response = await api.patch<UserProfile>('/auth/profile', {
+        notificationPreferences: updated,
+      });
+      setProfile(response.data);
+    } catch {
+      toast.error('Failed to update notification preferences');
+    } finally {
+      setSavingNotifications(false);
     }
   };
 
@@ -139,6 +193,52 @@ const Settings: React.FC = () => {
             {saving ? 'Saving...' : 'Save'}
           </Button>
         </form>
+      </Card>
+
+      {/* Notification Preferences */}
+      <Card className="mb-6">
+        <h2 className="text-sm font-medium text-zinc-400 mb-4 flex items-center gap-2">
+          <Bell className="w-4 h-4" />
+          Email Notifications
+        </h2>
+        <p className="text-xs text-zinc-500 mb-4">
+          Choose which email notifications you would like to receive.
+        </p>
+        <div className="space-y-3">
+          {NOTIFICATION_OPTIONS.map(({ type, label, description }) => {
+            const enabled =
+              profile.notificationPreferences?.[
+                type as keyof NotificationPreferences
+              ] !== false;
+            return (
+              <label
+                key={type}
+                className="flex items-center justify-between p-3 bg-zinc-950 rounded-lg cursor-pointer hover:bg-zinc-900 transition-colors"
+              >
+                <div>
+                  <span className="text-sm text-zinc-200">{label}</span>
+                  <p className="text-xs text-zinc-500 mt-0.5">{description}</p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={enabled}
+                  disabled={savingNotifications}
+                  onClick={() => handleToggleNotification(type)}
+                  className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors duration-200 ${
+                    enabled ? 'bg-cyan-600' : 'bg-zinc-700'
+                  } ${savingNotifications ? 'opacity-50' : ''}`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform duration-200 mt-0.5 ${
+                      enabled ? 'translate-x-4 ml-0.5' : 'translate-x-0 ml-0.5'
+                    }`}
+                  />
+                </button>
+              </label>
+            );
+          })}
+        </div>
       </Card>
 
       {/* Resource Summary */}

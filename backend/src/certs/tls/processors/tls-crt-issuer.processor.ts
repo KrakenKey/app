@@ -127,6 +127,7 @@ export class CertIssuerConsumer extends WorkerHost {
 
       if (csrRecord.user) {
         const ctx: CertEmailContext = {
+          userId: csrRecord.user.id,
           username: csrRecord.user.username,
           email: csrRecord.user.email,
           certId,
@@ -151,6 +152,7 @@ export class CertIssuerConsumer extends WorkerHost {
       );
       if (csrRecord.user) {
         await this.emailService.sendCertFailed({
+          userId: csrRecord.user.id,
           username: csrRecord.user.username,
           email: csrRecord.user.email,
           certId,

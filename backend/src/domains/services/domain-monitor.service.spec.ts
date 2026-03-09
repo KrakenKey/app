@@ -26,6 +26,7 @@ describe('DomainMonitorService', () => {
       createdAt: new Date(),
       apiKeys: [],
       tlsCrts: [],
+      notificationPreferences: {},
     },
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -95,6 +96,7 @@ describe('DomainMonitorService', () => {
       expect(
         mockEmailService.sendDomainVerificationFailed,
       ).toHaveBeenCalledWith({
+        userId: 'u1',
         username: 'testuser',
         email: 'test@example.com',
         hostname: 'example.com',

@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 import {
@@ -10,8 +12,11 @@ import {
   certRevokedTemplate,
   domainVerificationFailedTemplate,
 } from './templates';
+import { User } from '../users/entities/user.entity';
+import { NotificationType } from '@krakenkey/shared';
 
 export interface CertEmailContext {
+  userId?: string;
   username: string;
   email: string;
   certId: number;
@@ -22,6 +27,7 @@ export interface CertEmailContext {
 }
 
 export interface DomainVerificationFailedContext {
+  userId?: string;
   username: string;
   email: string;
   hostname: string;
@@ -33,7 +39,11 @@ export class EmailService {
   private readonly logger = new Logger(EmailService.name);
   private transporter: Transporter | null = null;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
+  ) {
     const host = this.configService.get<string>('KK_SMTP_HOST');
     if (host) {
       this.transporter = nodemailer.createTransport({
@@ -60,6 +70,26 @@ export class EmailService {
     );
   }
 
+  private async shouldSend(
+    userId: string | undefined,
+    type: NotificationType,
+  ): Promise<boolean> {
+    if (!userId) return true;
+    try {
+      const user = await this.userRepo.findOne({
+        where: { id: userId },
+        select: ['id', 'notificationPreferences'],
+      });
+      if (!user) return true;
+      const pref = user.notificationPreferences[type];
+      // Undefined/missing means enabled (opt-out model)
+      return pref !== false;
+    } catch {
+      // On error, default to sending
+      return true;
+    }
+  }
+
   private async send(to: string, subject: string, html: string): Promise<void> {
     if (!this.transporter) {
       this.logger.debug(`Email skipped (no SMTP): "${subject}" → ${to}`);
@@ -78,6 +108,8 @@ export class EmailService {
   }
 
   async sendCertIssued(ctx: CertEmailContext): Promise<void> {
+    if (!(await this.shouldSend(ctx.userId, NotificationType.CERT_ISSUED)))
+      return;
     await this.send(
       ctx.email,
       `Certificate issued for ${ctx.commonName}`,
@@ -86,6 +118,8 @@ export class EmailService {
   }
 
   async sendCertRenewed(ctx: CertEmailContext): Promise<void> {
+    if (!(await this.shouldSend(ctx.userId, NotificationType.CERT_RENEWED)))
+      return;
     await this.send(
       ctx.email,
       `Certificate renewed for ${ctx.commonName}`,
@@ -94,6 +128,10 @@ export class EmailService {
   }
 
   async sendCertExpiryWarning(ctx: CertEmailContext): Promise<void> {
+    if (
+      !(await this.shouldSend(ctx.userId, NotificationType.CERT_EXPIRY_WARNING))
+    )
+      return;
     await this.send(
       ctx.email,
       `Certificate expiring soon: ${ctx.commonName}`,
@@ -102,6 +140,8 @@ export class EmailService {
   }
 
   async sendCertFailed(ctx: CertEmailContext): Promise<void> {
+    if (!(await this.shouldSend(ctx.userId, NotificationType.CERT_FAILED)))
+      return;
     await this.send(
       ctx.email,
       `Certificate issuance failed for ${ctx.commonName}`,
@@ -110,6 +150,8 @@ export class EmailService {
   }
 
   async sendCertRevoked(ctx: CertEmailContext): Promise<void> {
+    if (!(await this.shouldSend(ctx.userId, NotificationType.CERT_REVOKED)))
+      return;
     await this.send(
       ctx.email,
       `Certificate revoked: ${ctx.commonName}`,
@@ -120,6 +162,13 @@ export class EmailService {
   async sendDomainVerificationFailed(
     ctx: DomainVerificationFailedContext,
   ): Promise<void> {
+    if (
+      !(await this.shouldSend(
+        ctx.userId,
+        NotificationType.DOMAIN_VERIFICATION_FAILED,
+      ))
+    )
+      return;
     await this.send(
       ctx.email,
       `Domain verification failed: ${ctx.hostname}`,

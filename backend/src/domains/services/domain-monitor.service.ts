@@ -52,6 +52,7 @@ export class DomainMonitorService {
 
           if (domain.owner?.email) {
             await this.emailService.sendDomainVerificationFailed({
+              userId: domain.owner.id,
               username: domain.owner.username,
               email: domain.owner.email,
               hostname: domain.hostname,
