@@ -7,8 +7,8 @@ import {
   Request,
   Headers,
   BadRequestException,
-  RawBodyRequest,
 } from '@nestjs/common';
+import type { RawBodyRequest } from '@nestjs/common';
 import {
   ApiTags,
   ApiBearerAuth,

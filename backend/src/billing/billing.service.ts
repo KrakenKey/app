@@ -175,7 +175,7 @@ export class BillingService {
     }
 
     // Fetch the Stripe subscription to get the current period end
-    const stripeSub =
+    const stripeSub: Stripe.Subscription =
       await this.stripe.subscriptions.retrieve(stripeSubscriptionId);
 
     await this.subscriptionRepository.upsert(
@@ -188,7 +188,9 @@ export class BillingService {
         stripeSubscriptionId,
         plan,
         status: 'active',
-        currentPeriodEnd: new Date(stripeSub.current_period_end * 1000),
+        currentPeriodEnd: new Date(
+          this.extractPeriodEnd(stripeSub) * 1000,
+        ),
         cancelAtPeriodEnd: stripeSub.cancel_at_period_end,
       },
       {
@@ -213,7 +215,9 @@ export class BillingService {
     }
 
     sub.status = stripeSub.status === 'active' ? 'active' : stripeSub.status;
-    sub.currentPeriodEnd = new Date(stripeSub.current_period_end * 1000);
+    sub.currentPeriodEnd = new Date(
+      this.extractPeriodEnd(stripeSub) * 1000,
+    );
     sub.cancelAtPeriodEnd = stripeSub.cancel_at_period_end;
 
     await this.subscriptionRepository.save(sub);
@@ -258,6 +262,17 @@ export class BillingService {
     sub.status = 'past_due';
     await this.subscriptionRepository.save(sub);
     this.logger.warn(`Payment failed: user=${sub.userId}`);
+  }
+
+  /**
+   * Extract current_period_end from a Stripe Subscription.
+   * In SDK v20+ this moved to items.data[0], but webhook payloads
+   * may still include it at the top level.
+   */
+  private extractPeriodEnd(sub: Stripe.Subscription): number {
+    const fromItem = sub.items?.data?.[0]?.current_period_end;
+    if (fromItem) return fromItem;
+    return (sub as any).current_period_end ?? Math.floor(Date.now() / 1000);
   }
 
   async resolveUserTier(userId: string): Promise<string> {
