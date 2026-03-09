@@ -1,6 +1,5 @@
 import { JwksClient } from 'jwks-rsa';
 import * as jwt from 'jsonwebtoken';
-import { promisify } from 'util';
 
 // Hardcoded for reproduction based on logs/env
 const JWKS_URI = 'https://auth.dev.krakenkey.io/application/o/krakenkey/jwks/';
@@ -45,8 +44,7 @@ async function test() {
 
     // 3. Verify
     console.log('Verifying signature...');
-    const verify = promisify(jwt.verify);
-    const verified = await verify(TOKEN, signingKey, { algorithms: ['RS256'] });
+    const verified = jwt.verify(TOKEN, signingKey, { algorithms: ['RS256'] });
     console.log('✅ Token Verified Successfully!');
     console.log(verified);
   } catch (err) {

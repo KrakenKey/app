@@ -29,7 +29,7 @@ export class Subscription {
 
   @ApiHideProperty()
   @Index('IDX_subscription_stripeSubscriptionId')
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   stripeSubscriptionId: string | null;
 
   @Column({ default: 'free' })
