@@ -16,6 +16,7 @@
   "dependencies": {
     "@krakenkey/shared": "file:../shared",
     "@peculiar/x509": "^1.12.3",
+    "@stripe/stripe-js": "^8.9.0",
     "@tailwindcss/vite": "^4.2.1",
     "axios": "^1.13.6",
     "lucide-react": "^0.577.0",

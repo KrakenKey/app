@@ -12,6 +12,7 @@ import DomainManagement from './components/DomainManagement';
 import CertificateManagement from './components/CertificateManagement';
 import ApiKeyManagement from './components/ApiKeyManagement';
 import Feedback from './components/Feedback';
+import Billing from './pages/Billing';
 
 const ProtectedRoute = ({ children }: { children: {} & ReactNode }) => {
   const { isAuthenticated, isLoading } = useAuth();
@@ -50,6 +51,7 @@ function AppRoutes() {
         <Route path="domains" element={<DomainManagement />} />
         <Route path="certificates" element={<CertificateManagement />} />
         <Route path="api-keys" element={<ApiKeyManagement />} />
+        <Route path="billing" element={<Billing />} />
         <Route path="feedback" element={<Feedback />} />
       </Route>
       <Route

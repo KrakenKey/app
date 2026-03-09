@@ -28,4 +28,10 @@ export const API_ROUTES = {
     BASE: '/auth/api-keys',
     BY_ID: (id: string) => `/auth/api-keys/${id}`,
   },
+  BILLING: {
+    CHECKOUT: '/billing/checkout',
+    SUBSCRIPTION: '/billing/subscription',
+    PORTAL: '/billing/portal',
+    WEBHOOK: '/billing/webhook',
+  },
 } as const;

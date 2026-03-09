@@ -5,11 +5,13 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import Redis from 'ioredis';
 import { TierAwareThrottlerGuard } from './guards/tier-aware-throttler.guard';
-import { DefaultTierResolver } from './services/default-tier-resolver.service';
+import { SubscriptionTierResolver } from '../billing/services/subscription-tier-resolver.service';
+import { BillingModule } from '../billing/billing.module';
 import { TIER_RESOLVER } from './interfaces/tier-resolver.interface';
 
 @Module({
   imports: [
+    BillingModule,
     ThrottlerModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -36,7 +38,7 @@ import { TIER_RESOLVER } from './interfaces/tier-resolver.interface';
   providers: [
     {
       provide: TIER_RESOLVER,
-      useClass: DefaultTierResolver,
+      useClass: SubscriptionTierResolver,
     },
     {
       provide: APP_GUARD,

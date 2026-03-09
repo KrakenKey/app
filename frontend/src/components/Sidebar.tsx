@@ -4,6 +4,7 @@ import {
   Globe,
   Shield,
   Key,
+  CreditCard,
   MessageSquare,
   Settings,
   LogOut,
@@ -11,12 +12,14 @@ import {
   X,
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
+import { PlanBadge } from './ui/PlanBadge';
 
 const navItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Overview', end: true },
   { to: '/dashboard/domains', icon: Globe, label: 'Domains' },
   { to: '/dashboard/certificates', icon: Shield, label: 'Certificates' },
   { to: '/dashboard/api-keys', icon: Key, label: 'API Keys' },
+  { to: '/dashboard/billing', icon: CreditCard, label: 'Billing' },
   { to: '/dashboard/feedback', icon: MessageSquare, label: 'Feedback' },
 ];
 
@@ -113,6 +116,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
               </p>
               <p className="text-xs text-zinc-500 truncate">{user?.email}</p>
             </div>
+            <PlanBadge plan={user?.plan} />
           </div>
           <div className="flex items-center gap-2">
             <NavLink
