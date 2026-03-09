@@ -6,11 +6,15 @@ import {
   UpdateDateColumn,
   ManyToOne,
   JoinColumn,
+  Index,
+  Unique,
 } from 'typeorm';
 import { ApiHideProperty } from '@nestjs/swagger';
 import { User } from '../../users/entities/user.entity';
 
 @Entity()
+@Unique('UQ_domain_userId_hostname', ['userId', 'hostname'])
+@Index('IDX_domain_userId_isVerified', ['userId', 'isVerified'])
 export class Domain {
   @PrimaryGeneratedColumn('uuid')
   id: string;
