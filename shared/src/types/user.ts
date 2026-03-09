@@ -17,14 +17,17 @@ export interface UserProfile extends User {
   };
 }
 
-export enum NotificationType {
-  CERT_ISSUED = 'cert_issued',
-  CERT_RENEWED = 'cert_renewed',
-  CERT_FAILED = 'cert_failed',
-  CERT_EXPIRY_WARNING = 'cert_expiry_warning',
-  CERT_REVOKED = 'cert_revoked',
-  DOMAIN_VERIFICATION_FAILED = 'domain_verification_failed',
-}
+export const NotificationType = {
+  CERT_ISSUED: 'cert_issued',
+  CERT_RENEWED: 'cert_renewed',
+  CERT_FAILED: 'cert_failed',
+  CERT_EXPIRY_WARNING: 'cert_expiry_warning',
+  CERT_REVOKED: 'cert_revoked',
+  DOMAIN_VERIFICATION_FAILED: 'domain_verification_failed',
+} as const;
+
+export type NotificationType =
+  (typeof NotificationType)[keyof typeof NotificationType];
 
 export type NotificationPreferences = Partial<
   Record<NotificationType, boolean>
