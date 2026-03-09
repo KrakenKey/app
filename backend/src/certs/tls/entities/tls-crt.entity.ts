@@ -5,12 +5,19 @@ import {
   ManyToOne,
   JoinColumn,
   CreateDateColumn,
+  Index,
 } from 'typeorm';
 import { ApiHideProperty } from '@nestjs/swagger';
 import { User } from '../../../users/entities/user.entity';
 import type { CertStatus, ParsedCsr } from '@krakenkey/shared';
 
 @Entity()
+@Index('IDX_tls_crt_userId', ['userId'])
+@Index('IDX_tls_crt_status_autoRenew_expiresAt', [
+  'status',
+  'autoRenew',
+  'expiresAt',
+])
 export class TlsCrt {
   @PrimaryGeneratedColumn()
   id: number;

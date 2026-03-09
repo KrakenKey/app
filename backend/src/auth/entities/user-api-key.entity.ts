@@ -5,11 +5,13 @@ import {
   CreateDateColumn,
   ManyToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { ApiHideProperty } from '@nestjs/swagger';
 import { User } from '../../users/entities/user.entity';
 
 @Entity()
+@Index('IDX_user_api_key_userId', ['userId'])
 export class UserApiKey {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -18,7 +20,7 @@ export class UserApiKey {
   name: string;
 
   @ApiHideProperty()
-  @Column()
+  @Column({ unique: true })
   hash: string;
 
   @Column({ nullable: true })
