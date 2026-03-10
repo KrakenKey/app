@@ -33,6 +33,12 @@ export class User {
   @CreateDateColumn()
   createdAt: Date;
 
+  @Column({ type: 'timestamp', nullable: true, default: () => 'CURRENT_TIMESTAMP' })
+  autoRenewalConfirmedAt: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true, default: null })
+  autoRenewalReminderSentAt: Date | null;
+
   @OneToMany(() => UserApiKey, (apiKey) => apiKey.user)
   apiKeys: UserApiKey[];
 

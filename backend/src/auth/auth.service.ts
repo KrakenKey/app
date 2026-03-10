@@ -279,6 +279,8 @@ export class AuthService {
       notificationPreferences: user.notificationPreferences,
       createdAt: user.createdAt.toISOString(),
       plan,
+      autoRenewalConfirmedAt:
+        user.autoRenewalConfirmedAt?.toISOString() ?? null,
       resourceCounts: {
         domains: domainCount,
         certificates: certCount,
@@ -311,6 +313,17 @@ export class AuthService {
     return this.getFullProfile(userId);
   }
 
+  async confirmAutoRenewal(userId: string): Promise<{ confirmedAt: string }> {
+    const user = await this.userRepo.findOneBy({ id: userId });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    user.autoRenewalConfirmedAt = new Date();
+    user.autoRenewalReminderSentAt = null;
+    await this.userRepo.save(user);
+    return { confirmedAt: user.autoRenewalConfirmedAt.toISOString() };
+  }
+
   private async ensureUserExists(authUser: {
     sub: string;
     preferred_username: string;
@@ -324,6 +337,7 @@ export class AuthService {
         username: authUser.preferred_username,
         email: authUser.email,
         groups: authUser.groups || [],
+        autoRenewalConfirmedAt: new Date(),
       });
       await this.userRepo.save(user);
     }

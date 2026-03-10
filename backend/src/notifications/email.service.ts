@@ -12,6 +12,7 @@ import {
   certRevokedTemplate,
   domainVerificationFailedTemplate,
   planLimitReachedTemplate,
+  autoRenewalPausedTemplate,
 } from './templates';
 import { User } from '../users/entities/user.entity';
 import { NotificationType } from '@krakenkey/shared';
@@ -43,6 +44,12 @@ export interface PlanLimitReachedContext {
   resourceType: string;
   current: number;
   limit: number;
+}
+
+export interface AutoRenewalPausedContext {
+  userId?: string;
+  username: string;
+  email: string;
 }
 
 @Injectable()
@@ -184,6 +191,18 @@ export class EmailService {
       ctx.email,
       `Domain verification failed: ${ctx.hostname}`,
       domainVerificationFailedTemplate(ctx),
+    );
+  }
+
+  async sendAutoRenewalPaused(ctx: AutoRenewalPausedContext): Promise<void> {
+    if (
+      !(await this.shouldSend(ctx.userId, NotificationType.AUTO_RENEWAL_PAUSED))
+    )
+      return;
+    await this.send(
+      ctx.email,
+      'KrakenKey auto-renewal paused — action required',
+      autoRenewalPausedTemplate(ctx),
     );
   }
 

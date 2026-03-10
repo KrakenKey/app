@@ -10,6 +10,7 @@ import { MetricsService } from '../../../metrics/metrics.service';
 import { EmailService } from '../../../notifications/email.service';
 import { BillingService } from '../../../billing/billing.service';
 import { PLAN_LIMITS } from '../../../billing/constants/plan-limits';
+import { User } from '../../../users/entities/user.entity';
 
 @Injectable()
 export class CertMonitorService {
@@ -18,6 +19,8 @@ export class CertMonitorService {
   constructor(
     @InjectRepository(TlsCrt)
     private readonly tlsCrtRepository: Repository<TlsCrt>,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
     private readonly tlsService: TlsService,
     private readonly metricsService: MetricsService,
     private readonly emailService: EmailService,
@@ -66,8 +69,9 @@ export class CertMonitorService {
       `Certificate expiry check: ${expiring.length} certificate(s) expiring within 30 days`,
     );
 
-    // Cache plan lookups to avoid redundant calls for certs owned by the same user
+    // Cache plan lookups and lapsed status to avoid redundant calls per user
     const planCache = new Map<string, SubscriptionPlan>();
+    const lapsedCache = new Map<string, boolean>();
 
     for (const cert of expiring) {
       if (!cert.expiresAt) continue;
@@ -89,6 +93,26 @@ export class CertMonitorService {
 
       // Skip certs outside this user's renewal window
       if (daysUntilExpiry > windowDays) continue;
+
+      // Free-tier auto-renewal confirmation check
+      if (userPlan === 'free') {
+        let lapsed = lapsedCache.get(cert.userId);
+        if (lapsed === undefined) {
+          const user =
+            cert.user ??
+            (await this.userRepository.findOneBy({ id: cert.userId }));
+          const sixMonthsAgo = new Date();
+          sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+          lapsed =
+            !user?.autoRenewalConfirmedAt ||
+            user.autoRenewalConfirmedAt < sixMonthsAgo;
+          lapsedCache.set(cert.userId, lapsed);
+          if (lapsed && user) {
+            await this.maybeSendRenewalPausedReminder(user);
+          }
+        }
+        if (lapsed) continue;
+      }
 
       if (cert.user) {
         const commonName =
@@ -116,5 +140,23 @@ export class CertMonitorService {
         );
       }
     }
+  }
+
+  private async maybeSendRenewalPausedReminder(user: User): Promise<void> {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    if (
+      user.autoRenewalReminderSentAt &&
+      user.autoRenewalReminderSentAt > thirtyDaysAgo
+    ) {
+      return;
+    }
+    await this.emailService.sendAutoRenewalPaused({
+      userId: user.id,
+      username: user.username,
+      email: user.email,
+    });
+    user.autoRenewalReminderSentAt = new Date();
+    await this.userRepository.save(user);
   }
 }

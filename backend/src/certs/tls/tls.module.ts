@@ -5,6 +5,7 @@ import { TlsController } from './tls.controller';
 import { CsrUtilService } from './util/csr-util.service';
 import { CertUtilService } from './util/cert-util.service';
 import { TlsCrt } from './entities/tls-crt.entity';
+import { User } from '../../users/entities/user.entity';
 import { BullModule } from '@nestjs/bullmq';
 import { CertIssuerConsumer } from './processors/tls-crt-issuer.processor';
 import { AcmeIssuerStrategy } from './strategies/acme-issuer.strategy';
@@ -18,7 +19,7 @@ import { CertMonitorService } from './services/cert-monitor.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([TlsCrt]),
+    TypeOrmModule.forFeature([TlsCrt, User]),
     BullModule.registerQueue({
       name: 'tlsCertIssuance',
     }),

@@ -153,3 +153,25 @@ export function domainVerificationFailedTemplate(
     ].join(''),
   );
 }
+
+export function autoRenewalPausedTemplate(ctx: {
+  username: string;
+}): string {
+  return layout(
+    'Auto-renewal paused — action required',
+    [
+      p(
+        `Hi ${ctx.username}, your KrakenKey auto-renewal has been paused because 6 months have passed without re-confirmation.`,
+      ),
+      p(
+        'Your certificates are safe — they will not be deleted or revoked. Auto-renewal resumes as soon as you confirm.',
+      ),
+      `<div style="margin:24px 0;text-align:center">
+        <a href="https://app.krakenkey.io/dashboard" style="display:inline-block;padding:10px 24px;background:#06b6d4;color:#09090b;font-size:14px;font-weight:600;border-radius:6px;text-decoration:none">Keep auto-renewal active</a>
+      </div>`,
+      p(
+        'If you no longer need auto-renewal, you can ignore this email. You can always re-enable it from your dashboard.',
+      ),
+    ].join(''),
+  );
+}
