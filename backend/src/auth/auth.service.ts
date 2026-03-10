@@ -8,6 +8,7 @@ import { User } from '../users/entities/user.entity';
 import { Domain } from '../domains/entities/domain.entity';
 import { TlsCrt } from '../certs/tls/entities/tls-crt.entity';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { BillingService } from '../billing/billing.service';
 import type {
   ApiKey,
   AuthCallbackResponse,
@@ -27,6 +28,7 @@ export class AuthService {
     private readonly domainRepo: Repository<Domain>,
     @InjectRepository(TlsCrt)
     private readonly tlsCrtRepo: Repository<TlsCrt>,
+    private readonly billingService: BillingService,
   ) {}
 
   // --- Authentik OIDC Redirects ---
@@ -232,10 +234,11 @@ export class AuthService {
       throw new NotFoundException('User not found');
     }
 
-    const [domainCount, certCount, apiKeyCount] = await Promise.all([
+    const [domainCount, certCount, apiKeyCount, plan] = await Promise.all([
       this.domainRepo.count({ where: { userId } }),
       this.tlsCrtRepo.count({ where: { userId } }),
       this.userApiKeyRepo.count({ where: { userId } }),
+      this.billingService.resolveUserTier(userId),
     ]);
 
     return {
@@ -246,6 +249,7 @@ export class AuthService {
       displayName: user.displayName,
       notificationPreferences: user.notificationPreferences,
       createdAt: user.createdAt.toISOString(),
+      plan,
       resourceCounts: {
         domains: domainCount,
         certificates: certCount,

@@ -8,6 +8,7 @@ import { UserApiKey } from './entities/user-api-key.entity';
 import { User } from '../users/entities/user.entity';
 import { Domain } from '../domains/entities/domain.entity';
 import { TlsCrt } from '../certs/tls/entities/tls-crt.entity';
+import { BillingService } from '../billing/billing.service';
 
 const CONFIG: Record<string, string> = {
   KK_AUTHENTIK_DOMAIN: 'auth.example.com',
@@ -62,6 +63,10 @@ describe('AuthService', () => {
         { provide: getRepositoryToken(User), useValue: mockUserRepo },
         { provide: getRepositoryToken(Domain), useValue: { count: jest.fn() } },
         { provide: getRepositoryToken(TlsCrt), useValue: { count: jest.fn() } },
+        {
+          provide: BillingService,
+          useValue: { resolveUserTier: jest.fn().mockResolvedValue('free') },
+        },
       ],
     }).compile();
 

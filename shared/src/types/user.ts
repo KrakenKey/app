@@ -5,11 +5,13 @@ export interface User {
   groups: string[];
   displayName?: string | null;
   notificationPreferences?: NotificationPreferences;
+  plan?: string;
   createdAt?: string;
 }
 
 export interface UserProfile extends User {
   createdAt: string;
+  plan?: string;
   resourceCounts: {
     domains: number;
     certificates: number;

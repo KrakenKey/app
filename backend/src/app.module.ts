@@ -15,6 +15,7 @@ import { HealthModule } from './health/health.module';
 import { FeedbackModule } from './feedback/feedback.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { BillingModule } from './billing/billing.module';
 
 @Module({
   imports: [
@@ -63,6 +64,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     AuthModule,
     UsersModule,
     DomainsModule,
+    BillingModule,
     FeedbackModule,
     MetricsModule,
     NotificationsModule,

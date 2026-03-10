@@ -1,0 +1,293 @@
+import { Test, TestingModule } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
+import { ConfigService } from '@nestjs/config';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BillingService } from './billing.service';
+import { Subscription } from './entities/subscription.entity';
+
+// Mock Stripe
+const mockStripe = {
+  customers: { create: jest.fn() },
+  checkout: { sessions: { create: jest.fn() } },
+  billingPortal: { sessions: { create: jest.fn() } },
+  subscriptions: { retrieve: jest.fn() },
+  webhooks: { constructEvent: jest.fn() },
+};
+jest.mock('stripe', () => {
+  return jest.fn().mockImplementation(() => mockStripe);
+});
+
+describe('BillingService', () => {
+  let service: BillingService;
+  let mockRepository: Record<string, jest.Mock>;
+
+  const userId = 'user-123';
+  const mockSubscription: Partial<Subscription> = {
+    id: 'sub-uuid-1',
+    userId,
+    stripeCustomerId: 'cus_test123',
+    stripeSubscriptionId: 'sub_test123',
+    plan: 'starter',
+    status: 'active',
+    currentPeriodEnd: new Date('2026-04-09'),
+    cancelAtPeriodEnd: false,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
+  beforeEach(async () => {
+    mockRepository = {
+      findOne: jest.fn(),
+      find: jest.fn(),
+      create: jest.fn(),
+      save: jest.fn(),
+      upsert: jest.fn(),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BillingService,
+        {
+          provide: getRepositoryToken(Subscription),
+          useValue: mockRepository,
+        },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn((key: string, defaultValue?: string) => {
+              const config: Record<string, string> = {
+                KK_STRIPE_SECRET_KEY: 'sk_test_123',
+                KK_STRIPE_WEBHOOK_SECRET: 'whsec_test',
+                KK_STRIPE_PRICE_STARTER: 'price_starter_123',
+                KK_APP_DOMAIN: 'app.krakenkey.io',
+              };
+              return config[key] ?? defaultValue ?? '';
+            }),
+          },
+        },
+      ],
+    }).compile();
+
+    service = module.get<BillingService>(BillingService);
+    jest.clearAllMocks();
+  });
+
+  it('should be defined', () => {
+    expect(service).toBeDefined();
+  });
+
+  describe('resolveUserTier', () => {
+    it('returns plan for active subscription', async () => {
+      mockRepository.findOne.mockResolvedValue(mockSubscription);
+      const tier = await service.resolveUserTier(userId);
+      expect(tier).toBe('starter');
+    });
+
+    it('returns free when no subscription exists', async () => {
+      mockRepository.findOne.mockResolvedValue(null);
+      const tier = await service.resolveUserTier(userId);
+      expect(tier).toBe('free');
+    });
+
+    it('returns free when subscription is canceled', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        status: 'canceled',
+      });
+      const tier = await service.resolveUserTier(userId);
+      expect(tier).toBe('free');
+    });
+  });
+
+  describe('getSubscription', () => {
+    it('returns subscription when found', async () => {
+      mockRepository.findOne.mockResolvedValue(mockSubscription);
+      const result = await service.getSubscription(userId);
+      expect(result).toEqual(mockSubscription);
+      expect(mockRepository.findOne).toHaveBeenCalledWith({
+        where: { userId },
+      });
+    });
+
+    it('returns null when not found', async () => {
+      mockRepository.findOne.mockResolvedValue(null);
+      const result = await service.getSubscription(userId);
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('getOrCreateCustomer', () => {
+    it('returns existing subscription if found', async () => {
+      mockRepository.findOne.mockResolvedValue(mockSubscription);
+      const result = await service.getOrCreateCustomer(
+        userId,
+        'test@example.com',
+      );
+      expect(result).toEqual(mockSubscription);
+      expect(mockStripe.customers.create).not.toHaveBeenCalled();
+    });
+
+    it('creates Stripe customer and subscription record if not found', async () => {
+      mockRepository.findOne.mockResolvedValue(null);
+      mockStripe.customers.create.mockResolvedValue({ id: 'cus_new' });
+      mockRepository.create.mockReturnValue({
+        userId,
+        stripeCustomerId: 'cus_new',
+        plan: 'free',
+        status: 'active',
+      });
+      mockRepository.save.mockResolvedValue({
+        userId,
+        stripeCustomerId: 'cus_new',
+        plan: 'free',
+        status: 'active',
+      });
+
+      const result = await service.getOrCreateCustomer(
+        userId,
+        'test@example.com',
+      );
+      expect(mockStripe.customers.create).toHaveBeenCalledWith({
+        email: 'test@example.com',
+        metadata: { userId },
+      });
+      expect(result.stripeCustomerId).toBe('cus_new');
+    });
+  });
+
+  describe('createCheckoutSession', () => {
+    it('throws BadRequestException for unavailable plan', async () => {
+      await expect(
+        service.createCheckoutSession(userId, 'test@example.com', 'enterprise'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('creates checkout session for valid plan', async () => {
+      mockRepository.findOne.mockResolvedValue(mockSubscription);
+      mockStripe.checkout.sessions.create.mockResolvedValue({
+        url: 'https://checkout.stripe.com/session123',
+      });
+
+      const url = await service.createCheckoutSession(
+        userId,
+        'test@example.com',
+        'starter',
+      );
+      expect(url).toBe('https://checkout.stripe.com/session123');
+      expect(mockStripe.checkout.sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customer: 'cus_test123',
+          mode: 'subscription',
+          metadata: { userId, plan: 'starter' },
+        }),
+      );
+    });
+  });
+
+  describe('createPortalSession', () => {
+    it('throws NotFoundException when no subscription', async () => {
+      mockRepository.findOne.mockResolvedValue(null);
+      await expect(service.createPortalSession(userId)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('creates portal session', async () => {
+      mockRepository.findOne.mockResolvedValue(mockSubscription);
+      mockStripe.billingPortal.sessions.create.mockResolvedValue({
+        url: 'https://billing.stripe.com/portal123',
+      });
+
+      const url = await service.createPortalSession(userId);
+      expect(url).toBe('https://billing.stripe.com/portal123');
+    });
+  });
+
+  describe('handleWebhookEvent', () => {
+    it('handles checkout.session.completed', async () => {
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        current_period_end: Math.floor(Date.now() / 1000) + 86400 * 30,
+        cancel_at_period_end: false,
+      });
+
+      await service.handleWebhookEvent({
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            metadata: { userId, plan: 'starter' },
+            subscription: 'sub_new123',
+            customer: 'cus_test123',
+          },
+        },
+      } as any);
+
+      expect(mockRepository.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId,
+          plan: 'starter',
+          status: 'active',
+          stripeSubscriptionId: 'sub_new123',
+        }),
+        { conflictPaths: ['userId'] },
+      );
+    });
+
+    it('handles customer.subscription.updated', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+
+      await service.handleWebhookEvent({
+        type: 'customer.subscription.updated',
+        data: {
+          object: {
+            id: 'sub_test123',
+            status: 'active',
+            current_period_end: Math.floor(Date.now() / 1000) + 86400 * 30,
+            cancel_at_period_end: true,
+          },
+        },
+      } as any);
+
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cancelAtPeriodEnd: true,
+        }),
+      );
+    });
+
+    it('handles customer.subscription.deleted', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+
+      await service.handleWebhookEvent({
+        type: 'customer.subscription.deleted',
+        data: {
+          object: { id: 'sub_test123' },
+        },
+      } as any);
+
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          plan: 'free',
+          status: 'canceled',
+          stripeSubscriptionId: null,
+        }),
+      );
+    });
+
+    it('handles invoice.payment_failed', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+
+      await service.handleWebhookEvent({
+        type: 'invoice.payment_failed',
+        data: {
+          object: { customer: 'cus_test123' },
+        },
+      } as any);
+
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'past_due',
+        }),
+      );
+    });
+  });
+});
