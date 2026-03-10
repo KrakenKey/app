@@ -3,6 +3,7 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
+  HttpException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -11,6 +12,9 @@ import { CreateDomainDto } from './dto/create-domain.dto';
 import { randomBytes } from 'crypto';
 import { resolveTxt } from 'dns/promises';
 import { MetricsService } from '../metrics/metrics.service';
+import { BillingService } from '../billing/billing.service';
+import { PLAN_LIMITS } from '../billing/constants/plan-limits';
+import type { SubscriptionPlan } from '@krakenkey/shared';
 
 @Injectable()
 export class DomainsService {
@@ -20,6 +24,7 @@ export class DomainsService {
     @InjectRepository(Domain)
     private domainsRepository: Repository<Domain>,
     private readonly metricsService: MetricsService,
+    private readonly billingService: BillingService,
   ) {}
 
   /**
@@ -38,6 +43,26 @@ export class DomainsService {
 
     if (existing) {
       return existing;
+    }
+
+    // Plan-based domain limit check
+    const plan = (await this.billingService.resolveUserTier(
+      userId,
+    )) as SubscriptionPlan;
+    const limits = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
+    if (limits.domains !== Infinity) {
+      const count = await this.domainsRepository.count({ where: { userId } });
+      if (count >= limits.domains) {
+        throw new HttpException(
+          {
+            message: 'Domain limit reached',
+            limit: limits.domains,
+            current: count,
+            plan,
+          },
+          402,
+        );
+      }
     }
 
     // Generate a unique verification string (e.g., krakenkey-site-verification=...)

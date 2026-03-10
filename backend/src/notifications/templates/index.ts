@@ -1,6 +1,7 @@
 import type {
   CertEmailContext,
   DomainVerificationFailedContext,
+  PlanLimitReachedContext,
 } from '../email.service';
 
 function escapeHtml(str: string): string {
@@ -109,6 +110,25 @@ export function certRevokedTemplate(ctx: CertEmailContext): string {
       detail('Certificate ID', String(ctx.certId)),
       detail('Common Name', ctx.commonName),
       p('If you did not request this, please contact support immediately.'),
+    ].join(''),
+  );
+}
+
+export function planLimitReachedTemplate(
+  ctx: PlanLimitReachedContext,
+): string {
+  return layout(
+    'Plan Limit Reached',
+    [
+      p(
+        `Hi ${ctx.username}, an automatic action was skipped because your ${ctx.plan} plan limit has been reached.`,
+      ),
+      detail('Resource', ctx.resourceType),
+      detail('Current Usage', String(ctx.current)),
+      detail('Plan Limit', String(ctx.limit)),
+      p(
+        'Consider upgrading your plan to increase your limits, or free up existing resources.',
+      ),
     ].join(''),
   );
 }

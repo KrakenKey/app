@@ -30,6 +30,7 @@ describe('AuthService', () => {
     findOne: jest.Mock;
     find: jest.Mock;
     delete: jest.Mock;
+    count: jest.Mock;
   };
   let mockUserRepo: { findOne: jest.Mock; create: jest.Mock; save: jest.Mock };
 
@@ -40,6 +41,7 @@ describe('AuthService', () => {
       findOne: jest.fn(),
       find: jest.fn(),
       delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     };
     mockUserRepo = {
       findOne: jest.fn(),

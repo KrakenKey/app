@@ -4,6 +4,7 @@ import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { DomainsService } from './domains.service';
 import { Domain } from './entities/domain.entity';
 import { MetricsService } from '../metrics/metrics.service';
+import { BillingService } from '../billing/billing.service';
 
 // Mock dns/promises
 const mockResolveTxt = jest.fn();
@@ -46,6 +47,7 @@ describe('DomainsService', () => {
       save: jest.fn(),
       delete: jest.fn(),
       update: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -58,6 +60,10 @@ describe('DomainsService', () => {
         {
           provide: MetricsService,
           useValue: { domainsVerifiedTotal: { inc: jest.fn() } },
+        },
+        {
+          provide: BillingService,
+          useValue: { resolveUserTier: jest.fn().mockResolvedValue('free') },
         },
       ],
     }).compile();

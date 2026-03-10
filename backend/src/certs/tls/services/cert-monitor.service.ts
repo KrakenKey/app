@@ -5,8 +5,11 @@ import { LessThan, Repository } from 'typeorm';
 import { TlsCrt } from '../entities/tls-crt.entity';
 import { TlsService } from '../tls.service';
 import { CertStatus } from '@krakenkey/shared';
+import type { SubscriptionPlan } from '@krakenkey/shared';
 import { MetricsService } from '../../../metrics/metrics.service';
 import { EmailService } from '../../../notifications/email.service';
+import { BillingService } from '../../../billing/billing.service';
+import { PLAN_LIMITS } from '../../../billing/constants/plan-limits';
 
 @Injectable()
 export class CertMonitorService {
@@ -18,14 +21,17 @@ export class CertMonitorService {
     private readonly tlsService: TlsService,
     private readonly metricsService: MetricsService,
     private readonly emailService: EmailService,
+    private readonly billingService: BillingService,
   ) {}
 
   /**
-   * Runs daily at 6 AM. Finds all issued certificates expiring within 30 days
-   * and queues a renewal job for each via BullMQ.
+   * Runs daily at 6 AM. Finds all issued certificates expiring within their
+   * tier-specific renewal window and queues a renewal job for each via BullMQ.
+   * Free tier: 5-day window, paid tiers: 30-day window.
    */
   @Cron(CronExpression.EVERY_DAY_AT_6AM)
   async checkExpiringCertificates(): Promise<void> {
+    // Use max window (30 days) for the DB query, then filter per-user by tier
     const threshold = new Date();
     threshold.setDate(threshold.getDate() + 30);
 
@@ -60,11 +66,31 @@ export class CertMonitorService {
       `Certificate expiry check: ${expiring.length} certificate(s) expiring within 30 days`,
     );
 
+    // Cache plan lookups to avoid redundant calls for certs owned by the same user
+    const planCache = new Map<string, SubscriptionPlan>();
+
     for (const cert of expiring) {
-      if (cert.user && cert.expiresAt) {
-        const daysUntilExpiry = Math.floor(
-          (cert.expiresAt.getTime() - Date.now()) / 86_400_000,
-        );
+      if (!cert.expiresAt) continue;
+
+      const daysUntilExpiry = Math.floor(
+        (cert.expiresAt.getTime() - Date.now()) / 86_400_000,
+      );
+
+      // Determine tier-specific renewal window (cached per user)
+      let userPlan = planCache.get(cert.userId);
+      if (!userPlan) {
+        userPlan = (await this.billingService.resolveUserTier(
+          cert.userId,
+        )) as SubscriptionPlan;
+        planCache.set(cert.userId, userPlan);
+      }
+      const windowDays =
+        (PLAN_LIMITS[userPlan] ?? PLAN_LIMITS.free).renewalWindowDays;
+
+      // Skip certs outside this user's renewal window
+      if (daysUntilExpiry > windowDays) continue;
+
+      if (cert.user) {
         const commonName =
           (cert.parsedCsr?.subject?.find((a) => a.shortName === 'CN')
             ?.value as string) ??

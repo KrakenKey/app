@@ -11,6 +11,7 @@ import {
   certFailedTemplate,
   certRevokedTemplate,
   domainVerificationFailedTemplate,
+  planLimitReachedTemplate,
 } from './templates';
 import { User } from '../users/entities/user.entity';
 import { NotificationType } from '@krakenkey/shared';
@@ -32,6 +33,16 @@ export interface DomainVerificationFailedContext {
   email: string;
   hostname: string;
   verificationCode: string;
+}
+
+export interface PlanLimitReachedContext {
+  userId?: string;
+  username: string;
+  email: string;
+  plan: string;
+  resourceType: string;
+  current: number;
+  limit: number;
 }
 
 @Injectable()
@@ -173,6 +184,21 @@ export class EmailService {
       ctx.email,
       `Domain verification failed: ${ctx.hostname}`,
       domainVerificationFailedTemplate(ctx),
+    );
+  }
+
+  async sendPlanLimitReached(ctx: PlanLimitReachedContext): Promise<void> {
+    if (
+      !(await this.shouldSend(
+        ctx.userId,
+        NotificationType.PLAN_LIMIT_REACHED,
+      ))
+    )
+      return;
+    await this.send(
+      ctx.email,
+      `Plan limit reached: ${ctx.resourceType}`,
+      planLimitReachedTemplate(ctx),
     );
   }
 }

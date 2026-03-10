@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   InternalServerErrorException,
+  HttpException,
   Logger,
 } from '@nestjs/common';
 import { CreateTlsCrtDto } from './dto/create-tls-crt.dto';
@@ -13,7 +14,7 @@ import {
 import { CsrUtilService } from './util/csr-util.service';
 import { CertUtilService } from './util/cert-util.service';
 import { TlsCrt } from './entities/tls-crt.entity';
-import { Repository } from 'typeorm';
+import { In, MoreThanOrEqual, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -29,6 +30,9 @@ import type {
 } from '@krakenkey/shared';
 import { AcmeIssuerStrategy } from './strategies/acme-issuer.strategy';
 import { EmailService } from '../../notifications/email.service';
+import { BillingService } from '../../billing/billing.service';
+import { PLAN_LIMITS } from '../../billing/constants/plan-limits';
+import type { SubscriptionPlan } from '@krakenkey/shared';
 
 /**
  * Manages TLS certificate lifecycle through a job queue.
@@ -54,6 +58,7 @@ export class TlsService {
     private readonly domainsService: DomainsService,
     private readonly acmeIssuerStrategy: AcmeIssuerStrategy,
     private readonly emailService: EmailService,
+    private readonly billingService: BillingService,
   ) {}
 
   /**
@@ -94,6 +99,9 @@ export class TlsService {
     const allowedDomainNames = userDomains.map((d) => d.hostname);
     this.csrUtilService.isAuthorized(csr.domains, allowedDomainNames);
     // This throws BadRequestException if any domain is unauthorized
+
+    // Plan-based limit checks
+    await this.enforceCertLimits(userId);
 
     const savedCsr = await this.TlsCrtRepository.save({
       rawCsr: csr.raw,
@@ -259,6 +267,9 @@ export class TlsService {
       );
     }
 
+    // Plan-based limit checks (renewals count against monthly cert limit)
+    await this.enforceCertLimits(userId);
+
     await this.TlsCrtRepository.update(cert.id, {
       status: CertStatus.RENEWING,
     });
@@ -300,6 +311,9 @@ export class TlsService {
         'Certificate missing CSR data, cannot retry',
       );
     }
+
+    // Plan-based limit checks (retries consume the same quota as new certs)
+    await this.enforceCertLimits(userId);
 
     await this.TlsCrtRepository.update(cert.id, {
       status: CertStatus.PENDING,
@@ -355,9 +369,36 @@ export class TlsService {
    * Silently skips certificates that are not in 'issued' state or missing CSR data.
    */
   async renewInternal(id: number): Promise<void> {
-    const cert = await this.findOneInternal(id);
+    const cert = await this.findOneInternal(id, { relations: ['user'] });
     if (!cert || cert.status !== CertStatus.ISSUED || !cert.rawCsr) {
       return;
+    }
+
+    // Silently skip if monthly cert limit reached (don't throw for auto-renewal)
+    const plan = (await this.billingService.resolveUserTier(
+      cert.userId,
+    )) as SubscriptionPlan;
+    const limits = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
+    if (limits.certsPerMonth !== Infinity) {
+      const monthlyCount = await this.countCertsThisMonth(cert.userId);
+      if (monthlyCount >= limits.certsPerMonth) {
+        this.logger.warn(
+          `Auto-renewal skipped for cert #${id}: monthly limit reached (${monthlyCount}/${limits.certsPerMonth}, plan=${plan})`,
+        );
+        // Notify user that auto-renewal was skipped due to plan limit
+        if (cert.user) {
+          await this.emailService.sendPlanLimitReached({
+            userId: cert.user.id,
+            username: cert.user.username,
+            email: cert.user.email,
+            plan,
+            resourceType: 'Monthly certificates (renewal skipped)',
+            current: monthlyCount,
+            limit: limits.certsPerMonth,
+          });
+        }
+        return;
+      }
     }
 
     await this.TlsCrtRepository.update(cert.id, {
@@ -370,6 +411,91 @@ export class TlsService {
     await this.tlsCertQueue.add('tlsCertRenewal', jobPayload, {
       attempts: 3,
       backoff: { type: 'exponential', delay: 5000 },
+    });
+  }
+
+  // --- Plan Limit Helpers ---
+
+  /**
+   * Enforces all cert-related plan limits for a user.
+   * Throws HttpException(402) if any limit is exceeded.
+   */
+  private async enforceCertLimits(userId: string): Promise<void> {
+    const plan = (await this.billingService.resolveUserTier(
+      userId,
+    )) as SubscriptionPlan;
+    const limits = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
+
+    // Concurrent pending check
+    if (limits.concurrentPending !== Infinity) {
+      const pendingCount = await this.TlsCrtRepository.count({
+        where: {
+          userId,
+          status: In([
+            CertStatus.PENDING,
+            CertStatus.ISSUING,
+            CertStatus.RENEWING,
+          ]),
+        },
+      });
+      if (pendingCount >= limits.concurrentPending) {
+        throw new HttpException(
+          {
+            message: 'Concurrent pending request limit reached',
+            limit: limits.concurrentPending,
+            current: pendingCount,
+            plan,
+          },
+          402,
+        );
+      }
+    }
+
+    // Total active certs check
+    if (limits.totalActiveCerts !== Infinity) {
+      const activeCount = await this.TlsCrtRepository.count({
+        where: { userId, status: CertStatus.ISSUED },
+      });
+      if (activeCount >= limits.totalActiveCerts) {
+        throw new HttpException(
+          {
+            message: 'Total active certificate limit reached',
+            limit: limits.totalActiveCerts,
+            current: activeCount,
+            plan,
+          },
+          402,
+        );
+      }
+    }
+
+    // Monthly cert count check
+    if (limits.certsPerMonth !== Infinity) {
+      const monthlyCount = await this.countCertsThisMonth(userId);
+      if (monthlyCount >= limits.certsPerMonth) {
+        throw new HttpException(
+          {
+            message: 'Monthly certificate limit reached',
+            limit: limits.certsPerMonth,
+            current: monthlyCount,
+            plan,
+          },
+          402,
+        );
+      }
+    }
+  }
+
+  private async countCertsThisMonth(userId: string): Promise<number> {
+    const startOfMonth = new Date();
+    startOfMonth.setUTCDate(1);
+    startOfMonth.setUTCHours(0, 0, 0, 0);
+
+    return this.TlsCrtRepository.count({
+      where: {
+        userId,
+        createdAt: MoreThanOrEqual(startOfMonth),
+      },
     });
   }
 }
