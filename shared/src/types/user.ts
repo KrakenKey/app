@@ -26,6 +26,7 @@ export const NotificationType = {
   CERT_EXPIRY_WARNING: 'cert_expiry_warning',
   CERT_REVOKED: 'cert_revoked',
   DOMAIN_VERIFICATION_FAILED: 'domain_verification_failed',
+  PLAN_LIMIT_REACHED: 'plan_limit_reached',
 } as const;
 
 export type NotificationType =

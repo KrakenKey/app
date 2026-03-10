@@ -14,6 +14,7 @@ import { TlsCrt } from './entities/tls-crt.entity';
 import { getQueueToken } from '@nestjs/bullmq';
 import type { ParsedCsr } from '@krakenkey/shared';
 import { EmailService } from '../../notifications/email.service';
+import { BillingService } from '../../billing/billing.service';
 
 describe('TlsService', () => {
   let service: TlsService;
@@ -35,6 +36,7 @@ describe('TlsService', () => {
       findOneBy: jest.fn().mockResolvedValue(null),
       update: jest.fn().mockResolvedValue({ affected: 1 }),
       delete: jest.fn().mockResolvedValue({ affected: 1 }),
+      count: jest.fn().mockResolvedValue(0),
     };
 
     mockQueue = {
@@ -105,7 +107,12 @@ describe('TlsService', () => {
             sendCertExpiryWarning: jest.fn(),
             sendCertFailed: jest.fn(),
             sendCertRevoked: jest.fn(),
+            sendPlanLimitReached: jest.fn(),
           },
+        },
+        {
+          provide: BillingService,
+          useValue: { resolveUserTier: jest.fn().mockResolvedValue('free') },
         },
       ],
     }).compile();

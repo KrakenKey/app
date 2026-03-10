@@ -13,6 +13,7 @@ import { Route53DnsStrategy } from './strategies/route53-dns.strategy';
 import { ConfigService } from '@nestjs/config';
 import { DnsProvider } from './interfaces/dns-provider.interface';
 import { DomainsModule } from '../../domains/domains.module';
+import { BillingModule } from '../../billing/billing.module';
 import { CertMonitorService } from './services/cert-monitor.service';
 
 @Module({
@@ -22,6 +23,7 @@ import { CertMonitorService } from './services/cert-monitor.service';
       name: 'tlsCertIssuance',
     }),
     DomainsModule,
+    BillingModule,
   ],
   controllers: [TlsController],
   providers: [

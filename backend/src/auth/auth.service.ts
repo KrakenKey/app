@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  HttpException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import { UserApiKey } from './entities/user-api-key.entity';
@@ -9,10 +14,12 @@ import { Domain } from '../domains/entities/domain.entity';
 import { TlsCrt } from '../certs/tls/entities/tls-crt.entity';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { BillingService } from '../billing/billing.service';
+import { PLAN_LIMITS } from '../billing/constants/plan-limits';
 import type {
   ApiKey,
   AuthCallbackResponse,
   CreateApiKeyResponse,
+  SubscriptionPlan,
   UserProfile,
 } from '@krakenkey/shared';
 
@@ -163,6 +170,28 @@ export class AuthService {
    * The raw key is returned only once - it cannot be retrieved later.
    */
   async createApiKey(userId: string, name: string, expiresAt?: string) {
+    // Plan-based API key limit check
+    const plan = (await this.billingService.resolveUserTier(
+      userId,
+    )) as SubscriptionPlan;
+    const limits = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
+    if (limits.apiKeys !== Infinity) {
+      const count = await this.userApiKeyRepo.count({
+        where: { userId },
+      });
+      if (count >= limits.apiKeys) {
+        throw new HttpException(
+          {
+            message: 'API key limit reached',
+            limit: limits.apiKeys,
+            current: count,
+            plan,
+          },
+          402,
+        );
+      }
+    }
+
     const rawKey = `kk_${randomBytes(24).toString('hex')}`;
     const hash = createHash('sha256').update(rawKey).digest('hex');
 
