@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { readFileSync } from 'fs';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -16,6 +17,8 @@ import { FeedbackModule } from './feedback/feedback.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { BillingModule } from './billing/billing.module';
+import { OrganizationsModule } from './organizations/organizations.module';
+import { RoleGuard } from './auth/guards/role.guard';
 
 @Module({
   imports: [
@@ -68,8 +71,17 @@ import { BillingModule } from './billing/billing.module';
     FeedbackModule,
     MetricsModule,
     NotificationsModule,
+    OrganizationsModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    // RoleGuard runs globally after JwtOrApiKeyGuard populates req.user.
+    // It only enforces restrictions when @Roles() is present on a handler.
+    {
+      provide: APP_GUARD,
+      useClass: RoleGuard,
+    },
+  ],
 })
 export class AppModule {}

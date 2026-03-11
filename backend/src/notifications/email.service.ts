@@ -208,10 +208,7 @@ export class EmailService {
 
   async sendPlanLimitReached(ctx: PlanLimitReachedContext): Promise<void> {
     if (
-      !(await this.shouldSend(
-        ctx.userId,
-        NotificationType.PLAN_LIMIT_REACHED,
-      ))
+      !(await this.shouldSend(ctx.userId, NotificationType.PLAN_LIMIT_REACHED))
     )
       return;
     await this.send(

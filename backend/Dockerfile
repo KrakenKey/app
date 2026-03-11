@@ -10,7 +10,7 @@ RUN yarn install --frozen-lockfile --non-interactive && yarn build
 WORKDIR /app
 COPY backend/package*.json backend/yarn.lock ./backend/
 WORKDIR /app/backend
-RUN yarn install --frozen-lockfile --non-interactive
+RUN yarn install --frozen-lockfile --non-interactive && yarn cache clean
 
 # 3. Build Backend
 COPY backend/ .
@@ -18,6 +18,7 @@ RUN yarn build
 
 # Production Stage
 FROM node:24-slim
+# hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends wget && rm -rf /var/lib/apt/lists/*
 WORKDIR /app/backend
 ENV NODE_ENV=production
@@ -26,7 +27,7 @@ ENV NODE_ENV=production
 COPY --from=builder /app/shared /app/shared
 
 COPY backend/package*.json backend/yarn.lock ./
-RUN yarn install --production --frozen-lockfile --non-interactive
+RUN yarn install --production --frozen-lockfile --non-interactive && yarn cache clean
 
 COPY --from=builder /app/backend/dist ./dist
 

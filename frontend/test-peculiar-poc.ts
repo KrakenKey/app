@@ -31,7 +31,7 @@ async function testPeculiarX509() {
         hash: 'SHA-256',
       },
       true,
-      ['sign', 'verify']
+      ['sign', 'verify'],
     );
 
     const rsa2048Csr = await x509.Pkcs10CertificateRequestGenerator.create({
@@ -42,8 +42,8 @@ async function testPeculiarX509() {
         await x509.SubjectAlternativeNameExtension.create([
           { type: 'dns', value: 'example.com' },
           { type: 'dns', value: 'www.example.com' },
-        ])
-      ]
+        ]),
+      ],
     });
 
     const rsa2048Pem = rsa2048Csr.toString('pem');
@@ -60,7 +60,7 @@ async function testPeculiarX509() {
         hash: 'SHA-256',
       },
       true,
-      ['sign', 'verify']
+      ['sign', 'verify'],
     );
 
     const rsa4096Csr = await x509.Pkcs10CertificateRequestGenerator.create({
@@ -71,8 +71,8 @@ async function testPeculiarX509() {
         await x509.SubjectAlternativeNameExtension.create([
           { type: 'dns', value: 'secure.example.com' },
           { type: 'dns', value: 'api.example.com' },
-        ])
-      ]
+        ]),
+      ],
     });
 
     const rsa4096Pem = rsa4096Csr.toString('pem');
@@ -84,7 +84,7 @@ async function testPeculiarX509() {
     const ecP256KeyPair = await crypto.subtle.generateKey(
       { name: 'ECDSA', namedCurve: 'P-256' },
       true,
-      ['sign', 'verify']
+      ['sign', 'verify'],
     );
 
     const ecP256Csr = await x509.Pkcs10CertificateRequestGenerator.create({
@@ -94,8 +94,8 @@ async function testPeculiarX509() {
       extensions: [
         await x509.SubjectAlternativeNameExtension.create([
           { type: 'dns', value: 'ec256.example.com' },
-        ])
-      ]
+        ]),
+      ],
     });
 
     const ecP256Pem = ecP256Csr.toString('pem');
@@ -107,7 +107,7 @@ async function testPeculiarX509() {
     const ecP384KeyPair = await crypto.subtle.generateKey(
       { name: 'ECDSA', namedCurve: 'P-384' },
       true,
-      ['sign', 'verify']
+      ['sign', 'verify'],
     );
 
     const ecP384Csr = await x509.Pkcs10CertificateRequestGenerator.create({
@@ -119,8 +119,8 @@ async function testPeculiarX509() {
           { type: 'dns', value: 'ec384.example.com' },
           { type: 'ip', value: '192.168.1.1' },
           { type: 'email', value: 'admin@example.com' },
-        ])
-      ]
+        ]),
+      ],
     });
 
     const ecP384Pem = ecP384Csr.toString('pem');
@@ -142,7 +142,10 @@ async function testPeculiarX509() {
 
     // Test 6: Key Export
     console.log('6️⃣  Testing private key export...');
-    const privateKeyExport = await crypto.subtle.exportKey('pkcs8', rsa2048KeyPair.privateKey);
+    const privateKeyExport = await crypto.subtle.exportKey(
+      'pkcs8',
+      rsa2048KeyPair.privateKey,
+    );
     const privateKeyPem = pemEncode(privateKeyExport, 'PRIVATE KEY');
 
     if (!privateKeyPem.startsWith('-----BEGIN PRIVATE KEY-----')) {
@@ -152,7 +155,10 @@ async function testPeculiarX509() {
 
     // Test 7: Public key export
     console.log('7️⃣  Testing public key export...');
-    const publicKeyExport = await crypto.subtle.exportKey('spki', rsa2048KeyPair.publicKey);
+    const publicKeyExport = await crypto.subtle.exportKey(
+      'spki',
+      rsa2048KeyPair.publicKey,
+    );
     const publicKeyPem = pemEncode(publicKeyExport, 'PUBLIC KEY');
 
     if (!publicKeyPem.startsWith('-----BEGIN PUBLIC KEY-----')) {
@@ -163,7 +169,9 @@ async function testPeculiarX509() {
     // Success Summary
     console.log('═══════════════════════════════════════════════════════════');
     console.log('✅ ALL TESTS PASSED! @peculiar/x509 works as expected.');
-    console.log('═══════════════════════════════════════════════════════════\n');
+    console.log(
+      '═══════════════════════════════════════════════════════════\n',
+    );
     console.log('Next steps:');
     console.log('1. Test CSRs with backend parser (node-forge)');
     console.log('2. Test in browser environment');
@@ -173,7 +181,9 @@ async function testPeculiarX509() {
   } catch (error) {
     console.error('\n❌ TEST FAILED!\n');
     console.error('Error:', error);
-    console.error('\nThis indicates @peculiar/x509 may not work in this environment.');
+    console.error(
+      '\nThis indicates @peculiar/x509 may not work in this environment.',
+    );
     console.error('Consider alternative libraries or manual ASN.1 encoding.\n');
     return false;
   }

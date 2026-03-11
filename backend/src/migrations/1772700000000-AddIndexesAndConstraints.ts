@@ -1,8 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class AddIndexesAndConstraints1772700000000
-  implements MigrationInterface
-{
+export class AddIndexesAndConstraints1772700000000 implements MigrationInterface {
   name = 'AddIndexesAndConstraints1772700000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -57,9 +55,7 @@ export class AddIndexesAndConstraints1772700000000
     await queryRunner.query(`DROP INDEX IF EXISTS "IDX_feedback_userId"`);
     await queryRunner.query(`DROP INDEX IF EXISTS "UQ_user_email"`);
     await queryRunner.query(`DROP INDEX IF EXISTS "UQ_user_api_key_hash"`);
-    await queryRunner.query(
-      `DROP INDEX IF EXISTS "IDX_user_api_key_userId"`,
-    );
+    await queryRunner.query(`DROP INDEX IF EXISTS "IDX_user_api_key_userId"`);
     await queryRunner.query(
       `DROP INDEX IF EXISTS "IDX_tls_crt_status_autoRenew_expiresAt"`,
     );
@@ -68,8 +64,6 @@ export class AddIndexesAndConstraints1772700000000
     await queryRunner.query(
       `DROP INDEX IF EXISTS "IDX_domain_userId_isVerified"`,
     );
-    await queryRunner.query(
-      `DROP INDEX IF EXISTS "UQ_domain_userId_hostname"`,
-    );
+    await queryRunner.query(`DROP INDEX IF EXISTS "UQ_domain_userId_hostname"`);
   }
 }

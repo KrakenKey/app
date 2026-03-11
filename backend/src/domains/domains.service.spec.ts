@@ -3,6 +3,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { DomainsService } from './domains.service';
 import { Domain } from './entities/domain.entity';
+import { User } from '../users/entities/user.entity';
 import { MetricsService } from '../metrics/metrics.service';
 import { BillingService } from '../billing/billing.service';
 
@@ -56,6 +57,13 @@ describe('DomainsService', () => {
         {
           provide: getRepositoryToken(Domain),
           useValue: mockRepository,
+        },
+        {
+          provide: getRepositoryToken(User),
+          useValue: {
+            findOne: jest.fn().mockResolvedValue(null),
+            find: jest.fn().mockResolvedValue([]),
+          },
         },
         {
           provide: MetricsService,

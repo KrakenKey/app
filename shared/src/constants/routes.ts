@@ -35,4 +35,11 @@ export const API_ROUTES = {
     PORTAL: '/billing/portal',
     WEBHOOK: '/billing/webhook',
   },
+  ORGANIZATIONS: {
+    BASE: '/organizations',
+    BY_ID: (id: string) => `/organizations/${id}`,
+    MEMBERS: (id: string) => `/organizations/${id}/members`,
+    MEMBER: (id: string, userId: string) =>
+      `/organizations/${id}/members/${userId}`,
+  },
 } as const;

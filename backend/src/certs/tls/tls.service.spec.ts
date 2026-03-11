@@ -11,6 +11,7 @@ import { DomainsService } from '../../domains/domains.service';
 import { AcmeIssuerStrategy } from './strategies/acme-issuer.strategy';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { TlsCrt } from './entities/tls-crt.entity';
+import { User } from '../../users/entities/user.entity';
 import { getQueueToken } from '@nestjs/bullmq';
 import type { ParsedCsr } from '@krakenkey/shared';
 import { EmailService } from '../../notifications/email.service';
@@ -94,6 +95,13 @@ describe('TlsService', () => {
         {
           provide: getRepositoryToken(TlsCrt),
           useValue: mockRepository,
+        },
+        {
+          provide: getRepositoryToken(User),
+          useValue: {
+            findOne: jest.fn().mockResolvedValue(null),
+            find: jest.fn().mockResolvedValue([]),
+          },
         },
         {
           provide: getQueueToken('tlsCertIssuance'),

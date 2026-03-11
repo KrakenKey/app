@@ -114,9 +114,7 @@ export function certRevokedTemplate(ctx: CertEmailContext): string {
   );
 }
 
-export function planLimitReachedTemplate(
-  ctx: PlanLimitReachedContext,
-): string {
+export function planLimitReachedTemplate(ctx: PlanLimitReachedContext): string {
   return layout(
     'Plan Limit Reached',
     [
@@ -154,9 +152,7 @@ export function domainVerificationFailedTemplate(
   );
 }
 
-export function autoRenewalPausedTemplate(ctx: {
-  username: string;
-}): string {
+export function autoRenewalPausedTemplate(ctx: { username: string }): string {
   return layout(
     'Auto-renewal paused — action required',
     [

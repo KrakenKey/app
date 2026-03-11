@@ -1,3 +1,5 @@
+export type OrgRole = 'owner' | 'admin' | 'member' | 'viewer';
+
 export interface User {
   id: string;
   username: string;
@@ -7,6 +9,8 @@ export interface User {
   notificationPreferences?: NotificationPreferences;
   plan?: string;
   createdAt?: string;
+  role?: OrgRole | null;
+  organizationId?: string | null;
 }
 
 export interface UserProfile extends User {

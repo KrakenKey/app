@@ -18,6 +18,7 @@ import { In, MoreThanOrEqual, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { User } from '../../users/entities/user.entity';
 import { DomainsService } from '../../domains/domains.service';
 import { CertStatus } from '@krakenkey/shared';
 import type {
@@ -51,6 +52,8 @@ export class TlsService {
   constructor(
     @InjectRepository(TlsCrt)
     private readonly TlsCrtRepository: Repository<TlsCrt>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
     @InjectQueue('tlsCertIssuance')
     private readonly tlsCertQueue: Queue,
     private readonly csrUtilService: CsrUtilService,
@@ -62,9 +65,14 @@ export class TlsService {
   ) {}
 
   /**
-   * Retrieves all certificates for a user.
+   * Retrieves all certificates visible to a user.
+   * If the user belongs to an organization, returns certs owned by any org member.
    */
   async findAll(userId: string): Promise<TlsCrt[]> {
+    const memberIds = await this.getOrgMemberIds(userId);
+    if (memberIds) {
+      return this.TlsCrtRepository.find({ where: { userId: In(memberIds) } });
+    }
     return this.TlsCrtRepository.find({ where: { userId } });
   }
 
@@ -484,6 +492,19 @@ export class TlsService {
         );
       }
     }
+  }
+
+  private async getOrgMemberIds(userId: string): Promise<string[] | null> {
+    const user = await this.userRepo.findOne({
+      where: { id: userId },
+      select: { id: true, organizationId: true },
+    });
+    if (!user?.organizationId) return null;
+    const members = await this.userRepo.find({
+      where: { organizationId: user.organizationId },
+      select: { id: true },
+    });
+    return members.map((m) => m.id);
   }
 
   private async countCertsThisMonth(userId: string): Promise<number> {

@@ -116,10 +116,7 @@ export class BillingService {
     return session.url;
   }
 
-  constructWebhookEvent(
-    rawBody: Buffer,
-    signature: string,
-  ): Stripe.Event {
+  constructWebhookEvent(rawBody: Buffer, signature: string): Stripe.Event {
     return this.stripe.webhooks.constructEvent(
       rawBody,
       signature,
@@ -184,13 +181,11 @@ export class BillingService {
         stripeCustomerId:
           typeof session.customer === 'string'
             ? session.customer
-            : session.customer?.id ?? '',
+            : (session.customer?.id ?? ''),
         stripeSubscriptionId,
         plan,
         status: 'active',
-        currentPeriodEnd: new Date(
-          this.extractPeriodEnd(stripeSub) * 1000,
-        ),
+        currentPeriodEnd: new Date(this.extractPeriodEnd(stripeSub) * 1000),
         cancelAtPeriodEnd: stripeSub.cancel_at_period_end,
       },
       {
@@ -208,16 +203,12 @@ export class BillingService {
       where: { stripeSubscriptionId: stripeSub.id },
     });
     if (!sub) {
-      this.logger.warn(
-        `Subscription not found for Stripe ID: ${stripeSub.id}`,
-      );
+      this.logger.warn(`Subscription not found for Stripe ID: ${stripeSub.id}`);
       return;
     }
 
     sub.status = stripeSub.status === 'active' ? 'active' : stripeSub.status;
-    sub.currentPeriodEnd = new Date(
-      this.extractPeriodEnd(stripeSub) * 1000,
-    );
+    sub.currentPeriodEnd = new Date(this.extractPeriodEnd(stripeSub) * 1000);
     sub.cancelAtPeriodEnd = stripeSub.cancel_at_period_end;
 
     await this.subscriptionRepository.save(sub);

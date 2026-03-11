@@ -7,15 +7,11 @@ import type {
 } from '@krakenkey/shared';
 
 export async function fetchSubscription(): Promise<Subscription> {
-  const response = await api.get<Subscription>(
-    API_ROUTES.BILLING.SUBSCRIPTION,
-  );
+  const response = await api.get<Subscription>(API_ROUTES.BILLING.SUBSCRIPTION);
   return response.data;
 }
 
-export async function createCheckout(
-  plan: string,
-): Promise<CheckoutResponse> {
+export async function createCheckout(plan: string): Promise<CheckoutResponse> {
   const response = await api.post<CheckoutResponse>(
     API_ROUTES.BILLING.CHECKOUT,
     { plan },

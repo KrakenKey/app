@@ -6,8 +6,9 @@ import {
   HttpException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Domain } from './entities/domain.entity';
+import { User } from '../users/entities/user.entity';
 import { CreateDomainDto } from './dto/create-domain.dto';
 import { randomBytes } from 'crypto';
 import { resolveTxt } from 'dns/promises';
@@ -23,6 +24,8 @@ export class DomainsService {
   constructor(
     @InjectRepository(Domain)
     private domainsRepository: Repository<Domain>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
     private readonly metricsService: MetricsService,
     private readonly billingService: BillingService,
   ) {}
@@ -79,20 +82,49 @@ export class DomainsService {
   }
 
   /**
-   * Retrieves all domains belonging to a specific user.
+   * Retrieves all domains visible to a user.
+   * If the user belongs to an organization, returns domains owned by any org member.
+   * Otherwise returns only the user's own domains.
    */
   async findAll(userId: string): Promise<Domain[]> {
+    const memberIds = await this.getOrgMemberIds(userId);
+    if (memberIds) {
+      return this.domainsRepository.find({ where: { userId: In(memberIds) } });
+    }
     return this.domainsRepository.find({ where: { userId } });
   }
 
   /**
-   * Retrieves only verified domains belonging to a specific user.
-   * Used for domain authorization checks (e.g., before issuing certificates).
+   * Retrieves verified domains visible to a user (org-scoped).
+   * Used for domain authorization checks before issuing certificates.
+   * Org members may use any verified domain owned by any org member.
    */
   async findAllVerified(userId: string): Promise<Domain[]> {
+    const memberIds = await this.getOrgMemberIds(userId);
+    if (memberIds) {
+      return this.domainsRepository.find({
+        where: { userId: In(memberIds), isVerified: true },
+      });
+    }
     return this.domainsRepository.find({
       where: { userId, isVerified: true },
     });
+  }
+
+  /**
+   * Returns all user IDs in the same org as `userId`, or null if the user has no org.
+   */
+  private async getOrgMemberIds(userId: string): Promise<string[] | null> {
+    const user = await this.userRepo.findOne({
+      where: { id: userId },
+      select: { id: true, organizationId: true },
+    });
+    if (!user?.organizationId) return null;
+    const members = await this.userRepo.find({
+      where: { organizationId: user.organizationId },
+      select: { id: true },
+    });
+    return members.map((m) => m.id);
   }
 
   /**
