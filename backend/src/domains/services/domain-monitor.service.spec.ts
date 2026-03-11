@@ -27,6 +27,8 @@ describe('DomainMonitorService', () => {
       apiKeys: [],
       tlsCrts: [],
       notificationPreferences: {},
+      autoRenewalConfirmedAt: new Date(),
+      autoRenewalReminderSentAt: null,
     },
     createdAt: new Date(),
     updatedAt: new Date(),

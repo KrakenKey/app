@@ -4,6 +4,7 @@ export const API_ROUTES = {
     REGISTER: '/auth/register',
     PROFILE: '/auth/profile',
     CALLBACK: '/auth/callback',
+    CONFIRM_AUTO_RENEWAL: '/auth/confirm-auto-renewal',
   },
   USERS: {
     BASE: '/users',

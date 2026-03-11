@@ -3,6 +3,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { CertMonitorService } from './cert-monitor.service';
 import { TlsService } from '../tls.service';
 import { TlsCrt } from '../entities/tls-crt.entity';
+import { User } from '../../../users/entities/user.entity';
 import { CertStatus } from '@krakenkey/shared';
 import { MetricsService } from '../../../metrics/metrics.service';
 import { EmailService } from '../../../notifications/email.service';
@@ -11,11 +12,28 @@ import { BillingService } from '../../../billing/billing.service';
 describe('CertMonitorService', () => {
   let service: CertMonitorService;
   let mockRepository: Record<string, jest.Mock>;
+  let mockUserRepository: Record<string, jest.Mock>;
   let mockTlsService: Record<string, jest.Mock>;
+
+  const mockUser: User = {
+    id: 'user-123',
+    username: 'testuser',
+    email: 'test@example.com',
+    groups: [],
+    displayName: null,
+    notificationPreferences: {},
+    createdAt: new Date(),
+    autoRenewalConfirmedAt: new Date(), // freshly confirmed — not lapsed
+    autoRenewalReminderSentAt: null,
+    apiKeys: [],
+    domains: [],
+    tlsCrts: [],
+  };
 
   const expiringCert = {
     id: 1,
     userId: 'user-123',
+    user: mockUser,
     status: 'issued',
     autoRenew: true,
     expiresAt: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000), // 3 days from now (within free tier 5-day window)
@@ -25,6 +43,11 @@ describe('CertMonitorService', () => {
     mockRepository = {
       find: jest.fn(),
       count: jest.fn().mockResolvedValue(0),
+    };
+
+    mockUserRepository = {
+      findOneBy: jest.fn().mockResolvedValue(mockUser),
+      save: jest.fn().mockResolvedValue(mockUser),
     };
 
     mockTlsService = {
@@ -37,6 +60,10 @@ describe('CertMonitorService', () => {
         {
           provide: getRepositoryToken(TlsCrt),
           useValue: mockRepository,
+        },
+        {
+          provide: getRepositoryToken(User),
+          useValue: mockUserRepository,
         },
         {
           provide: TlsService,
@@ -53,6 +80,7 @@ describe('CertMonitorService', () => {
           provide: EmailService,
           useValue: {
             sendCertExpiryWarning: jest.fn(),
+            sendAutoRenewalPaused: jest.fn(),
           },
         },
         {
