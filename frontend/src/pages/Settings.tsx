@@ -95,7 +95,9 @@ const Settings: React.FC = () => {
   const handleToggleNotification = async (type: string) => {
     if (!profile) return;
     const current =
-      profile.notificationPreferences?.[type as keyof NotificationPreferences] !== false;
+      profile.notificationPreferences?.[
+        type as keyof NotificationPreferences
+      ] !== false;
     const updated: NotificationPreferences = { [type]: !current };
 
     setSavingNotifications(true);

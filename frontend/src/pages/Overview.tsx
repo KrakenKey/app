@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Globe, Shield, Key, Plus, AlertTriangle, X } from 'lucide-react';
+import {
+  LayoutDashboard,
+  Globe,
+  Shield,
+  Key,
+  Plus,
+  AlertTriangle,
+  X,
+} from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -48,25 +56,34 @@ export default function Overview() {
   const counts = profileCounts ?? fetchedCounts;
 
   // Free-tier auto-renewal confirmation banner
-  const autoRenewalConfirmedAt = (user as { autoRenewalConfirmedAt?: string | null } | null)
-    ?.autoRenewalConfirmedAt;
-  const isPaidPlan = user && (user as { plan?: string }).plan && (user as { plan?: string }).plan !== 'free';
+  const autoRenewalConfirmedAt = (
+    user as { autoRenewalConfirmedAt?: string | null } | null
+  )?.autoRenewalConfirmedAt;
+  const isPaidPlan =
+    user &&
+    (user as { plan?: string }).plan &&
+    (user as { plan?: string }).plan !== 'free';
   const sixMonthsAgo = new Date();
   sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
   const fourteenDaysFromLapse = autoRenewalConfirmedAt
-    ? new Date(new Date(autoRenewalConfirmedAt).getTime() + (6 * 30 - 14) * 86_400_000)
+    ? new Date(
+        new Date(autoRenewalConfirmedAt).getTime() + (6 * 30 - 14) * 86_400_000,
+      )
     : null;
   const showBanner =
     !bannerDismissed &&
     !isPaidPlan &&
-    (!autoRenewalConfirmedAt || new Date(autoRenewalConfirmedAt) < sixMonthsAgo ||
+    (!autoRenewalConfirmedAt ||
+      new Date(autoRenewalConfirmedAt) < sixMonthsAgo ||
       (fourteenDaysFromLapse && fourteenDaysFromLapse <= new Date()));
 
   const daysUntilLapse = autoRenewalConfirmedAt
     ? Math.max(
         0,
         Math.ceil(
-          (new Date(autoRenewalConfirmedAt).getTime() + 6 * 30 * 86_400_000 - Date.now()) /
+          (new Date(autoRenewalConfirmedAt).getTime() +
+            6 * 30 * 86_400_000 -
+            Date.now()) /
             86_400_000,
         ),
       )
@@ -120,16 +137,31 @@ export default function Overview() {
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
           <div className="flex-1 text-sm text-amber-200">
             {daysUntilLapse > 0 ? (
-              <>Auto-renewal re-confirmation required in <strong>{daysUntilLapse} days</strong>. Confirm now to keep certificates renewing automatically.</>
+              <>
+                Auto-renewal re-confirmation required in{' '}
+                <strong>{daysUntilLapse} days</strong>. Confirm now to keep
+                certificates renewing automatically.
+              </>
             ) : (
-              <>Auto-renewal is <strong>paused</strong>. Your certificates are safe but will not renew automatically until you confirm.</>
+              <>
+                Auto-renewal is <strong>paused</strong>. Your certificates are
+                safe but will not renew automatically until you confirm.
+              </>
             )}
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <Button size="sm" variant="secondary" onClick={handleConfirmAutoRenewal} disabled={confirming}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={handleConfirmAutoRenewal}
+              disabled={confirming}
+            >
               {confirming ? 'Confirming…' : 'Confirm now'}
             </Button>
-            <button onClick={() => setBannerDismissed(true)} className="text-zinc-500 hover:text-zinc-300">
+            <button
+              onClick={() => setBannerDismissed(true)}
+              className="text-zinc-500 hover:text-zinc-300"
+            >
               <X className="h-4 w-4" />
             </button>
           </div>
