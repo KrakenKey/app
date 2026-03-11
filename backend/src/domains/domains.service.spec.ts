@@ -60,7 +60,10 @@ describe('DomainsService', () => {
         },
         {
           provide: getRepositoryToken(User),
-          useValue: { findOne: jest.fn().mockResolvedValue(null), find: jest.fn().mockResolvedValue([]) },
+          useValue: {
+            findOne: jest.fn().mockResolvedValue(null),
+            find: jest.fn().mockResolvedValue([]),
+          },
         },
         {
           provide: MetricsService,

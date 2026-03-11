@@ -120,8 +120,13 @@ export class AuthController {
   @Post('confirm-auto-renewal')
   @UseGuards(JwtOrApiKeyGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Confirm intent to keep auto-renewal active (free tier)' })
-  @ApiResponse({ status: 201, description: 'Auto-renewal confirmation timestamp reset' })
+  @ApiOperation({
+    summary: 'Confirm intent to keep auto-renewal active (free tier)',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Auto-renewal confirmation timestamp reset',
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
   confirmAutoRenewal(@Req() req: RequestWithUser) {

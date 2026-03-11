@@ -49,7 +49,10 @@ export class TlsController {
   @ApiOperation({ summary: 'Request a new TLS certificate' })
   @ApiResponse({ status: 201, description: 'Certificate request submitted' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 403, description: 'Viewers cannot request certificates' })
+  @ApiResponse({
+    status: 403,
+    description: 'Viewers cannot request certificates',
+  })
   @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.EXPENSIVE)
   create(
@@ -84,7 +87,10 @@ export class TlsController {
   @ApiOperation({ summary: 'Update a certificate' })
   @ApiParam({ name: 'id', description: 'Certificate ID' })
   @ApiResponse({ status: 200, description: 'Certificate updated' })
-  @ApiResponse({ status: 403, description: 'Viewers cannot update certificates' })
+  @ApiResponse({
+    status: 403,
+    description: 'Viewers cannot update certificates',
+  })
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
@@ -101,7 +107,10 @@ export class TlsController {
   @ApiParam({ name: 'id', description: 'Certificate ID' })
   @ApiResponse({ status: 200, description: 'Certificate revocation initiated' })
   @ApiResponse({ status: 400, description: 'Certificate not in issued state' })
-  @ApiResponse({ status: 403, description: 'Viewers cannot revoke certificates' })
+  @ApiResponse({
+    status: 403,
+    description: 'Viewers cannot revoke certificates',
+  })
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.EXPENSIVE)
@@ -121,7 +130,10 @@ export class TlsController {
     status: 400,
     description: 'Certificate not in failed or revoked state',
   })
-  @ApiResponse({ status: 403, description: 'Viewers cannot delete certificates' })
+  @ApiResponse({
+    status: 403,
+    description: 'Viewers cannot delete certificates',
+  })
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
@@ -133,7 +145,10 @@ export class TlsController {
   @ApiOperation({ summary: 'Renew a certificate' })
   @ApiParam({ name: 'id', description: 'Certificate ID' })
   @ApiResponse({ status: 200, description: 'Certificate renewal initiated' })
-  @ApiResponse({ status: 403, description: 'Viewers cannot renew certificates' })
+  @ApiResponse({
+    status: 403,
+    description: 'Viewers cannot renew certificates',
+  })
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.EXPENSIVE)
@@ -146,7 +161,10 @@ export class TlsController {
   @ApiParam({ name: 'id', description: 'Certificate ID' })
   @ApiResponse({ status: 200, description: 'Certificate retry initiated' })
   @ApiResponse({ status: 400, description: 'Certificate not in failed state' })
-  @ApiResponse({ status: 403, description: 'Viewers cannot retry certificates' })
+  @ApiResponse({
+    status: 403,
+    description: 'Viewers cannot retry certificates',
+  })
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.EXPENSIVE)

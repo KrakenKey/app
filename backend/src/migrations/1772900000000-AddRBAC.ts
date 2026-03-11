@@ -63,15 +63,11 @@ export class AddRBAC1772900000000 implements MigrationInterface {
     await queryRunner.query(
       `ALTER TABLE "user" DROP CONSTRAINT IF EXISTS "FK_user_organizationId"`,
     );
-    await queryRunner.query(
-      `DROP INDEX IF EXISTS "IDX_user_organizationId"`,
-    );
+    await queryRunner.query(`DROP INDEX IF EXISTS "IDX_user_organizationId"`);
     await queryRunner.query(
       `ALTER TABLE "user" DROP COLUMN IF EXISTS "organizationId"`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "user" DROP COLUMN IF EXISTS "role"`,
-    );
+    await queryRunner.query(`ALTER TABLE "user" DROP COLUMN IF EXISTS "role"`);
     await queryRunner.query(
       `ALTER TABLE "organization" DROP CONSTRAINT IF EXISTS "FK_organization_ownerId"`,
     );

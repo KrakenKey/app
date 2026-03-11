@@ -36,7 +36,11 @@ export class User {
   @CreateDateColumn()
   createdAt: Date;
 
-  @Column({ type: 'timestamp', nullable: true, default: () => 'CURRENT_TIMESTAMP' })
+  @Column({
+    type: 'timestamp',
+    nullable: true,
+    default: () => 'CURRENT_TIMESTAMP',
+  })
   autoRenewalConfirmedAt: Date | null;
 
   @Column({ type: 'timestamp', nullable: true, default: null })
@@ -48,7 +52,10 @@ export class User {
   @Column({ type: 'uuid', nullable: true, default: null })
   organizationId: string | null;
 
-  @ManyToOne('Organization', 'members', { nullable: true, onDelete: 'SET NULL' })
+  @ManyToOne('Organization', 'members', {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
   @JoinColumn({ name: 'organizationId' })
   organization: Organization;
 

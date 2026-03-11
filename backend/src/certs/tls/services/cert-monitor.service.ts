@@ -88,8 +88,8 @@ export class CertMonitorService {
         )) as SubscriptionPlan;
         planCache.set(cert.userId, userPlan);
       }
-      const windowDays =
-        (PLAN_LIMITS[userPlan] ?? PLAN_LIMITS.free).renewalWindowDays;
+      const windowDays = (PLAN_LIMITS[userPlan] ?? PLAN_LIMITS.free)
+        .renewalWindowDays;
 
       // Skip certs outside this user's renewal window
       if (daysUntilExpiry > windowDays) continue;

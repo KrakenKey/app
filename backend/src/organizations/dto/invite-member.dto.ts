@@ -3,7 +3,9 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import type { OrgRole } from '@krakenkey/shared';
 
 export class InviteMemberDto {
-  @ApiProperty({ description: 'ID of the user to invite (must already exist in the system)' })
+  @ApiProperty({
+    description: 'ID of the user to invite (must already exist in the system)',
+  })
   @IsString()
   userId: string;
 

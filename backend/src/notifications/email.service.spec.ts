@@ -3,7 +3,10 @@ import { ConfigService } from '@nestjs/config';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import * as nodemailer from 'nodemailer';
 import { EmailService } from './email.service';
-import type { CertEmailContext, DomainVerificationFailedContext } from './email.service';
+import type {
+  CertEmailContext,
+  DomainVerificationFailedContext,
+} from './email.service';
 import { User } from '../users/entities/user.entity';
 // Use string literals to avoid barrel re-export resolution issues in Jest
 const NotificationType = {
@@ -243,17 +246,42 @@ describe('EmailService', () => {
   });
 
   describe('preference guard per notification type', () => {
-    const cases: [string, keyof EmailService, (typeof NotificationType)[keyof typeof NotificationType], any][] = [
-      ['sendCertIssued', 'sendCertIssued', NotificationType.CERT_ISSUED, certCtx],
-      ['sendCertRenewed', 'sendCertRenewed', NotificationType.CERT_RENEWED, certCtx],
+    const cases: [
+      string,
+      keyof EmailService,
+      (typeof NotificationType)[keyof typeof NotificationType],
+      any,
+    ][] = [
+      [
+        'sendCertIssued',
+        'sendCertIssued',
+        NotificationType.CERT_ISSUED,
+        certCtx,
+      ],
+      [
+        'sendCertRenewed',
+        'sendCertRenewed',
+        NotificationType.CERT_RENEWED,
+        certCtx,
+      ],
       [
         'sendCertExpiryWarning',
         'sendCertExpiryWarning',
         NotificationType.CERT_EXPIRY_WARNING,
         certCtx,
       ],
-      ['sendCertFailed', 'sendCertFailed', NotificationType.CERT_FAILED, certCtx],
-      ['sendCertRevoked', 'sendCertRevoked', NotificationType.CERT_REVOKED, certCtx],
+      [
+        'sendCertFailed',
+        'sendCertFailed',
+        NotificationType.CERT_FAILED,
+        certCtx,
+      ],
+      [
+        'sendCertRevoked',
+        'sendCertRevoked',
+        NotificationType.CERT_REVOKED,
+        certCtx,
+      ],
       [
         'sendDomainVerificationFailed',
         'sendDomainVerificationFailed',
@@ -270,7 +298,7 @@ describe('EmailService', () => {
           notificationPreferences: { [type]: false },
         });
 
-        await (service[method] as Function)(ctx);
+        await (service[method] as (...args: unknown[]) => Promise<void>)(ctx);
 
         expect(mockSendMail).not.toHaveBeenCalled();
       },

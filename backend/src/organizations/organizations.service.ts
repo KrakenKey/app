@@ -30,7 +30,9 @@ export class OrganizationsService {
       select: { id: true, organizationId: true },
     });
     if (existing?.organizationId) {
-      throw new ConflictException('You are already a member of an organization');
+      throw new ConflictException(
+        'You are already a member of an organization',
+      );
     }
 
     const org = this.orgRepo.create({ name, ownerId, plan: 'free' });

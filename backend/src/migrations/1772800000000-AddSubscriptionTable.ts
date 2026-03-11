@@ -44,9 +44,7 @@ export class AddSubscriptionTable1772800000000 implements MigrationInterface {
     await queryRunner.query(
       `DROP INDEX IF EXISTS "IDX_subscription_stripeCustomerId"`,
     );
-    await queryRunner.query(
-      `DROP INDEX IF EXISTS "IDX_subscription_userId"`,
-    );
+    await queryRunner.query(`DROP INDEX IF EXISTS "IDX_subscription_userId"`);
     await queryRunner.query(`DROP TABLE IF EXISTS "subscription"`);
   }
 }
