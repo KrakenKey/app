@@ -4,20 +4,29 @@ import {
   ForbiddenException,
   ConflictException,
   BadRequestException,
+  HttpException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Organization } from './entities/organization.entity';
 import { User } from '../users/entities/user.entity';
+import { BillingService } from '../billing/billing.service';
 import type { OrgRole } from '@krakenkey/shared';
 
 @Injectable()
 export class OrganizationsService {
+  private static readonly ORG_ELIGIBLE_PLANS = new Set([
+    'team',
+    'business',
+    'enterprise',
+  ]);
+
   constructor(
     @InjectRepository(Organization)
     private readonly orgRepo: Repository<Organization>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    private readonly billingService: BillingService,
   ) {}
 
   /**
@@ -25,6 +34,18 @@ export class OrganizationsService {
    * A user may only be the owner of one organization at a time.
    */
   async create(ownerId: string, name: string): Promise<Organization> {
+    const plan = await this.billingService.resolveUserTier(ownerId);
+    if (!OrganizationsService.ORG_ELIGIBLE_PLANS.has(plan)) {
+      throw new HttpException(
+        {
+          message:
+            'Organizations require a Team plan or higher. Please upgrade to create an organization.',
+          plan,
+        },
+        402,
+      );
+    }
+
     const existing = await this.userRepo.findOne({
       where: { id: ownerId },
       select: { id: true, organizationId: true },

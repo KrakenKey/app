@@ -31,10 +31,10 @@ export default function Billing() {
     }
   }
 
-  async function handleUpgrade() {
+  async function handleUpgrade(targetPlan: string) {
     setActionLoading(true);
     try {
-      const { sessionUrl } = await createCheckout('starter');
+      const { sessionUrl } = await createCheckout(targetPlan);
       window.location.href = sessionUrl;
     } catch {
       setActionLoading(false);
@@ -99,7 +99,7 @@ export default function Billing() {
             </div>
           </div>
           <div>
-            {isPaid ? (
+            {isPaid && (
               <Button
                 variant="secondary"
                 icon={<ExternalLink className="w-4 h-4" />}
@@ -107,14 +107,6 @@ export default function Billing() {
                 disabled={actionLoading}
               >
                 Manage Subscription
-              </Button>
-            ) : (
-              <Button
-                variant="primary"
-                onClick={handleUpgrade}
-                disabled={actionLoading}
-              >
-                Upgrade to Starter
               </Button>
             )}
           </div>
@@ -133,24 +125,92 @@ export default function Billing() {
 
       {/* Plan Comparison */}
       {!isPaid && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <Card>
+            <h2 className="text-lg font-semibold text-zinc-100 mb-4">
+              Starter — $29/mo
+            </h2>
+            <ul className="space-y-2 text-sm text-zinc-400 mb-6">
+              <li className="flex items-center gap-2">
+                <span className="text-cyan-400">&#10003;</span>
+                10 domains, 75 active certificates
+              </li>
+              <li className="flex items-center gap-2">
+                <span className="text-cyan-400">&#10003;</span>
+                30-day renewal window
+              </li>
+              <li className="flex items-center gap-2">
+                <span className="text-cyan-400">&#10003;</span>
+                Double API rate limits
+              </li>
+            </ul>
+            <Button
+              variant="primary"
+              onClick={() => handleUpgrade('starter')}
+              disabled={actionLoading}
+              className="w-full"
+            >
+              Upgrade to Starter
+            </Button>
+          </Card>
+
+          <Card>
+            <h2 className="text-lg font-semibold text-zinc-100 mb-4">
+              Team — $79/mo
+            </h2>
+            <ul className="space-y-2 text-sm text-zinc-400 mb-6">
+              <li className="flex items-center gap-2">
+                <span className="text-cyan-400">&#10003;</span>
+                25 domains, 375 active certificates
+              </li>
+              <li className="flex items-center gap-2">
+                <span className="text-cyan-400">&#10003;</span>
+                Organizations with RBAC
+              </li>
+              <li className="flex items-center gap-2">
+                <span className="text-cyan-400">&#10003;</span>
+                Higher rate limits (300 reads/min)
+              </li>
+            </ul>
+            <Button
+              variant="primary"
+              onClick={() => handleUpgrade('team')}
+              disabled={actionLoading}
+              className="w-full"
+            >
+              Upgrade to Team
+            </Button>
+          </Card>
+        </div>
+      )}
+
+      {/* Upgrade from Starter to Team */}
+      {plan === 'starter' && (
         <Card>
           <h2 className="text-lg font-semibold text-zinc-100 mb-4">
-            Starter Plan — $29/mo
+            Team — $79/mo
           </h2>
-          <ul className="space-y-2 text-sm text-zinc-400">
+          <ul className="space-y-2 text-sm text-zinc-400 mb-6">
             <li className="flex items-center gap-2">
               <span className="text-cyan-400">&#10003;</span>
-              Double API rate limits (120 reads/min, 40 writes/min)
+              25 domains, 375 active certificates
             </li>
             <li className="flex items-center gap-2">
               <span className="text-cyan-400">&#10003;</span>
-              10 expensive operations per hour
+              Organizations with RBAC
             </li>
             <li className="flex items-center gap-2">
               <span className="text-cyan-400">&#10003;</span>
-              Priority support
+              Higher rate limits (300 reads/min)
             </li>
           </ul>
+          <Button
+            variant="primary"
+            onClick={() => handleUpgrade('team')}
+            disabled={actionLoading}
+          >
+            Upgrade to Team
+          </Button>
         </Card>
       )}
     </div>
