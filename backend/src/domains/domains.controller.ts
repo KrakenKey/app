@@ -18,6 +18,7 @@ import {
 import { DomainsService } from './domains.service';
 import { CreateDomainDto } from './dto/create-domain.dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-or-api-key.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 import type { RequestWithUser } from '../auth/interfaces/request-with-user.interface';
 import { RateLimitCategoryDecorator } from '../throttler/decorators/rate-limit-category.decorator';
 import { RateLimitCategory } from '../throttler/interfaces/rate-limit-category.enum';
@@ -33,6 +34,8 @@ export class DomainsController {
   @ApiOperation({ summary: 'Register a new domain' })
   @ApiResponse({ status: 201, description: 'Domain registered' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Viewers cannot register domains' })
+  @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
   create(
     @Request() req: RequestWithUser,
@@ -45,7 +48,7 @@ export class DomainsController {
   @ApiOperation({ summary: 'List all domains' })
   @ApiResponse({
     status: 200,
-    description: 'List of domains for the authenticated user',
+    description: 'List of domains for the authenticated user or their org',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
@@ -67,7 +70,9 @@ export class DomainsController {
   @ApiOperation({ summary: 'Trigger DNS verification' })
   @ApiParam({ name: 'id', description: 'Domain UUID' })
   @ApiResponse({ status: 200, description: 'Verification initiated' })
+  @ApiResponse({ status: 403, description: 'Viewers cannot verify domains' })
   @ApiResponse({ status: 404, description: 'Domain not found' })
+  @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.EXPENSIVE)
   verify(@Request() req: RequestWithUser, @Param('id') id: string) {
     return this.domainsService.verify(req.user.userId, id);
@@ -77,7 +82,9 @@ export class DomainsController {
   @ApiOperation({ summary: 'Delete a domain' })
   @ApiParam({ name: 'id', description: 'Domain UUID' })
   @ApiResponse({ status: 200, description: 'Domain deleted' })
+  @ApiResponse({ status: 403, description: 'Viewers cannot delete domains' })
   @ApiResponse({ status: 404, description: 'Domain not found' })
+  @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
   remove(@Request() req: RequestWithUser, @Param('id') id: string) {
     return this.domainsService.delete(req.user.userId, id);

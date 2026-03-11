@@ -4,11 +4,14 @@ import {
   PrimaryColumn,
   Column,
   OneToMany,
+  ManyToOne,
+  JoinColumn,
   CreateDateColumn,
 } from 'typeorm';
 import { Domain } from '../../domains/entities/domain.entity';
 import { TlsCrt } from '../../certs/tls/entities/tls-crt.entity';
-import type { NotificationPreferences } from '@krakenkey/shared';
+import type { NotificationPreferences, OrgRole } from '@krakenkey/shared';
+import type { Organization } from '../../organizations/entities/organization.entity';
 
 @Entity()
 export class User {
@@ -38,6 +41,16 @@ export class User {
 
   @Column({ type: 'timestamp', nullable: true, default: null })
   autoRenewalReminderSentAt: Date | null;
+
+  @Column({ type: 'varchar', nullable: true, default: null })
+  role: OrgRole | null;
+
+  @Column({ type: 'uuid', nullable: true, default: null })
+  organizationId: string | null;
+
+  @ManyToOne('Organization', 'members', { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'organizationId' })
+  organization: Organization;
 
   @OneToMany(() => UserApiKey, (apiKey) => apiKey.user)
   apiKeys: UserApiKey[];
