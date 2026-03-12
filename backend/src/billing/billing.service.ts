@@ -157,8 +157,22 @@ export class BillingService {
       },
     });
 
+    // Sum only the proration line items — amount_due includes the next
+    // full billing cycle which isn't charged immediately.
+    const isProration = (line: Stripe.InvoiceLineItem): boolean => {
+      const parent = line.parent;
+      if (!parent) return false;
+      return (
+        parent.invoice_item_details?.proration === true ||
+        parent.subscription_item_details?.proration === true
+      );
+    };
+    const prorationAmount = upcomingInvoice.lines.data
+      .filter(isProration)
+      .reduce((sum, line) => sum + line.amount, 0);
+
     return {
-      immediateAmountCents: upcomingInvoice.amount_due,
+      immediateAmountCents: prorationAmount,
       currency: upcomingInvoice.currency,
       targetPlan: newPlan,
       currentPeriodEnd: sub.currentPeriodEnd!.toISOString(),

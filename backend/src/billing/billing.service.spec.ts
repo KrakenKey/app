@@ -364,13 +364,35 @@ describe('BillingService', () => {
         items: { data: [{ id: 'si_item1' }] },
       });
       mockStripe.invoices.createPreview.mockResolvedValue({
-        amount_due: 3350,
+        amount_due: 12900,
         currency: 'usd',
+        lines: {
+          data: [
+            {
+              amount: -1935,
+              parent: {
+                subscription_item_details: { proration: true },
+              },
+            },
+            {
+              amount: 5270,
+              parent: {
+                subscription_item_details: { proration: true },
+              },
+            },
+            {
+              amount: 7900,
+              parent: {
+                subscription_item_details: { proration: false },
+              },
+            },
+          ],
+        },
       });
 
       const result = await service.previewUpgrade(userId, 'team');
       expect(result).toEqual({
-        immediateAmountCents: 3350,
+        immediateAmountCents: 3335,
         currency: 'usd',
         targetPlan: 'team',
         currentPeriodEnd: mockSubscription.currentPeriodEnd!.toISOString(),
