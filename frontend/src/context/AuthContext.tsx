@@ -11,6 +11,7 @@ interface AuthContextType {
   logout: () => void;
   handleCallback: (code: string) => Promise<void>;
   deleteAccount: () => Promise<void>;
+  refreshUser: () => Promise<void>;
   isLoading: boolean;
 }
 
@@ -147,6 +148,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     logout();
   };
 
+  const refreshUser = async () => {
+    const response = await api.get('/auth/profile');
+    setUser(response.data);
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -157,6 +163,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         logout,
         handleCallback,
         deleteAccount,
+        refreshUser,
         isLoading,
       }}
     >

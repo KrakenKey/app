@@ -35,7 +35,7 @@ const ROLE_BADGE: Record<
 const ORG_ELIGIBLE_PLANS = new Set(['team', 'business', 'enterprise']);
 
 export default function Organizations() {
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const navigate = useNavigate();
 
   const [org, setOrg] = useState<Organization | null>(null);
@@ -70,7 +70,7 @@ export default function Organizations() {
     loadOrg();
   }, [loadOrg]);
 
-  async function handleCreate(e: React.FormEvent) {
+  async function handleCreate(e: React.SyntheticEvent) {
     e.preventDefault();
     const name = newOrgName.trim();
     if (!name) {
@@ -81,8 +81,8 @@ export default function Organizations() {
       setCreating(true);
       const created = await orgService.createOrganization(name);
       toast.success(`Organization "${created.name}" created`);
-      // Refresh auth profile to get updated organizationId + role
-      window.location.reload();
+      await refreshUser();
+      await loadOrg();
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { message?: string } } })?.response?.data
@@ -93,7 +93,7 @@ export default function Organizations() {
     }
   }
 
-  async function handleInvite(e: React.FormEvent) {
+  async function handleInvite(e: React.SyntheticEvent) {
     e.preventDefault();
     const userId = inviteUserId.trim();
     if (!userId || !org) return;
@@ -123,8 +123,8 @@ export default function Organizations() {
       await orgService.removeMember(org.id, memberId);
       toast.success(`${memberName} removed`);
       if (memberId === user?.id) {
-        // Self-removal — reload to clear org context
-        window.location.reload();
+        await refreshUser();
+        setOrg(null);
       } else {
         await loadOrg();
       }
