@@ -53,7 +53,7 @@ export default function Organizations() {
 
   // Invite
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [inviteUserId, setInviteUserId] = useState('');
+  const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] =
     useState<Exclude<OrgRole, 'owner'>>('member');
   const [inviting, setInviting] = useState(false);
@@ -65,7 +65,7 @@ export default function Organizations() {
 
   // Transfer ownership
   const [transferOpen, setTransferOpen] = useState(false);
-  const [transferUserId, setTransferUserId] = useState('');
+  const [transferEmail, setTransferEmail] = useState('');
   const [transferring, setTransferring] = useState(false);
 
   // Delete org
@@ -124,13 +124,13 @@ export default function Organizations() {
 
   async function handleInvite(e: React.SyntheticEvent) {
     e.preventDefault();
-    const userId = inviteUserId.trim();
-    if (!userId || !org) return;
+    const email = inviteEmail.trim();
+    if (!email || !org) return;
     try {
       setInviting(true);
-      await orgService.inviteMember(org.id, userId, inviteRole);
+      await orgService.inviteMember(org.id, email, inviteRole);
       toast.success('Member invited');
-      setInviteUserId('');
+      setInviteEmail('');
       setInviteRole('member');
       setInviteOpen(false);
       await loadOrg();
@@ -190,14 +190,14 @@ export default function Organizations() {
 
   async function handleTransferOwnership(e: React.SyntheticEvent) {
     e.preventDefault();
-    const targetId = transferUserId.trim();
-    if (!targetId || !org) return;
+    const email = transferEmail.trim();
+    if (!email || !org) return;
     try {
       setTransferring(true);
-      await orgService.transferOwnership(org.id, targetId);
+      await orgService.transferOwnership(org.id, email);
       toast.success('Ownership transferred');
       setTransferOpen(false);
-      setTransferUserId('');
+      setTransferEmail('');
       await refreshUser();
       await loadOrg();
     } catch (err: unknown) {
@@ -516,7 +516,7 @@ export default function Organizations() {
         open={inviteOpen}
         onClose={() => {
           setInviteOpen(false);
-          setInviteUserId('');
+          setInviteEmail('');
           setInviteRole('member');
         }}
         title="Invite Member"
@@ -524,17 +524,17 @@ export default function Organizations() {
         <form onSubmit={handleInvite} className="flex flex-col gap-4">
           <div>
             <label className="block text-sm text-zinc-400 mb-1.5">
-              User ID
+              Email address
             </label>
             <Input
-              placeholder="Paste the user's ID"
-              value={inviteUserId}
-              onChange={(e) => setInviteUserId(e.target.value)}
+              type="email"
+              placeholder="alice@example.com"
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
               disabled={inviting}
             />
             <p className="text-xs text-zinc-500 mt-1.5">
-              The user must have signed in at least once. Find their ID in
-              Settings.
+              The user must have signed in at least once.
             </p>
           </div>
           <div>
@@ -569,7 +569,7 @@ export default function Organizations() {
               type="submit"
               variant="primary"
               icon={<UserPlus className="w-3.5 h-3.5" />}
-              disabled={inviting || !inviteUserId.trim()}
+              disabled={inviting || !inviteEmail.trim()}
             >
               {inviting ? 'Inviting...' : 'Invite'}
             </Button>
@@ -623,7 +623,7 @@ export default function Organizations() {
         open={transferOpen}
         onClose={() => {
           setTransferOpen(false);
-          setTransferUserId('');
+          setTransferEmail('');
         }}
         title="Transfer Ownership"
       >
@@ -637,12 +637,13 @@ export default function Organizations() {
           </p>
           <div>
             <label className="block text-sm text-zinc-400 mb-1.5">
-              New owner's user ID
+              New owner's email address
             </label>
             <Input
-              placeholder="Paste the user's ID"
-              value={transferUserId}
-              onChange={(e) => setTransferUserId(e.target.value)}
+              type="email"
+              placeholder="alice@example.com"
+              value={transferEmail}
+              onChange={(e) => setTransferEmail(e.target.value)}
               disabled={transferring}
             />
             <p className="text-xs text-zinc-500 mt-1.5">
@@ -662,7 +663,7 @@ export default function Organizations() {
               type="submit"
               variant="danger"
               icon={<Crown className="w-3.5 h-3.5" />}
-              disabled={transferring || !transferUserId.trim()}
+              disabled={transferring || !transferEmail.trim()}
             >
               {transferring ? 'Transferring...' : 'Transfer Ownership'}
             </Button>

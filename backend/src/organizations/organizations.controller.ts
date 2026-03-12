@@ -85,7 +85,7 @@ export class OrganizationsController {
     return this.orgsService.inviteMember(
       orgId,
       req.user.userId,
-      dto.userId,
+      dto.email,
       dto.role,
     );
   }
@@ -162,7 +162,7 @@ export class OrganizationsController {
     return this.orgsService.transferOwnership(
       orgId,
       req.user.userId,
-      dto.targetUserId,
+      dto.email,
     );
   }
 

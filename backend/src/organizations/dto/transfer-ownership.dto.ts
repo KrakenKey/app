@@ -1,10 +1,12 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString } from 'class-validator';
+import { IsEmail, IsString } from 'class-validator';
 
 export class TransferOwnershipDto {
   @ApiProperty({
-    description: 'User ID of the member to transfer ownership to',
+    description: 'Email address of the member to transfer ownership to',
+    example: 'alice@example.com',
   })
+  @IsEmail()
   @IsString()
-  targetUserId: string;
+  email: string;
 }

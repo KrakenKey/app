@@ -35,10 +35,10 @@ export async function fetchOrganization(id: string): Promise<Organization> {
 
 export async function inviteMember(
   orgId: string,
-  userId: string,
+  email: string,
   role: Exclude<OrgRole, 'owner'>,
 ): Promise<void> {
-  await api.post(API_ROUTES.ORGANIZATIONS.MEMBERS(orgId), { userId, role });
+  await api.post(API_ROUTES.ORGANIZATIONS.MEMBERS(orgId), { email, role });
 }
 
 export async function removeMember(
@@ -65,10 +65,10 @@ export async function deleteOrganization(orgId: string): Promise<void> {
 
 export async function transferOwnership(
   orgId: string,
-  targetUserId: string,
+  email: string,
 ): Promise<void> {
   await api.post(API_ROUTES.ORGANIZATIONS.TRANSFER_OWNERSHIP(orgId), {
-    targetUserId,
+    email,
   });
 }
 

@@ -84,18 +84,18 @@ export class OrganizationsService {
   async inviteMember(
     orgId: string,
     actorId: string,
-    targetUserId: string,
+    targetEmail: string,
     role: Exclude<OrgRole, 'owner'> = 'member',
   ): Promise<void> {
     await this.assertOrgAdmin(orgId, actorId);
 
     const target = await this.userRepo.findOne({
-      where: { id: targetUserId },
+      where: { email: targetEmail },
       select: { id: true, organizationId: true, role: true },
     });
     if (!target) {
       throw new NotFoundException(
-        `User ${targetUserId} not found. They must log in at least once before being invited.`,
+        `No user found with email ${targetEmail}. They must log in at least once before being invited.`,
       );
     }
     if (target.organizationId && target.organizationId !== orgId) {
@@ -104,7 +104,7 @@ export class OrganizationsService {
       );
     }
 
-    await this.userRepo.update(targetUserId, { organizationId: orgId, role });
+    await this.userRepo.update(target.id, { organizationId: orgId, role });
   }
 
   /**
@@ -190,7 +190,7 @@ export class OrganizationsService {
   async transferOwnership(
     orgId: string,
     actorId: string,
-    targetUserId: string,
+    targetEmail: string,
   ): Promise<void> {
     const actor = await this.userRepo.findOne({
       where: { id: actorId },
@@ -202,23 +202,23 @@ export class OrganizationsService {
       );
     }
 
-    if (actorId === targetUserId) {
-      throw new BadRequestException('You are already the owner');
-    }
-
     const target = await this.userRepo.findOne({
-      where: { id: targetUserId },
+      where: { email: targetEmail },
       select: { id: true, organizationId: true, role: true },
     });
     if (!target || target.organizationId !== orgId) {
       throw new NotFoundException(
-        `User ${targetUserId} is not a member of this organization`,
+        `No member found with email ${targetEmail} in this organization`,
       );
     }
 
+    if (actorId === target.id) {
+      throw new BadRequestException('You are already the owner');
+    }
+
     // Transfer: new owner gets 'owner', previous owner becomes 'admin'
-    await this.orgRepo.update(orgId, { ownerId: targetUserId });
-    await this.userRepo.update(targetUserId, { role: 'owner' });
+    await this.orgRepo.update(orgId, { ownerId: target.id });
+    await this.userRepo.update(target.id, { role: 'owner' });
     await this.userRepo.update(actorId, { role: 'admin' });
   }
 
