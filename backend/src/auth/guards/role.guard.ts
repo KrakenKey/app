@@ -40,7 +40,9 @@ export class RoleGuard implements CanActivate {
 
     const req = context.switchToHttp().getRequest();
     const userId: string | undefined = req.user?.userId;
-    if (!userId) return false;
+    // No user context yet — JwtOrApiKeyGuard runs after this global guard.
+    // Authentication rejection is its responsibility, not ours.
+    if (!userId) return true;
 
     const user = await this.dataSource
       .getRepository(User)
