@@ -32,12 +32,14 @@ export class BillingService {
     );
 
     // Map plan names to Stripe price IDs from env vars.
-    // Add more plans here as they are configured in Stripe.
     this.priceMap = {};
     const starterPrice = this.configService.get<string>(
       'KK_STRIPE_PRICE_STARTER',
     );
     if (starterPrice) this.priceMap['starter'] = starterPrice;
+
+    const teamPrice = this.configService.get<string>('KK_STRIPE_PRICE_TEAM');
+    if (teamPrice) this.priceMap['team'] = teamPrice;
   }
 
   async getOrCreateCustomer(

@@ -1,13 +1,16 @@
-import { IsString, IsIn, IsOptional } from 'class-validator';
+import { IsString, IsIn, IsOptional, IsEmail } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import type { OrgRole } from '@krakenkey/shared';
 
 export class InviteMemberDto {
   @ApiProperty({
-    description: 'ID of the user to invite (must already exist in the system)',
+    description:
+      'Email address of the user to invite (must already exist in the system)',
+    example: 'alice@example.com',
   })
+  @IsEmail()
   @IsString()
-  userId: string;
+  email: string;
 
   @ApiPropertyOptional({
     enum: ['admin', 'member', 'viewer'],

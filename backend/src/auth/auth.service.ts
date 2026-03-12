@@ -281,6 +281,8 @@ export class AuthService {
       plan,
       autoRenewalConfirmedAt:
         user.autoRenewalConfirmedAt?.toISOString() ?? null,
+      organizationId: user.organizationId ?? null,
+      role: user.role ?? null,
       resourceCounts: {
         domains: domainCount,
         certificates: certCount,
