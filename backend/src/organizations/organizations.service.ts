@@ -143,6 +143,115 @@ export class OrganizationsService {
     });
   }
 
+  /**
+   * Updates mutable org fields (currently: name).
+   * Only owners and admins may update.
+   */
+  async update(
+    orgId: string,
+    actorId: string,
+    name: string,
+  ): Promise<Organization> {
+    await this.assertOrgAdmin(orgId, actorId);
+    await this.orgRepo.update(orgId, { name });
+    return this.findById(orgId);
+  }
+
+  /**
+   * Deletes the organization and removes all members from it.
+   * Only the owner may delete.
+   */
+  async delete(orgId: string, actorId: string): Promise<void> {
+    const actor = await this.userRepo.findOne({
+      where: { id: actorId },
+      select: { id: true, organizationId: true, role: true },
+    });
+    if (!actor || actor.organizationId !== orgId || actor.role !== 'owner') {
+      throw new ForbiddenException(
+        'Only the organization owner can delete the organization',
+      );
+    }
+
+    // Clear all member associations before deleting
+    await this.userRepo
+      .createQueryBuilder()
+      .update()
+      .set({ organizationId: () => 'NULL', role: () => 'NULL' })
+      .where('organizationId = :orgId', { orgId })
+      .execute();
+
+    await this.orgRepo.delete(orgId);
+  }
+
+  /**
+   * Transfers ownership to another member of the org.
+   * The current owner becomes an admin. Only the owner may call this.
+   */
+  async transferOwnership(
+    orgId: string,
+    actorId: string,
+    targetUserId: string,
+  ): Promise<void> {
+    const actor = await this.userRepo.findOne({
+      where: { id: actorId },
+      select: { id: true, organizationId: true, role: true },
+    });
+    if (!actor || actor.organizationId !== orgId || actor.role !== 'owner') {
+      throw new ForbiddenException(
+        'Only the current owner can transfer ownership',
+      );
+    }
+
+    if (actorId === targetUserId) {
+      throw new BadRequestException('You are already the owner');
+    }
+
+    const target = await this.userRepo.findOne({
+      where: { id: targetUserId },
+      select: { id: true, organizationId: true, role: true },
+    });
+    if (!target || target.organizationId !== orgId) {
+      throw new NotFoundException(
+        `User ${targetUserId} is not a member of this organization`,
+      );
+    }
+
+    // Transfer: new owner gets 'owner', previous owner becomes 'admin'
+    await this.orgRepo.update(orgId, { ownerId: targetUserId });
+    await this.userRepo.update(targetUserId, { role: 'owner' });
+    await this.userRepo.update(actorId, { role: 'admin' });
+  }
+
+  /**
+   * Updates a member's role. Cannot be used to assign the 'owner' role
+   * (use transferOwnership for that). Only owners and admins may update roles.
+   */
+  async updateMemberRole(
+    orgId: string,
+    actorId: string,
+    targetUserId: string,
+    role: Exclude<OrgRole, 'owner'>,
+  ): Promise<void> {
+    await this.assertOrgAdmin(orgId, actorId);
+
+    const target = await this.userRepo.findOne({
+      where: { id: targetUserId },
+      select: { id: true, organizationId: true, role: true },
+    });
+    if (!target || target.organizationId !== orgId) {
+      throw new NotFoundException(
+        `User ${targetUserId} is not a member of this organization`,
+      );
+    }
+    if (target.role === 'owner') {
+      throw new BadRequestException(
+        "Cannot change the owner's role. Transfer ownership first.",
+      );
+    }
+
+    await this.userRepo.update(targetUserId, { role });
+  }
+
   // ---------------------------------------------------------------------------
   // Internal helpers
   // ---------------------------------------------------------------------------

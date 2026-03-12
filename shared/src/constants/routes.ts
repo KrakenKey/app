@@ -41,5 +41,7 @@ export const API_ROUTES = {
     MEMBERS: (id: string) => `/organizations/${id}/members`,
     MEMBER: (id: string, userId: string) =>
       `/organizations/${id}/members/${userId}`,
+    TRANSFER_OWNERSHIP: (id: string) =>
+      `/organizations/${id}/transfer-ownership`,
   },
 } as const;

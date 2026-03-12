@@ -1,6 +1,7 @@
 import {
   Controller,
   Post,
+  Patch,
   Delete,
   Get,
   Body,
@@ -20,6 +21,9 @@ import {
 import { OrganizationsService } from './organizations.service';
 import { CreateOrgDto } from './dto/create-org.dto';
 import { InviteMemberDto } from './dto/invite-member.dto';
+import { UpdateOrgDto } from './dto/update-org.dto';
+import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
+import { TransferOwnershipDto } from './dto/transfer-ownership.dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-or-api-key.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import type { RequestWithUser } from '../auth/interfaces/request-with-user.interface';
@@ -106,5 +110,84 @@ export class OrganizationsController {
     @Request() req: RequestWithUser,
   ) {
     return this.orgsService.removeMember(orgId, req.user.userId, targetUserId);
+  }
+
+  /**
+   * Update organization fields (e.g. name).
+   * Caller must be owner or admin.
+   */
+  @Patch(':id')
+  @ApiOperation({ summary: 'Update organization' })
+  @ApiParam({ name: 'id', description: 'Organization UUID' })
+  @ApiResponse({ status: 200, description: 'Organization updated' })
+  @Roles('owner', 'admin')
+  @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
+  update(
+    @Param('id') orgId: string,
+    @Request() req: RequestWithUser,
+    @Body() dto: UpdateOrgDto,
+  ) {
+    return this.orgsService.update(orgId, req.user.userId, dto.name!);
+  }
+
+  /**
+   * Delete the organization. Only the owner may do this.
+   */
+  @Delete(':id')
+  @ApiOperation({ summary: 'Delete organization' })
+  @ApiParam({ name: 'id', description: 'Organization UUID' })
+  @ApiResponse({ status: 204, description: 'Organization deleted' })
+  @Roles('owner')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
+  deleteOrg(@Param('id') orgId: string, @Request() req: RequestWithUser) {
+    return this.orgsService.delete(orgId, req.user.userId);
+  }
+
+  /**
+   * Transfer ownership to another member.
+   * Only the current owner may call this.
+   */
+  @Post(':id/transfer-ownership')
+  @ApiOperation({ summary: 'Transfer organization ownership' })
+  @ApiParam({ name: 'id', description: 'Organization UUID' })
+  @ApiResponse({ status: 201, description: 'Ownership transferred' })
+  @Roles('owner')
+  @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
+  transferOwnership(
+    @Param('id') orgId: string,
+    @Request() req: RequestWithUser,
+    @Body() dto: TransferOwnershipDto,
+  ) {
+    return this.orgsService.transferOwnership(
+      orgId,
+      req.user.userId,
+      dto.targetUserId,
+    );
+  }
+
+  /**
+   * Update a member's role. Cannot assign 'owner' — use transfer-ownership instead.
+   * Caller must be owner or admin.
+   */
+  @Patch(':id/members/:userId')
+  @ApiOperation({ summary: "Update a member's role" })
+  @ApiParam({ name: 'id', description: 'Organization UUID' })
+  @ApiParam({ name: 'userId', description: 'User ID' })
+  @ApiResponse({ status: 200, description: 'Role updated' })
+  @Roles('owner', 'admin')
+  @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
+  updateMemberRole(
+    @Param('id') orgId: string,
+    @Param('userId') targetUserId: string,
+    @Request() req: RequestWithUser,
+    @Body() dto: UpdateMemberRoleDto,
+  ) {
+    return this.orgsService.updateMemberRole(
+      orgId,
+      req.user.userId,
+      targetUserId,
+      dto.role,
+    );
   }
 }

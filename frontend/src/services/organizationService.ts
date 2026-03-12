@@ -47,3 +47,35 @@ export async function removeMember(
 ): Promise<void> {
   await api.delete(API_ROUTES.ORGANIZATIONS.MEMBER(orgId, userId));
 }
+
+export async function updateOrganization(
+  orgId: string,
+  name: string,
+): Promise<Organization> {
+  const response = await api.patch<Organization>(
+    API_ROUTES.ORGANIZATIONS.BY_ID(orgId),
+    { name },
+  );
+  return response.data;
+}
+
+export async function deleteOrganization(orgId: string): Promise<void> {
+  await api.delete(API_ROUTES.ORGANIZATIONS.BY_ID(orgId));
+}
+
+export async function transferOwnership(
+  orgId: string,
+  targetUserId: string,
+): Promise<void> {
+  await api.post(API_ROUTES.ORGANIZATIONS.TRANSFER_OWNERSHIP(orgId), {
+    targetUserId,
+  });
+}
+
+export async function updateMemberRole(
+  orgId: string,
+  userId: string,
+  role: Exclude<OrgRole, 'owner'>,
+): Promise<void> {
+  await api.patch(API_ROUTES.ORGANIZATIONS.MEMBER(orgId, userId), { role });
+}
