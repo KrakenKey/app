@@ -10,6 +10,7 @@ import {
   LogOut,
   Menu,
   X,
+  Building2,
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { PlanBadge } from './ui/PlanBadge';
@@ -19,6 +20,7 @@ const navItems = [
   { to: '/dashboard/domains', icon: Globe, label: 'Domains' },
   { to: '/dashboard/certificates', icon: Shield, label: 'Certificates' },
   { to: '/dashboard/api-keys', icon: Key, label: 'API Keys' },
+  { to: '/dashboard/organizations', icon: Building2, label: 'Organization' },
   { to: '/dashboard/billing', icon: CreditCard, label: 'Billing' },
   { to: '/dashboard/feedback', icon: MessageSquare, label: 'Feedback' },
 ];
