@@ -34,6 +34,8 @@ export const API_ROUTES = {
     SUBSCRIPTION: '/billing/subscription',
     PORTAL: '/billing/portal',
     WEBHOOK: '/billing/webhook',
+    UPGRADE_PREVIEW: '/billing/upgrade/preview',
+    UPGRADE: '/billing/upgrade',
   },
   ORGANIZATIONS: {
     BASE: '/organizations',

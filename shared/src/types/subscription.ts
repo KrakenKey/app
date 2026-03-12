@@ -32,3 +32,17 @@ export interface CheckoutResponse {
 export interface PortalResponse {
   portalUrl: string;
 }
+
+export interface UpgradePreviewResponse {
+  immediateAmountCents: number;
+  currency: string;
+  targetPlan: SubscriptionPlan;
+  currentPeriodEnd: string;
+}
+
+export interface UpgradeResponse {
+  plan: SubscriptionPlan;
+  status: SubscriptionStatus;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+}

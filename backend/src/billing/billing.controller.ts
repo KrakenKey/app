@@ -19,6 +19,7 @@ import {
 import { SkipThrottle } from '@nestjs/throttler';
 import { BillingService } from './billing.service';
 import { CreateCheckoutDto } from './dto/create-checkout.dto';
+import { UpgradePlanDto } from './dto/upgrade-plan.dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-or-api-key.guard';
 import type { RequestWithUser } from '../auth/interfaces/request-with-user.interface';
 import { RateLimitCategoryDecorator } from '../throttler/decorators/rate-limit-category.decorator';
@@ -89,6 +90,35 @@ export class BillingController {
       req.user.userId,
     );
     return { portalUrl };
+  }
+
+  @Post('upgrade/preview')
+  @UseGuards(JwtOrApiKeyGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Preview prorated cost for a plan upgrade' })
+  @ApiResponse({ status: 200, description: 'Upgrade preview details' })
+  @ApiResponse({ status: 400, description: 'Invalid upgrade path' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'No active subscription' })
+  @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
+  async previewUpgrade(
+    @Request() req: RequestWithUser,
+    @Body() dto: UpgradePlanDto,
+  ) {
+    return this.billingService.previewUpgrade(req.user.userId, dto.plan);
+  }
+
+  @Post('upgrade')
+  @UseGuards(JwtOrApiKeyGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Upgrade subscription with proration' })
+  @ApiResponse({ status: 201, description: 'Subscription upgraded' })
+  @ApiResponse({ status: 400, description: 'Invalid upgrade path' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'No active subscription' })
+  @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
+  async upgrade(@Request() req: RequestWithUser, @Body() dto: UpgradePlanDto) {
+    return this.billingService.upgradeSubscription(req.user.userId, dto.plan);
   }
 
   @Post('webhook')

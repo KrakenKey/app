@@ -17,6 +17,8 @@ describe('BillingController', () => {
       createCheckoutSession: jest.fn(),
       getSubscription: jest.fn(),
       createPortalSession: jest.fn(),
+      previewUpgrade: jest.fn(),
+      upgradeSubscription: jest.fn(),
       constructWebhookEvent: jest.fn(),
       handleWebhookEvent: jest.fn(),
     };
@@ -95,6 +97,46 @@ describe('BillingController', () => {
       expect(result).toEqual({
         portalUrl: 'https://billing.stripe.com/portal',
       });
+    });
+  });
+
+  describe('previewUpgrade', () => {
+    it('returns preview from service', async () => {
+      const preview = {
+        immediateAmountCents: 3350,
+        currency: 'usd',
+        targetPlan: 'team',
+        currentPeriodEnd: '2026-04-09T00:00:00.000Z',
+      };
+      mockBillingService.previewUpgrade.mockResolvedValue(preview);
+
+      const result = await controller.previewUpgrade(mockReq, {
+        plan: 'team',
+      });
+      expect(result).toEqual(preview);
+      expect(mockBillingService.previewUpgrade).toHaveBeenCalledWith(
+        userId,
+        'team',
+      );
+    });
+  });
+
+  describe('upgrade', () => {
+    it('returns upgraded subscription from service', async () => {
+      const upgraded = {
+        plan: 'team',
+        status: 'active',
+        currentPeriodEnd: '2026-04-09T00:00:00.000Z',
+        cancelAtPeriodEnd: false,
+      };
+      mockBillingService.upgradeSubscription.mockResolvedValue(upgraded);
+
+      const result = await controller.upgrade(mockReq, { plan: 'team' });
+      expect(result).toEqual(upgraded);
+      expect(mockBillingService.upgradeSubscription).toHaveBeenCalledWith(
+        userId,
+        'team',
+      );
     });
   });
 

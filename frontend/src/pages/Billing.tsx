@@ -3,18 +3,26 @@ import { CreditCard, ExternalLink } from 'lucide-react';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
+import { Modal } from '../components/ui/Modal';
 import { PlanBadge } from '../components/ui/PlanBadge';
 import {
   fetchSubscription,
   createCheckout,
   createPortalSession,
+  previewUpgrade,
+  upgradeSubscription,
 } from '../services/billingService';
-import type { Subscription } from '@krakenkey/shared';
+import type { Subscription, UpgradePreviewResponse } from '@krakenkey/shared';
 
 export default function Billing() {
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
+  const [upgradeModal, setUpgradeModal] = useState<{
+    plan: string;
+    preview: UpgradePreviewResponse;
+  } | null>(null);
+  const [upgradeError, setUpgradeError] = useState<string | null>(null);
 
   useEffect(() => {
     loadSubscription();
@@ -31,12 +39,41 @@ export default function Billing() {
     }
   }
 
+  const plan = subscription?.plan ?? 'free';
+  const isPaid = plan !== 'free';
+  const isPastDue = subscription?.status === 'past_due';
+  const isCanceling = subscription?.cancelAtPeriodEnd === true;
+
   async function handleUpgrade(targetPlan: string) {
     setActionLoading(true);
+    setUpgradeError(null);
     try {
-      const { sessionUrl } = await createCheckout(targetPlan);
-      window.location.href = sessionUrl;
+      if (isPaid) {
+        const preview = await previewUpgrade(targetPlan);
+        setUpgradeModal({ plan: targetPlan, preview });
+      } else {
+        const { sessionUrl } = await createCheckout(targetPlan);
+        window.location.href = sessionUrl;
+        return;
+      }
     } catch {
+      setUpgradeError('Failed to load upgrade details. Please try again.');
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function handleConfirmUpgrade() {
+    if (!upgradeModal) return;
+    setActionLoading(true);
+    setUpgradeError(null);
+    try {
+      await upgradeSubscription(upgradeModal.plan);
+      setUpgradeModal(null);
+      await loadSubscription();
+    } catch {
+      setUpgradeError('Upgrade failed. Please try again.');
+    } finally {
       setActionLoading(false);
     }
   }
@@ -51,10 +88,31 @@ export default function Billing() {
     }
   }
 
-  const plan = subscription?.plan ?? 'free';
-  const isPaid = plan !== 'free';
-  const isPastDue = subscription?.status === 'past_due';
-  const isCanceling = subscription?.cancelAtPeriodEnd === true;
+  function formatAmount(cents: number): string {
+    return `$${(cents / 100).toFixed(2)}`;
+  }
+
+  function formatDate(dateStr: string): string {
+    return new Date(dateStr).toLocaleDateString(undefined, {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+  }
+
+  const PLAN_LABELS: Record<string, string> = {
+    starter: 'Starter',
+    team: 'Team',
+    business: 'Business',
+    enterprise: 'Enterprise',
+  };
+
+  const PLAN_PRICES: Record<string, string> = {
+    starter: '$29/mo',
+    team: '$79/mo',
+    business: '$199/mo',
+    enterprise: 'Custom',
+  };
 
   if (loading) {
     return (
@@ -114,11 +172,7 @@ export default function Billing() {
 
         {isPaid && subscription?.currentPeriodEnd && (
           <p className="text-sm text-zinc-500 mt-4">
-            Current period ends{' '}
-            {new Date(subscription.currentPeriodEnd).toLocaleDateString(
-              undefined,
-              { year: 'numeric', month: 'long', day: 'numeric' },
-            )}
+            Current period ends {formatDate(subscription.currentPeriodEnd)}
           </p>
         )}
       </Card>
@@ -213,6 +267,68 @@ export default function Billing() {
           </Button>
         </Card>
       )}
+
+      {/* Upgrade Confirmation Modal */}
+      <Modal
+        open={upgradeModal !== null}
+        onClose={() => {
+          setUpgradeModal(null);
+          setUpgradeError(null);
+        }}
+        title={`Upgrade to ${upgradeModal ? PLAN_LABELS[upgradeModal.plan] : ''}`}
+      >
+        {upgradeModal && (
+          <div className="space-y-4">
+            <p className="text-sm text-zinc-300">
+              You&apos;ll be charged{' '}
+              <span className="font-semibold text-zinc-100">
+                {formatAmount(upgradeModal.preview.immediateAmountCents)}
+              </span>{' '}
+              immediately for the remaining days in your current billing period
+              (through {formatDate(upgradeModal.preview.currentPeriodEnd)}).
+            </p>
+            <p className="text-sm text-zinc-300">
+              Your subscription will then renew at the{' '}
+              <span className="font-semibold text-zinc-100">
+                {PLAN_LABELS[upgradeModal.plan]}
+              </span>{' '}
+              rate of{' '}
+              <span className="font-semibold text-zinc-100">
+                {PLAN_PRICES[upgradeModal.plan]}
+              </span>{' '}
+              on your next billing date.
+            </p>
+            {isCanceling && (
+              <p className="text-sm text-amber-400">
+                Upgrading will also resume your subscription (scheduled
+                cancellation will be cleared).
+              </p>
+            )}
+            {upgradeError && (
+              <p className="text-sm text-red-400">{upgradeError}</p>
+            )}
+            <div className="flex gap-3 justify-end pt-2">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setUpgradeModal(null);
+                  setUpgradeError(null);
+                }}
+                disabled={actionLoading}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                onClick={handleConfirmUpgrade}
+                disabled={actionLoading}
+              >
+                {actionLoading ? 'Upgrading...' : 'Confirm Upgrade'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
