@@ -142,38 +142,13 @@ export class BillingService {
     currentPeriodEnd: string;
   }> {
     const sub = await this.validateUpgrade(userId, newPlan);
-    const newPriceId = this.priceMap[newPlan];
 
-    const stripeSub = await this.stripe.subscriptions.retrieve(
-      sub.stripeSubscriptionId!,
-    );
-    const itemId = stripeSub.items.data[0].id;
-
-    const upcomingInvoice = await this.stripe.invoices.createPreview({
-      subscription: sub.stripeSubscriptionId!,
-      subscription_details: {
-        items: [{ id: itemId, price: newPriceId }],
-        proration_behavior: 'create_prorations',
-      },
-    });
-
-    // Sum only the proration line items — amount_due includes the next
-    // full billing cycle which isn't charged immediately.
-    const isProration = (line: Stripe.InvoiceLineItem): boolean => {
-      const parent = line.parent;
-      if (!parent) return false;
-      return (
-        parent.invoice_item_details?.proration === true ||
-        parent.subscription_item_details?.proration === true
-      );
-    };
-    const prorationAmount = upcomingInvoice.lines.data
-      .filter(isProration)
-      .reduce((sum, line) => sum + line.amount, 0);
+    const { currentPriceCents, newPriceCents, currency } =
+      await this.getPriceDifference(sub.plan, newPlan);
 
     return {
-      immediateAmountCents: prorationAmount,
-      currency: upcomingInvoice.currency,
+      immediateAmountCents: newPriceCents - currentPriceCents,
+      currency,
       targetPlan: newPlan,
       currentPeriodEnd: sub.currentPeriodEnd!.toISOString(),
     };
@@ -191,15 +166,34 @@ export class BillingService {
     const sub = await this.validateUpgrade(userId, newPlan);
     const newPriceId = this.priceMap[newPlan];
 
+    const { currentPriceCents, newPriceCents, currency } =
+      await this.getPriceDifference(sub.plan, newPlan);
+    const differenceCents = newPriceCents - currentPriceCents;
+
     const stripeSub = await this.stripe.subscriptions.retrieve(
       sub.stripeSubscriptionId!,
     );
     const itemId = stripeSub.items.data[0].id;
 
+    // Switch the plan without Stripe's day-based proration.
     await this.stripe.subscriptions.update(sub.stripeSubscriptionId!, {
       items: [{ id: itemId, price: newPriceId }],
-      proration_behavior: 'create_prorations',
+      proration_behavior: 'none',
     });
+
+    // Charge the flat price difference immediately.
+    await this.stripe.invoiceItems.create({
+      customer: sub.stripeCustomerId,
+      amount: differenceCents,
+      currency,
+      description: `Plan upgrade: ${sub.plan} → ${newPlan}`,
+    });
+
+    const invoice = await this.stripe.invoices.create({
+      customer: sub.stripeCustomerId,
+      auto_advance: true,
+    });
+    await this.stripe.invoices.pay(invoice.id);
 
     sub.plan = newPlan;
     await this.subscriptionRepository.save(sub);
@@ -211,6 +205,29 @@ export class BillingService {
       status: sub.status,
       currentPeriodEnd: sub.currentPeriodEnd?.toISOString() ?? null,
       cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+    };
+  }
+
+  private async getPriceDifference(
+    currentPlan: string,
+    newPlan: string,
+  ): Promise<{
+    currentPriceCents: number;
+    newPriceCents: number;
+    currency: string;
+  }> {
+    const currentPriceId = this.priceMap[currentPlan];
+    const newPriceId = this.priceMap[newPlan];
+
+    const [currentPrice, newPrice] = await Promise.all([
+      this.stripe.prices.retrieve(currentPriceId),
+      this.stripe.prices.retrieve(newPriceId),
+    ]);
+
+    return {
+      currentPriceCents: currentPrice.unit_amount ?? 0,
+      newPriceCents: newPrice.unit_amount ?? 0,
+      currency: newPrice.currency,
     };
   }
 

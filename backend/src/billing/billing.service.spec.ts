@@ -11,7 +11,9 @@ const mockStripe = {
   checkout: { sessions: { create: jest.fn() } },
   billingPortal: { sessions: { create: jest.fn() } },
   subscriptions: { retrieve: jest.fn(), update: jest.fn() },
-  invoices: { createPreview: jest.fn() },
+  prices: { retrieve: jest.fn() },
+  invoiceItems: { create: jest.fn() },
+  invoices: { create: jest.fn(), pay: jest.fn() },
   webhooks: { constructEvent: jest.fn() },
 };
 jest.mock('stripe', () => {
@@ -360,50 +362,21 @@ describe('BillingService', () => {
 
     it('returns preview for valid upgrade', async () => {
       mockRepository.findOne.mockResolvedValue(mockSubscription);
-      mockStripe.subscriptions.retrieve.mockResolvedValue({
-        items: { data: [{ id: 'si_item1' }] },
-      });
-      mockStripe.invoices.createPreview.mockResolvedValue({
-        amount_due: 12900,
-        currency: 'usd',
-        lines: {
-          data: [
-            {
-              amount: -1935,
-              parent: {
-                subscription_item_details: { proration: true },
-              },
-            },
-            {
-              amount: 5270,
-              parent: {
-                subscription_item_details: { proration: true },
-              },
-            },
-            {
-              amount: 7900,
-              parent: {
-                subscription_item_details: { proration: false },
-              },
-            },
-          ],
-        },
-      });
+      mockStripe.prices.retrieve
+        .mockResolvedValueOnce({ unit_amount: 2900, currency: 'usd' })
+        .mockResolvedValueOnce({ unit_amount: 7900, currency: 'usd' });
 
       const result = await service.previewUpgrade(userId, 'team');
       expect(result).toEqual({
-        immediateAmountCents: 3335,
+        immediateAmountCents: 5000,
         currency: 'usd',
         targetPlan: 'team',
         currentPeriodEnd: mockSubscription.currentPeriodEnd!.toISOString(),
       });
-      expect(mockStripe.invoices.createPreview).toHaveBeenCalledWith({
-        subscription: 'sub_test123',
-        subscription_details: {
-          items: [{ id: 'si_item1', price: 'price_team_456' }],
-          proration_behavior: 'create_prorations',
-        },
-      });
+      expect(mockStripe.prices.retrieve).toHaveBeenCalledWith(
+        'price_starter_123',
+      );
+      expect(mockStripe.prices.retrieve).toHaveBeenCalledWith('price_team_456');
     });
   });
 
@@ -422,12 +395,18 @@ describe('BillingService', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('upgrades subscription with proration', async () => {
+    it('upgrades subscription with flat difference', async () => {
       mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+      mockStripe.prices.retrieve
+        .mockResolvedValueOnce({ unit_amount: 2900, currency: 'usd' })
+        .mockResolvedValueOnce({ unit_amount: 7900, currency: 'usd' });
       mockStripe.subscriptions.retrieve.mockResolvedValue({
         items: { data: [{ id: 'si_item1' }] },
       });
       mockStripe.subscriptions.update.mockResolvedValue({});
+      mockStripe.invoiceItems.create.mockResolvedValue({});
+      mockStripe.invoices.create.mockResolvedValue({ id: 'inv_123' });
+      mockStripe.invoices.pay.mockResolvedValue({});
       mockRepository.save.mockResolvedValue({
         ...mockSubscription,
         plan: 'team',
@@ -439,9 +418,20 @@ describe('BillingService', () => {
         'sub_test123',
         {
           items: [{ id: 'si_item1', price: 'price_team_456' }],
-          proration_behavior: 'create_prorations',
+          proration_behavior: 'none',
         },
       );
+      expect(mockStripe.invoiceItems.create).toHaveBeenCalledWith({
+        customer: 'cus_test123',
+        amount: 5000,
+        currency: 'usd',
+        description: 'Plan upgrade: starter → team',
+      });
+      expect(mockStripe.invoices.create).toHaveBeenCalledWith({
+        customer: 'cus_test123',
+        auto_advance: true,
+      });
+      expect(mockStripe.invoices.pay).toHaveBeenCalledWith('inv_123');
       expect(mockRepository.save).toHaveBeenCalledWith(
         expect.objectContaining({ plan: 'team' }),
       );
