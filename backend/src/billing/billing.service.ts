@@ -10,11 +10,20 @@ import { ConfigService } from '@nestjs/config';
 import Stripe from 'stripe';
 import { Subscription } from './entities/subscription.entity';
 
+const PLAN_ORDER: Record<string, number> = {
+  free: 0,
+  starter: 1,
+  team: 2,
+  business: 3,
+  enterprise: 4,
+};
+
 @Injectable()
 export class BillingService {
   private readonly logger = new Logger(BillingService.name);
   private readonly stripe: Stripe;
   private readonly priceMap: Record<string, string>;
+  private readonly reversePriceMap: Record<string, string>;
   private readonly webhookSecret: string;
 
   constructor(
@@ -40,6 +49,11 @@ export class BillingService {
 
     const teamPrice = this.configService.get<string>('KK_STRIPE_PRICE_TEAM');
     if (teamPrice) this.priceMap['team'] = teamPrice;
+
+    this.reversePriceMap = {};
+    for (const [plan, priceId] of Object.entries(this.priceMap)) {
+      this.reversePriceMap[priceId] = plan;
+    }
   }
 
   async getOrCreateCustomer(
@@ -116,6 +130,133 @@ export class BillingService {
     });
 
     return session.url;
+  }
+
+  async previewUpgrade(
+    userId: string,
+    newPlan: string,
+  ): Promise<{
+    immediateAmountCents: number;
+    currency: string;
+    targetPlan: string;
+    currentPeriodEnd: string;
+  }> {
+    const sub = await this.validateUpgrade(userId, newPlan);
+
+    const { currentPriceCents, newPriceCents, currency } =
+      await this.getPriceDifference(sub.plan, newPlan);
+
+    return {
+      immediateAmountCents: newPriceCents - currentPriceCents,
+      currency,
+      targetPlan: newPlan,
+      currentPeriodEnd: sub.currentPeriodEnd!.toISOString(),
+    };
+  }
+
+  async upgradeSubscription(
+    userId: string,
+    newPlan: string,
+  ): Promise<{
+    plan: string;
+    status: string;
+    currentPeriodEnd: string | null;
+    cancelAtPeriodEnd: boolean;
+  }> {
+    const sub = await this.validateUpgrade(userId, newPlan);
+    const newPriceId = this.priceMap[newPlan];
+
+    const { currentPriceCents, newPriceCents, currency } =
+      await this.getPriceDifference(sub.plan, newPlan);
+    const differenceCents = newPriceCents - currentPriceCents;
+
+    const stripeSub = await this.stripe.subscriptions.retrieve(
+      sub.stripeSubscriptionId!,
+    );
+    const itemId = stripeSub.items.data[0].id;
+
+    // Switch the plan without Stripe's day-based proration.
+    await this.stripe.subscriptions.update(sub.stripeSubscriptionId!, {
+      items: [{ id: itemId, price: newPriceId }],
+      proration_behavior: 'none',
+    });
+
+    // Charge the flat price difference immediately.
+    await this.stripe.invoiceItems.create({
+      customer: sub.stripeCustomerId,
+      amount: differenceCents,
+      currency,
+      description: `Plan upgrade: ${sub.plan} → ${newPlan}`,
+    });
+
+    const invoice = await this.stripe.invoices.create({
+      customer: sub.stripeCustomerId,
+      auto_advance: true,
+    });
+    await this.stripe.invoices.pay(invoice.id);
+
+    sub.plan = newPlan;
+    await this.subscriptionRepository.save(sub);
+
+    this.logger.log(`Subscription upgraded: user=${userId} newPlan=${newPlan}`);
+
+    return {
+      plan: sub.plan,
+      status: sub.status,
+      currentPeriodEnd: sub.currentPeriodEnd?.toISOString() ?? null,
+      cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+    };
+  }
+
+  private async getPriceDifference(
+    currentPlan: string,
+    newPlan: string,
+  ): Promise<{
+    currentPriceCents: number;
+    newPriceCents: number;
+    currency: string;
+  }> {
+    const currentPriceId = this.priceMap[currentPlan];
+    const newPriceId = this.priceMap[newPlan];
+
+    const [currentPrice, newPrice] = await Promise.all([
+      this.stripe.prices.retrieve(currentPriceId),
+      this.stripe.prices.retrieve(newPriceId),
+    ]);
+
+    return {
+      currentPriceCents: currentPrice.unit_amount ?? 0,
+      newPriceCents: newPrice.unit_amount ?? 0,
+      currency: newPrice.currency,
+    };
+  }
+
+  private async validateUpgrade(
+    userId: string,
+    newPlan: string,
+  ): Promise<Subscription> {
+    const sub = await this.subscriptionRepository.findOne({
+      where: { userId },
+    });
+    if (!sub || !sub.stripeSubscriptionId) {
+      throw new NotFoundException('No active subscription found');
+    }
+    if (sub.status !== 'active') {
+      throw new BadRequestException(
+        'Cannot upgrade a subscription that is not active',
+      );
+    }
+    if ((PLAN_ORDER[newPlan] ?? 0) <= (PLAN_ORDER[sub.plan] ?? 0)) {
+      throw new BadRequestException(
+        `Cannot upgrade from ${sub.plan} to ${newPlan}`,
+      );
+    }
+    if (!this.priceMap[newPlan]) {
+      throw new BadRequestException(
+        `Plan "${newPlan}" is not available for purchase`,
+      );
+    }
+    return sub;
   }
 
   constructWebhookEvent(rawBody: Buffer, signature: string): Stripe.Event {
@@ -213,9 +354,14 @@ export class BillingService {
     sub.currentPeriodEnd = new Date(this.extractPeriodEnd(stripeSub) * 1000);
     sub.cancelAtPeriodEnd = stripeSub.cancel_at_period_end;
 
+    const priceId = stripeSub.items?.data?.[0]?.price?.id;
+    if (priceId && this.reversePriceMap[priceId]) {
+      sub.plan = this.reversePriceMap[priceId];
+    }
+
     await this.subscriptionRepository.save(sub);
     this.logger.log(
-      `Subscription updated: user=${sub.userId} status=${sub.status}`,
+      `Subscription updated: user=${sub.userId} plan=${sub.plan} status=${sub.status}`,
     );
   }
 

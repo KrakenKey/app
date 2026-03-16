@@ -10,7 +10,10 @@ const mockStripe = {
   customers: { create: jest.fn() },
   checkout: { sessions: { create: jest.fn() } },
   billingPortal: { sessions: { create: jest.fn() } },
-  subscriptions: { retrieve: jest.fn() },
+  subscriptions: { retrieve: jest.fn(), update: jest.fn() },
+  prices: { retrieve: jest.fn() },
+  invoiceItems: { create: jest.fn() },
+  invoices: { create: jest.fn(), pay: jest.fn() },
   webhooks: { constructEvent: jest.fn() },
 };
 jest.mock('stripe', () => {
@@ -59,6 +62,7 @@ describe('BillingService', () => {
                 KK_STRIPE_SECRET_KEY: 'sk_test_123',
                 KK_STRIPE_WEBHOOK_SECRET: 'whsec_test',
                 KK_STRIPE_PRICE_STARTER: 'price_starter_123',
+                KK_STRIPE_PRICE_TEAM: 'price_team_456',
                 KK_APP_DOMAIN: 'app.krakenkey.io',
               };
               return config[key] ?? defaultValue ?? '';
@@ -287,6 +291,149 @@ describe('BillingService', () => {
         expect.objectContaining({
           status: 'past_due',
         }),
+      );
+    });
+
+    it('syncs plan from price ID on subscription.updated', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+
+      await service.handleWebhookEvent({
+        type: 'customer.subscription.updated',
+        data: {
+          object: {
+            id: 'sub_test123',
+            status: 'active',
+            items: {
+              data: [
+                {
+                  current_period_end:
+                    Math.floor(Date.now() / 1000) + 86400 * 30,
+                  price: { id: 'price_team_456' },
+                },
+              ],
+            },
+            cancel_at_period_end: false,
+          },
+        },
+      } as any);
+
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          plan: 'team',
+        }),
+      );
+    });
+  });
+
+  describe('previewUpgrade', () => {
+    it('throws NotFoundException when no subscription exists', async () => {
+      mockRepository.findOne.mockResolvedValue(null);
+      await expect(service.previewUpgrade(userId, 'team')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('throws BadRequestException when subscription is not active', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        status: 'past_due',
+      });
+      await expect(service.previewUpgrade(userId, 'team')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('throws BadRequestException when target plan is not higher', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        plan: 'team',
+      });
+      await expect(service.previewUpgrade(userId, 'starter')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('throws BadRequestException for same plan', async () => {
+      mockRepository.findOne.mockResolvedValue(mockSubscription);
+      await expect(service.previewUpgrade(userId, 'starter')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('returns preview for valid upgrade', async () => {
+      mockRepository.findOne.mockResolvedValue(mockSubscription);
+      mockStripe.prices.retrieve
+        .mockResolvedValueOnce({ unit_amount: 2900, currency: 'usd' })
+        .mockResolvedValueOnce({ unit_amount: 7900, currency: 'usd' });
+
+      const result = await service.previewUpgrade(userId, 'team');
+      expect(result).toEqual({
+        immediateAmountCents: 5000,
+        currency: 'usd',
+        targetPlan: 'team',
+        currentPeriodEnd: mockSubscription.currentPeriodEnd!.toISOString(),
+      });
+      expect(mockStripe.prices.retrieve).toHaveBeenCalledWith(
+        'price_starter_123',
+      );
+      expect(mockStripe.prices.retrieve).toHaveBeenCalledWith('price_team_456');
+    });
+  });
+
+  describe('upgradeSubscription', () => {
+    it('throws NotFoundException when no subscription exists', async () => {
+      mockRepository.findOne.mockResolvedValue(null);
+      await expect(service.upgradeSubscription(userId, 'team')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('throws BadRequestException when target plan is not higher', async () => {
+      mockRepository.findOne.mockResolvedValue(mockSubscription);
+      await expect(
+        service.upgradeSubscription(userId, 'starter'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('upgrades subscription with flat difference', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+      mockStripe.prices.retrieve
+        .mockResolvedValueOnce({ unit_amount: 2900, currency: 'usd' })
+        .mockResolvedValueOnce({ unit_amount: 7900, currency: 'usd' });
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        items: { data: [{ id: 'si_item1' }] },
+      });
+      mockStripe.subscriptions.update.mockResolvedValue({});
+      mockStripe.invoiceItems.create.mockResolvedValue({});
+      mockStripe.invoices.create.mockResolvedValue({ id: 'inv_123' });
+      mockStripe.invoices.pay.mockResolvedValue({});
+      mockRepository.save.mockResolvedValue({
+        ...mockSubscription,
+        plan: 'team',
+      });
+
+      const result = await service.upgradeSubscription(userId, 'team');
+      expect(result.plan).toBe('team');
+      expect(mockStripe.subscriptions.update).toHaveBeenCalledWith(
+        'sub_test123',
+        {
+          items: [{ id: 'si_item1', price: 'price_team_456' }],
+          proration_behavior: 'none',
+        },
+      );
+      expect(mockStripe.invoiceItems.create).toHaveBeenCalledWith({
+        customer: 'cus_test123',
+        amount: 5000,
+        currency: 'usd',
+        description: 'Plan upgrade: starter → team',
+      });
+      expect(mockStripe.invoices.create).toHaveBeenCalledWith({
+        customer: 'cus_test123',
+        auto_advance: true,
+      });
+      expect(mockStripe.invoices.pay).toHaveBeenCalledWith('inv_123');
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ plan: 'team' }),
       );
     });
   });
