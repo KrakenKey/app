@@ -83,6 +83,7 @@ describe('BillingController', () => {
         status: 'active',
         currentPeriodEnd: null,
         cancelAtPeriodEnd: false,
+        organizationId: null,
       });
     });
   });

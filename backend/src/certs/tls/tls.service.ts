@@ -132,7 +132,19 @@ export class TlsService {
   }
 
   async findOne(id: number, userId: string) {
-    const tlsCrt = await this.TlsCrtRepository.findOneBy({ id, userId });
+    // Try direct ownership first (fast path)
+    let tlsCrt = await this.TlsCrtRepository.findOneBy({ id, userId });
+
+    // If not found, check if the cert belongs to an org member
+    if (!tlsCrt) {
+      const memberIds = await this.getOrgMemberIds(userId);
+      if (memberIds) {
+        tlsCrt = await this.TlsCrtRepository.findOne({
+          where: { id, userId: In(memberIds) },
+        });
+      }
+    }
+
     if (!tlsCrt) {
       throw new NotFoundException(
         `Certificate #${id} not found or access denied`,
@@ -388,7 +400,10 @@ export class TlsService {
     )) as SubscriptionPlan;
     const limits = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
     if (limits.certsPerMonth !== Infinity) {
-      const monthlyCount = await this.countCertsThisMonth(cert.userId);
+      const memberIds = await this.billingService.getResourceCountUserIds(
+        cert.userId,
+      );
+      const monthlyCount = await this.countCertsThisMonth(memberIds);
       if (monthlyCount >= limits.certsPerMonth) {
         this.logger.warn(
           `Auto-renewal skipped for cert #${id}: monthly limit reached (${monthlyCount}/${limits.certsPerMonth}, plan=${plan})`,
@@ -426,6 +441,7 @@ export class TlsService {
 
   /**
    * Enforces all cert-related plan limits for a user.
+   * Counts are pooled across org members when applicable.
    * Throws HttpException(402) if any limit is exceeded.
    */
   private async enforceCertLimits(userId: string): Promise<void> {
@@ -433,12 +449,13 @@ export class TlsService {
       userId,
     )) as SubscriptionPlan;
     const limits = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
+    const memberIds = await this.billingService.getResourceCountUserIds(userId);
 
     // Concurrent pending check
     if (limits.concurrentPending !== Infinity) {
       const pendingCount = await this.TlsCrtRepository.count({
         where: {
-          userId,
+          userId: In(memberIds),
           status: In([
             CertStatus.PENDING,
             CertStatus.ISSUING,
@@ -462,7 +479,7 @@ export class TlsService {
     // Total active certs check
     if (limits.totalActiveCerts !== Infinity) {
       const activeCount = await this.TlsCrtRepository.count({
-        where: { userId, status: CertStatus.ISSUED },
+        where: { userId: In(memberIds), status: CertStatus.ISSUED },
       });
       if (activeCount >= limits.totalActiveCerts) {
         throw new HttpException(
@@ -479,7 +496,7 @@ export class TlsService {
 
     // Monthly cert count check
     if (limits.certsPerMonth !== Infinity) {
-      const monthlyCount = await this.countCertsThisMonth(userId);
+      const monthlyCount = await this.countCertsThisMonth(memberIds);
       if (monthlyCount >= limits.certsPerMonth) {
         throw new HttpException(
           {
@@ -507,14 +524,14 @@ export class TlsService {
     return members.map((m) => m.id);
   }
 
-  private async countCertsThisMonth(userId: string): Promise<number> {
+  private async countCertsThisMonth(userIds: string[]): Promise<number> {
     const startOfMonth = new Date();
     startOfMonth.setUTCDate(1);
     startOfMonth.setUTCHours(0, 0, 0, 0);
 
     return this.TlsCrtRepository.count({
       where: {
-        userId,
+        userId: In(userIds),
         createdAt: MoreThanOrEqual(startOfMonth),
       },
     });

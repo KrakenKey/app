@@ -2,13 +2,22 @@ import {
   Injectable,
   Logger,
   BadRequestException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import Stripe from 'stripe';
 import { Subscription } from './entities/subscription.entity';
+import { User } from '../users/entities/user.entity';
+import { Organization } from '../organizations/entities/organization.entity';
+import { Domain } from '../domains/entities/domain.entity';
+import { TlsCrt } from '../certs/tls/entities/tls-crt.entity';
+import { UserApiKey } from '../auth/entities/user-api-key.entity';
+import type { OrgDissolutionJobPayload } from './processors/org-dissolution.processor';
 
 const PLAN_ORDER: Record<string, number> = {
   free: 0,
@@ -17,6 +26,8 @@ const PLAN_ORDER: Record<string, number> = {
   business: 3,
   enterprise: 4,
 };
+
+const ORG_ELIGIBLE_PLANS = new Set(['team', 'business', 'enterprise']);
 
 @Injectable()
 export class BillingService {
@@ -29,6 +40,12 @@ export class BillingService {
   constructor(
     @InjectRepository(Subscription)
     private readonly subscriptionRepository: Repository<Subscription>,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
+    @InjectRepository(Organization)
+    private readonly orgRepository: Repository<Organization>,
+    @InjectQueue('orgDissolution')
+    private readonly dissolutionQueue: Queue<OrgDissolutionJobPayload>,
     private readonly configService: ConfigService,
   ) {
     this.stripe = new Stripe(
@@ -56,13 +73,74 @@ export class BillingService {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Tier Resolution (org-aware)
+  // ---------------------------------------------------------------------------
+
+  async resolveUserTier(userId: string): Promise<string> {
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      select: { id: true, organizationId: true },
+    });
+
+    if (user?.organizationId) {
+      const sub = await this.subscriptionRepository.findOne({
+        where: { organizationId: user.organizationId },
+      });
+      if (sub && sub.status === 'active') return sub.plan;
+      return 'free';
+    }
+
+    const sub = await this.subscriptionRepository.findOne({
+      where: { userId },
+    });
+    if (!sub || sub.status !== 'active') return 'free';
+    return sub.plan;
+  }
+
+  async getSubscription(userId: string): Promise<Subscription | null> {
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      select: { id: true, organizationId: true },
+    });
+
+    if (user?.organizationId) {
+      return this.subscriptionRepository.findOne({
+        where: { organizationId: user.organizationId },
+      });
+    }
+
+    return this.subscriptionRepository.findOne({ where: { userId } });
+  }
+
+  /**
+   * Returns all user IDs whose resources should be counted together for limits.
+   * For org members, returns all member IDs; for solo users, returns [userId].
+   */
+  async getResourceCountUserIds(userId: string): Promise<string[]> {
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      select: { id: true, organizationId: true },
+    });
+    if (!user?.organizationId) return [userId];
+
+    const members = await this.userRepository.find({
+      where: { organizationId: user.organizationId },
+      select: { id: true },
+    });
+    return members.map((m) => m.id);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Customer & Checkout
+  // ---------------------------------------------------------------------------
+
   async getOrCreateCustomer(
     userId: string,
     email: string,
   ): Promise<Subscription> {
-    const existing = await this.subscriptionRepository.findOne({
-      where: { userId },
-    });
+    // Check for existing sub (personal or org)
+    const existing = await this.getSubscription(userId);
     if (existing) return existing;
 
     const customer = await this.stripe.customers.create({
@@ -92,8 +170,23 @@ export class BillingService {
       );
     }
 
+    // If user is in an org, only the owner can perform billing actions
+    await this.assertBillingAccess(userId);
+
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      select: { id: true, organizationId: true },
+    });
+
     const sub = await this.getOrCreateCustomer(userId, email);
     const appDomain = this.configService.get<string>('KK_APP_DOMAIN');
+
+    const metadata: Record<string, string> = { plan };
+    if (user?.organizationId) {
+      metadata.organizationId = user.organizationId;
+    } else {
+      metadata.userId = userId;
+    }
 
     const session = await this.stripe.checkout.sessions.create({
       customer: sub.stripeCustomerId,
@@ -101,7 +194,7 @@ export class BillingService {
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: `https://${appDomain}/dashboard/billing?success=true`,
       cancel_url: `https://${appDomain}/dashboard/billing?canceled=true`,
-      metadata: { userId, plan },
+      metadata,
     });
 
     if (!session.url) {
@@ -111,14 +204,10 @@ export class BillingService {
     return session.url;
   }
 
-  async getSubscription(userId: string): Promise<Subscription | null> {
-    return this.subscriptionRepository.findOne({ where: { userId } });
-  }
-
   async createPortalSession(userId: string): Promise<string> {
-    const sub = await this.subscriptionRepository.findOne({
-      where: { userId },
-    });
+    await this.assertBillingAccess(userId);
+
+    const sub = await this.getSubscription(userId);
     if (!sub) {
       throw new NotFoundException('No subscription record found');
     }
@@ -132,6 +221,10 @@ export class BillingService {
     return session.url;
   }
 
+  // ---------------------------------------------------------------------------
+  // Upgrade
+  // ---------------------------------------------------------------------------
+
   async previewUpgrade(
     userId: string,
     newPlan: string,
@@ -141,6 +234,7 @@ export class BillingService {
     targetPlan: string;
     currentPeriodEnd: string;
   }> {
+    await this.assertBillingAccess(userId);
     const sub = await this.validateUpgrade(userId, newPlan);
 
     const { currentPriceCents, newPriceCents, currency } =
@@ -163,6 +257,7 @@ export class BillingService {
     currentPeriodEnd: string | null;
     cancelAtPeriodEnd: boolean;
   }> {
+    await this.assertBillingAccess(userId);
     const sub = await this.validateUpgrade(userId, newPlan);
     const newPriceId = this.priceMap[newPlan];
 
@@ -186,7 +281,7 @@ export class BillingService {
       customer: sub.stripeCustomerId,
       amount: differenceCents,
       currency,
-      description: `Plan upgrade: ${sub.plan} → ${newPlan}`,
+      description: `Plan upgrade: ${sub.plan} \u2192 ${newPlan}`,
     });
 
     const invoice = await this.stripe.invoices.create({
@@ -235,9 +330,7 @@ export class BillingService {
     userId: string,
     newPlan: string,
   ): Promise<Subscription> {
-    const sub = await this.subscriptionRepository.findOne({
-      where: { userId },
-    });
+    const sub = await this.getSubscription(userId);
     if (!sub || !sub.stripeSubscriptionId) {
       throw new NotFoundException('No active subscription found');
     }
@@ -258,6 +351,186 @@ export class BillingService {
     }
     return sub;
   }
+
+  // ---------------------------------------------------------------------------
+  // Billing Access Control
+  // ---------------------------------------------------------------------------
+
+  /**
+   * If user is in an org, only the owner may perform billing actions.
+   */
+  private async assertBillingAccess(userId: string): Promise<void> {
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      select: { id: true, organizationId: true, role: true },
+    });
+    if (user?.organizationId && user.role !== 'owner') {
+      throw new ForbiddenException(
+        'Only the organization owner can manage billing',
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Subscription Conversion (personal <-> org)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Converts a personal subscription to an org subscription.
+   * Called when an org is created by a user with an active personal sub.
+   */
+  async convertToOrgSubscription(
+    userId: string,
+    organizationId: string,
+  ): Promise<void> {
+    const sub = await this.subscriptionRepository.findOne({
+      where: { userId },
+    });
+    if (!sub) return;
+
+    sub.organizationId = organizationId;
+    sub.userId = null;
+    await this.subscriptionRepository.save(sub);
+    this.logger.log(
+      `Subscription converted to org: sub=${sub.id} org=${organizationId}`,
+    );
+  }
+
+  /**
+   * Converts an org subscription back to a personal subscription for the owner.
+   * Called when an org is deleted or dissolved.
+   */
+  async convertToPersonalSubscription(
+    organizationId: string,
+    ownerId: string,
+  ): Promise<void> {
+    const sub = await this.subscriptionRepository.findOne({
+      where: { organizationId },
+    });
+    if (!sub) return;
+
+    sub.userId = ownerId;
+    sub.organizationId = null;
+    await this.subscriptionRepository.save(sub);
+    this.logger.log(
+      `Subscription converted to personal: sub=${sub.id} user=${ownerId}`,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Org Dissolution (triggered by downgrade below team or sub deletion)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Queues an org dissolution job. Used by webhook handlers and org deletion.
+   * The job handles resource transfer, member cleanup, and org deletion.
+   */
+  async queueDissolution(
+    organizationId: string,
+    cancelSubscription = false,
+  ): Promise<void> {
+    // Mark org as dissolving to block further operations
+    await this.orgRepository.update(organizationId, { status: 'dissolving' });
+
+    await this.dissolutionQueue.add(
+      'orgDissolution',
+      { organizationId, cancelSubscription },
+      {
+        jobId: `dissolve-${organizationId}`,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+      },
+    );
+    this.logger.log(`Queued org dissolution job: org=${organizationId}`);
+  }
+
+  /**
+   * Dissolves an organization when its subscription drops below team tier.
+   * Transfers all member resources to the org owner, then deletes the org.
+   * Called by the OrgDissolutionProcessor (not directly from webhooks).
+   */
+  async dissolveOrganization(
+    organizationId: string,
+    cancelSubscription = false,
+  ): Promise<void> {
+    await this.orgRepository.manager.transaction(async (manager) => {
+      const org = await manager.findOne(Organization, {
+        where: { id: organizationId },
+      });
+      if (!org) return;
+
+      const members = await manager.find(User, {
+        where: { organizationId },
+        select: { id: true, role: true },
+      });
+
+      const nonOwnerIds = members
+        .filter((m) => m.role !== 'owner')
+        .map((m) => m.id);
+
+      if (nonOwnerIds.length > 0) {
+        // Transfer all non-owner resources to the org owner
+        await manager
+          .createQueryBuilder()
+          .update(Domain)
+          .set({ userId: org.ownerId })
+          .where('userId IN (:...ids)', { ids: nonOwnerIds })
+          .execute();
+
+        await manager
+          .createQueryBuilder()
+          .update(TlsCrt)
+          .set({ userId: org.ownerId })
+          .where('userId IN (:...ids)', { ids: nonOwnerIds })
+          .execute();
+
+        await manager
+          .createQueryBuilder()
+          .update(UserApiKey)
+          .set({ userId: org.ownerId })
+          .where('userId IN (:...ids)', { ids: nonOwnerIds })
+          .execute();
+      }
+
+      // Clear all member associations
+      await manager
+        .createQueryBuilder()
+        .update(User)
+        .set({ organizationId: () => 'NULL', role: () => 'NULL' })
+        .where('organizationId = :organizationId', { organizationId })
+        .execute();
+
+      // Convert org subscription back to owner's personal subscription
+      const sub = await manager.findOne(Subscription, {
+        where: { organizationId },
+      });
+      if (sub) {
+        sub.userId = org.ownerId;
+        sub.organizationId = null;
+
+        if (cancelSubscription) {
+          sub.plan = 'free';
+          sub.status = 'canceled';
+          sub.stripeSubscriptionId = null;
+          sub.currentPeriodEnd = null;
+          sub.cancelAtPeriodEnd = false;
+        }
+
+        await manager.save(Subscription, sub);
+      }
+
+      // Delete the organization
+      await manager.delete(Organization, organizationId);
+
+      this.logger.log(
+        `Organization dissolved: org=${organizationId} owner=${org.ownerId} transferredFrom=${nonOwnerIds.length} members`,
+      );
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Webhooks
+  // ---------------------------------------------------------------------------
 
   constructWebhookEvent(rawBody: Buffer, signature: string): Stripe.Event {
     return this.stripe.webhooks.constructEvent(
@@ -297,10 +570,12 @@ export class BillingService {
   private async handleCheckoutCompleted(
     session: Stripe.Checkout.Session,
   ): Promise<void> {
-    const userId = session.metadata?.userId;
     const plan = session.metadata?.plan;
-    if (!userId || !plan) {
-      this.logger.warn('Checkout session missing userId or plan metadata');
+    const userId = session.metadata?.userId;
+    const organizationId = session.metadata?.organizationId;
+
+    if (!plan || (!userId && !organizationId)) {
+      this.logger.warn('Checkout session missing plan or owner metadata');
       return;
     }
 
@@ -314,29 +589,36 @@ export class BillingService {
       return;
     }
 
-    // Fetch the Stripe subscription to get the current period end
     const stripeSub: Stripe.Subscription =
       await this.stripe.subscriptions.retrieve(stripeSubscriptionId);
 
-    await this.subscriptionRepository.upsert(
-      {
-        userId,
-        stripeCustomerId:
-          typeof session.customer === 'string'
-            ? session.customer
-            : (session.customer?.id ?? ''),
-        stripeSubscriptionId,
-        plan,
-        status: 'active',
-        currentPeriodEnd: new Date(this.extractPeriodEnd(stripeSub) * 1000),
-        cancelAtPeriodEnd: stripeSub.cancel_at_period_end,
-      },
-      {
-        conflictPaths: ['userId'],
-      },
-    );
+    const stripeCustomerId =
+      typeof session.customer === 'string'
+        ? session.customer
+        : (session.customer?.id ?? '');
 
-    this.logger.log(`Checkout completed: user=${userId} plan=${plan}`);
+    const shared = {
+      stripeCustomerId,
+      stripeSubscriptionId,
+      plan,
+      status: 'active' as const,
+      currentPeriodEnd: new Date(this.extractPeriodEnd(stripeSub) * 1000),
+      cancelAtPeriodEnd: stripeSub.cancel_at_period_end,
+    };
+
+    if (organizationId) {
+      await this.subscriptionRepository.upsert(
+        { ...shared, organizationId, userId: null as any },
+        { conflictPaths: ['organizationId'] },
+      );
+      this.logger.log(`Checkout completed: org=${organizationId} plan=${plan}`);
+    } else {
+      await this.subscriptionRepository.upsert(
+        { ...shared, userId, organizationId: null as any },
+        { conflictPaths: ['userId'] },
+      );
+      this.logger.log(`Checkout completed: user=${userId} plan=${plan}`);
+    }
   }
 
   private async handleSubscriptionUpdated(
@@ -350,6 +632,8 @@ export class BillingService {
       return;
     }
 
+    const previousPlan = sub.plan;
+
     sub.status = stripeSub.status === 'active' ? 'active' : stripeSub.status;
     sub.currentPeriodEnd = new Date(this.extractPeriodEnd(stripeSub) * 1000);
     sub.cancelAtPeriodEnd = stripeSub.cancel_at_period_end;
@@ -360,9 +644,25 @@ export class BillingService {
     }
 
     await this.subscriptionRepository.save(sub);
+
+    const ownerLabel = sub.organizationId
+      ? `org=${sub.organizationId}`
+      : `user=${sub.userId}`;
     this.logger.log(
-      `Subscription updated: user=${sub.userId} plan=${sub.plan} status=${sub.status}`,
+      `Subscription updated: ${ownerLabel} plan=${sub.plan} status=${sub.status}`,
     );
+
+    // Detect downgrade below team for org subscriptions
+    if (
+      sub.organizationId &&
+      ORG_ELIGIBLE_PLANS.has(previousPlan) &&
+      !ORG_ELIGIBLE_PLANS.has(sub.plan)
+    ) {
+      this.logger.warn(
+        `Org subscription downgraded below team: org=${sub.organizationId} ${previousPlan} -> ${sub.plan}`,
+      );
+      await this.queueDissolution(sub.organizationId);
+    }
   }
 
   private async handleSubscriptionDeleted(
@@ -372,6 +672,13 @@ export class BillingService {
       where: { stripeSubscriptionId: stripeSub.id },
     });
     if (!sub) return;
+
+    // If this is an org subscription, queue dissolution (handles resource
+    // transfer, member cleanup, sub conversion, and org deletion)
+    if (sub.organizationId) {
+      await this.queueDissolution(sub.organizationId, true);
+      return;
+    }
 
     sub.plan = 'free';
     sub.status = 'canceled';
@@ -400,7 +707,11 @@ export class BillingService {
 
     sub.status = 'past_due';
     await this.subscriptionRepository.save(sub);
-    this.logger.warn(`Payment failed: user=${sub.userId}`);
+
+    const ownerLabel = sub.organizationId
+      ? `org=${sub.organizationId}`
+      : `user=${sub.userId}`;
+    this.logger.warn(`Payment failed: ${ownerLabel}`);
   }
 
   /**
@@ -412,13 +723,5 @@ export class BillingService {
     const fromItem = sub.items?.data?.[0]?.current_period_end;
     if (fromItem) return fromItem;
     return (sub as any).current_period_end ?? Math.floor(Date.now() / 1000);
-  }
-
-  async resolveUserTier(userId: string): Promise<string> {
-    const sub = await this.subscriptionRepository.findOne({
-      where: { userId },
-    });
-    if (!sub || sub.status !== 'active') return 'free';
-    return sub.plan;
   }
 }

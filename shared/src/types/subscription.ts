@@ -18,6 +18,7 @@ export interface Subscription {
   status: SubscriptionStatus;
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
+  organizationId?: string | null;
   createdAt: string;
 }
 

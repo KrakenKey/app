@@ -65,6 +65,7 @@ export class BillingController {
         status: 'active',
         currentPeriodEnd: null,
         cancelAtPeriodEnd: false,
+        organizationId: null,
       };
     }
     return {
@@ -73,6 +74,7 @@ export class BillingController {
       status: sub.status,
       currentPeriodEnd: sub.currentPeriodEnd,
       cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+      organizationId: sub.organizationId ?? null,
       createdAt: sub.createdAt,
     };
   }

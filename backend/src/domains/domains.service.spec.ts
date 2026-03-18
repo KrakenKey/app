@@ -71,7 +71,12 @@ describe('DomainsService', () => {
         },
         {
           provide: BillingService,
-          useValue: { resolveUserTier: jest.fn().mockResolvedValue('free') },
+          useValue: {
+            resolveUserTier: jest.fn().mockResolvedValue('free'),
+            getResourceCountUserIds: jest
+              .fn()
+              .mockImplementation((uid: string) => Promise.resolve([uid])),
+          },
         },
       ],
     }).compile();
@@ -267,6 +272,7 @@ describe('DomainsService', () => {
   // ─── delete ───────────────────────────────────────────────────────────
   describe('delete', () => {
     it('succeeds when domain exists', async () => {
+      mockRepository.findOne.mockResolvedValue(mockDomain);
       mockRepository.delete.mockResolvedValue({ affected: 1 });
 
       await expect(

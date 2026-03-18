@@ -7,20 +7,23 @@ import {
   ManyToOne,
   JoinColumn,
   Index,
-  Unique,
 } from 'typeorm';
 import { ApiHideProperty } from '@nestjs/swagger';
 import { User } from '../../users/entities/user.entity';
+import type { Organization } from '../../organizations/entities/organization.entity';
 
 @Entity()
-@Unique('UQ_subscription_userId', ['userId'])
 export class Subscription {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
   @Index('IDX_subscription_userId')
-  @Column()
-  userId: string;
+  @Column({ type: 'text', nullable: true })
+  userId: string | null;
+
+  @Column({ type: 'uuid', nullable: true })
+  @Index('IDX_subscription_organizationId')
+  organizationId: string | null;
 
   @ApiHideProperty()
   @Index('IDX_subscription_stripeCustomerId')
@@ -44,9 +47,13 @@ export class Subscription {
   @Column({ default: false })
   cancelAtPeriodEnd: boolean;
 
-  @ManyToOne(() => User, { onDelete: 'CASCADE' })
+  @ManyToOne(() => User, { onDelete: 'CASCADE', nullable: true })
   @JoinColumn({ name: 'userId' })
   user: User;
+
+  @ManyToOne('Organization', { onDelete: 'CASCADE', nullable: true })
+  @JoinColumn({ name: 'organizationId' })
+  organization: Organization;
 
   @CreateDateColumn()
   createdAt: Date;
