@@ -246,6 +246,9 @@ describe('BillingService', () => {
         current_period_end: Math.floor(Date.now() / 1000) + 86400 * 30,
         cancel_at_period_end: false,
       });
+      // findOne returns existing sub for find-then-save pattern
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+      mockRepository.save.mockResolvedValue({ ...mockSubscription });
 
       await service.handleWebhookEvent({
         type: 'checkout.session.completed',
@@ -258,14 +261,11 @@ describe('BillingService', () => {
         },
       } as any);
 
-      expect(mockRepository.upsert).toHaveBeenCalledWith(
+      expect(mockRepository.save).toHaveBeenCalledWith(
         expect.objectContaining({
           plan: 'starter',
           status: 'active',
           stripeSubscriptionId: 'sub_new123',
-        }),
-        expect.objectContaining({
-          conflictPaths: expect.arrayContaining(['userId']),
         }),
       );
     });

@@ -606,19 +606,27 @@ export class BillingService {
       cancelAtPeriodEnd: stripeSub.cancel_at_period_end,
     };
 
-    if (organizationId) {
-      await this.subscriptionRepository.upsert(
-        { ...shared, organizationId, userId: null as any },
-        { conflictPaths: ['organizationId'] },
-      );
-      this.logger.log(`Checkout completed: org=${organizationId} plan=${plan}`);
+    // Find existing sub or create a new one.
+    // We can't use TypeORM upsert here because userId/organizationId use
+    // partial unique indexes which aren't compatible with conflictPaths.
+    const where = organizationId ? { organizationId } : { userId: userId! };
+
+    let sub = await this.subscriptionRepository.findOne({ where });
+
+    if (sub) {
+      Object.assign(sub, shared);
     } else {
-      await this.subscriptionRepository.upsert(
-        { ...shared, userId, organizationId: null as any },
-        { conflictPaths: ['userId'] },
-      );
-      this.logger.log(`Checkout completed: user=${userId} plan=${plan}`);
+      sub = this.subscriptionRepository.create({
+        ...shared,
+        userId: organizationId ? null : userId!,
+        organizationId: organizationId ?? null,
+      });
     }
+
+    await this.subscriptionRepository.save(sub);
+
+    const owner = organizationId ? `org=${organizationId}` : `user=${userId}`;
+    this.logger.log(`Checkout completed: ${owner} plan=${plan}`);
   }
 
   private async handleSubscriptionUpdated(
