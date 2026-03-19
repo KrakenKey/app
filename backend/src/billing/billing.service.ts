@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -382,15 +382,18 @@ export class BillingService {
   async convertToOrgSubscription(
     userId: string,
     organizationId: string,
+    manager?: EntityManager,
   ): Promise<void> {
-    const sub = await this.subscriptionRepository.findOne({
-      where: { userId },
-    });
+    const repo = manager
+      ? manager.getRepository(Subscription)
+      : this.subscriptionRepository;
+
+    const sub = await repo.findOne({ where: { userId } });
     if (!sub) return;
 
     sub.organizationId = organizationId;
     sub.userId = null;
-    await this.subscriptionRepository.save(sub);
+    await repo.save(sub);
     this.logger.log(
       `Subscription converted to org: sub=${sub.id} org=${organizationId}`,
     );

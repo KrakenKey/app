@@ -67,7 +67,12 @@ export class OrganizationsService {
       });
 
       // Convert the owner's personal subscription to an org subscription
-      await this.billingService.convertToOrgSubscription(ownerId, savedOrg.id);
+      // Pass the transaction manager so the FK to the new org is visible
+      await this.billingService.convertToOrgSubscription(
+        ownerId,
+        savedOrg.id,
+        manager,
+      );
 
       return savedOrg;
     });
