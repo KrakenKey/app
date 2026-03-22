@@ -1,5 +1,10 @@
 import { test, expect, authenticateAs } from './fixtures/auth';
-import { mockOrg } from './fixtures/mock-data';
+import {
+  mockOrg,
+  dissolvingOrg,
+  orgMemberUser,
+  orgMixedDomains,
+} from './fixtures/mock-data';
 
 test.describe('Organizations — free plan (upsell)', () => {
   test('shows upgrade prompt for free users without an org', async ({
@@ -245,5 +250,105 @@ test.describe('Organizations — member (non-owner)', () => {
     await expect(
       page.getByRole('button', { name: /transfer/i }),
     ).not.toBeVisible();
+  });
+});
+
+test.describe('Organizations — invite rejection', () => {
+  test('invite calls endpoint and receives 409 for paid user', async ({
+    page,
+  }) => {
+    await authenticateAs(page, {
+      plan: 'team',
+      organizationId: mockOrg.id,
+      role: 'owner',
+    });
+    await page.route('**/organizations/' + mockOrg.id, (route) =>
+      route.fulfill({ status: 200, json: mockOrg }),
+    );
+
+    let inviteStatus = 0;
+    await page.route('**/organizations/*/members', (route) => {
+      if (route.request().method() === 'POST') {
+        inviteStatus = 409;
+        return route.fulfill({
+          status: 409,
+          json: {
+            message:
+              'This user has an active starter subscription. They must cancel it before joining your organization.',
+          },
+        });
+      }
+      return route.continue();
+    });
+
+    await page.goto('/dashboard/organizations');
+    await page.getByRole('button', { name: /invite/i }).click();
+
+    const emailInput = page
+      .getByPlaceholder(/email/i)
+      .or(
+        page
+          .locator('dialog input[type="email"], dialog input[type="text"]')
+          .first(),
+      );
+    await emailInput.fill('paid-user@example.com');
+
+    await page
+      .getByRole('button', { name: /invite/i })
+      .last()
+      .click();
+
+    // The API interceptor shows the error as a toast.
+    // We verify the endpoint was called and returned 409.
+    expect(inviteStatus).toBe(409);
+  });
+});
+
+test.describe('Organizations — dissolving state', () => {
+  // NOTE: Frontend doesn't render dissolving status yet.
+  // This test verifies the org page loads with dissolving data without errors.
+  // Once the frontend shows a dissolving banner, add assertion for it.
+  test('org page loads with dissolving org data', async ({ page }) => {
+    await authenticateAs(page, {
+      plan: 'team',
+      organizationId: mockOrg.id,
+      role: 'owner',
+    });
+    await page.route('**/organizations/' + mockOrg.id, (route) =>
+      route.fulfill({ status: 200, json: dissolvingOrg }),
+    );
+
+    await page.goto('/dashboard/organizations');
+
+    // Org still renders (dissolving is backend-enforced, not frontend-displayed yet)
+    await expect(page.getByText('Acme Corp')).toBeVisible();
+  });
+});
+
+test.describe('Organizations — cross-member domain visibility', () => {
+  test('org member sees domains from all members', async ({ page }) => {
+    await authenticateAs(page, orgMemberUser);
+    await page.route('**/domains', (route) =>
+      route.fulfill({ status: 200, json: orgMixedDomains }),
+    );
+
+    await page.goto('/dashboard/domains');
+
+    // Should see own domains AND other member's domain
+    await expect(page.getByText('example.com')).toBeVisible();
+    await expect(page.getByText('other-member.io')).toBeVisible();
+  });
+});
+
+test.describe('Organizations — pooled resource counts', () => {
+  test('overview shows pooled counts for org members', async ({ page }) => {
+    await authenticateAs(page, orgMemberUser);
+
+    await page.goto('/dashboard');
+
+    // Pooled counts from orgMemberUser: 12 domains, 8 certs, 6 keys
+    await expect(page.getByText('12')).toBeVisible();
+    await expect(page.getByText('8')).toBeVisible();
+    await expect(page.getByText('6')).toBeVisible();
   });
 });

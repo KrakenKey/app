@@ -75,7 +75,7 @@ export const mockDomains = [
   {
     id: 'dom_001',
     hostname: 'example.com',
-    verified: true,
+    isVerified: true,
     verificationCode: 'kk-verify-abc123',
     userId: 'usr_test_001',
     createdAt: '2025-02-01T00:00:00.000Z',
@@ -84,7 +84,7 @@ export const mockDomains = [
   {
     id: 'dom_002',
     hostname: 'staging.example.com',
-    verified: false,
+    isVerified: false,
     verificationCode: 'kk-verify-def456',
     userId: 'usr_test_001',
     createdAt: '2025-03-01T00:00:00.000Z',
@@ -120,6 +120,56 @@ export const mockCertificates = [
     createdAt: '2025-03-15T00:00:00.000Z',
     lastRenewedAt: null,
     revokedAt: null,
+  },
+];
+
+/* ── Org-Aware User Overrides ──────────────────────────────────────────── */
+
+export const orgOwnerUser = {
+  plan: 'team',
+  organizationId: 'org_001',
+  role: 'owner' as const,
+  resourceCounts: { domains: 12, certificates: 8, apiKeys: 6 },
+};
+
+export const orgMemberUser = {
+  id: 'usr_member_002',
+  username: 'janedoe',
+  email: 'jane@example.com',
+  displayName: 'Jane Doe',
+  plan: 'team',
+  organizationId: 'org_001',
+  role: 'member' as const,
+  resourceCounts: { domains: 12, certificates: 8, apiKeys: 6 },
+};
+
+export const dissolvingOrg = {
+  ...mockOrg,
+  status: 'dissolving' as const,
+};
+
+export const paidUserSub = {
+  ...starterSub,
+  cancelAtPeriodEnd: false,
+};
+
+export const canceledPaidSub = {
+  ...starterSub,
+  cancelAtPeriodEnd: true,
+};
+
+/* ── Cross-Member Domains (for org visibility tests) ──────────────────── */
+
+export const orgMixedDomains = [
+  ...mockDomains,
+  {
+    id: 'dom_003',
+    hostname: 'other-member.io',
+    isVerified: true,
+    verificationCode: 'kk-verify-xyz789',
+    userId: 'usr_member_003',
+    createdAt: '2025-04-01T00:00:00.000Z',
+    verifiedAt: '2025-04-02T00:00:00.000Z',
   },
 ];
 
