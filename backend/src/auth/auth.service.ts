@@ -5,7 +5,7 @@ import {
   HttpException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { UserApiKey } from './entities/user-api-key.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash, randomBytes } from 'crypto';
@@ -170,14 +170,16 @@ export class AuthService {
    * The raw key is returned only once - it cannot be retrieved later.
    */
   async createApiKey(userId: string, name: string, expiresAt?: string) {
-    // Plan-based API key limit check
+    // Plan-based API key limit check (pooled across org members)
     const plan = (await this.billingService.resolveUserTier(
       userId,
     )) as SubscriptionPlan;
     const limits = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
     if (limits.apiKeys !== Infinity) {
+      const memberIds =
+        await this.billingService.getResourceCountUserIds(userId);
       const count = await this.userApiKeyRepo.count({
-        where: { userId },
+        where: { userId: In(memberIds) },
       });
       if (count >= limits.apiKeys) {
         throw new HttpException(
@@ -263,11 +265,14 @@ export class AuthService {
       throw new NotFoundException('User not found');
     }
 
-    const [domainCount, certCount, apiKeyCount, plan] = await Promise.all([
-      this.domainRepo.count({ where: { userId } }),
-      this.tlsCrtRepo.count({ where: { userId } }),
-      this.userApiKeyRepo.count({ where: { userId } }),
+    const [memberIds, plan] = await Promise.all([
+      this.billingService.getResourceCountUserIds(userId),
       this.billingService.resolveUserTier(userId),
+    ]);
+    const [domainCount, certCount, apiKeyCount] = await Promise.all([
+      this.domainRepo.count({ where: { userId: In(memberIds) } }),
+      this.tlsCrtRepo.count({ where: { userId: In(memberIds) } }),
+      this.userApiKeyRepo.count({ where: { userId: In(memberIds) } }),
     ]);
 
     return {

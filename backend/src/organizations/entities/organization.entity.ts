@@ -4,11 +4,13 @@ import {
   Column,
   CreateDateColumn,
   OneToMany,
+  OneToOne,
   ManyToOne,
   JoinColumn,
   Index,
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
+import { Subscription } from '../../billing/entities/subscription.entity';
 
 @Entity()
 export class Organization {
@@ -22,8 +24,8 @@ export class Organization {
   @Index('IDX_org_ownerId')
   ownerId: string;
 
-  @Column({ type: 'varchar', default: 'free' })
-  plan: string;
+  @Column({ type: 'varchar', default: 'active' })
+  status: 'active' | 'dissolving';
 
   @CreateDateColumn()
   createdAt: Date;
@@ -34,4 +36,7 @@ export class Organization {
 
   @OneToMany(() => User, (user) => user.organization)
   members: User[];
+
+  @OneToOne(() => Subscription, (sub) => sub.organization)
+  subscription: Subscription;
 }

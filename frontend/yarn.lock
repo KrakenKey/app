@@ -210,24 +210,24 @@
   integrity sha512-Vd/9EVDiu6PPJt9yAh6roZP6El1xHrdvIVGjyBsHR0RYwNHgL7FJPyIIW4fANJNG6FtyZfvlRPpFI4ZM/lubvw==
 
 "@emnapi/core@^1.7.1", "@emnapi/core@^1.8.1":
-  version "1.8.1"
-  resolved "https://registry.yarnpkg.com/@emnapi/core/-/core-1.8.1.tgz#fd9efe721a616288345ffee17a1f26ac5dd01349"
-  integrity sha512-AvT9QFpxK0Zd8J0jopedNm+w/2fIzvtPKPjqyw9jwvBaReTTqPBk9Hixaz7KbjimP+QNz605/XnjFcDAL2pqBg==
+  version "1.9.1"
+  resolved "https://registry.yarnpkg.com/@emnapi/core/-/core-1.9.1.tgz#2143069c744ca2442074f8078462e51edd63c7bd"
+  integrity sha512-mukuNALVsoix/w1BJwFzwXBN/dHeejQtuVzcDsfOEsdpCumXb/E9j8w11h5S54tT1xhifGfbbSm/ICrObRb3KA==
   dependencies:
-    "@emnapi/wasi-threads" "1.1.0"
+    "@emnapi/wasi-threads" "1.2.0"
     tslib "^2.4.0"
 
 "@emnapi/runtime@^1.7.1", "@emnapi/runtime@^1.8.1":
-  version "1.8.1"
-  resolved "https://registry.yarnpkg.com/@emnapi/runtime/-/runtime-1.8.1.tgz#550fa7e3c0d49c5fb175a116e8cd70614f9a22a5"
-  integrity sha512-mehfKSMWjjNol8659Z8KxEMrdSJDDot5SXMq00dM8BN4o+CLNXQ0xH2V7EchNHV4RmbZLmmPdEaXZc5H2FXmDg==
+  version "1.9.1"
+  resolved "https://registry.yarnpkg.com/@emnapi/runtime/-/runtime-1.9.1.tgz#115ff2a0d589865be6bd8e9d701e499c473f2a8d"
+  integrity sha512-VYi5+ZVLhpgK4hQ0TAjiQiZ6ol0oe4mBx7mVv7IflsiEp0OWoVsp/+f9Vc1hOhE0TtkORVrI1GvzyreqpgWtkA==
   dependencies:
     tslib "^2.4.0"
 
-"@emnapi/wasi-threads@1.1.0", "@emnapi/wasi-threads@^1.1.0":
-  version "1.1.0"
-  resolved "https://registry.yarnpkg.com/@emnapi/wasi-threads/-/wasi-threads-1.1.0.tgz#60b2102fddc9ccb78607e4a3cf8403ea69be41bf"
-  integrity sha512-WI0DdZ8xFSbgMjR1sFsKABJ/C5OnRrjT06JXbZKexJGrDuPTzZdDYfFlsgcCXCyf+suG5QU2e/y1Wo2V/OapLQ==
+"@emnapi/wasi-threads@1.2.0", "@emnapi/wasi-threads@^1.1.0":
+  version "1.2.0"
+  resolved "https://registry.yarnpkg.com/@emnapi/wasi-threads/-/wasi-threads-1.2.0.tgz#a19d9772cc3d195370bf6e2a805eec40aa75e18e"
+  integrity sha512-N10dEJNSsUx41Z6pZsXU8FjPjpBEplgH24sfkmITrBED1/U2Esum9F3lfLrMjKHHjmi557zQn7kR9R+XWXu5Rg==
   dependencies:
     tslib "^2.4.0"
 
@@ -273,7 +273,7 @@
 
 "@esbuild/linux-arm64@0.27.3":
   version "0.27.3"
-  resolved "https://registry.yarnpkg.com/@esbuild/linux-arm64/-/linux-arm64-0.27.3.tgz#bf31918fe5c798586460d2b3d6c46ed2c01ca0b6"
+  resolved "https://registry.npmjs.org/@esbuild/linux-arm64/-/linux-arm64-0.27.3.tgz"
   integrity sha512-sZOuFz/xWnZ4KH3YfFrKCf1WyPZHakVzTiqji3WDc0BCl2kBwiJLCXpzLzUBLgmp4veFZdvN5ChW4Eq/8Fc2Fg==
 
 "@esbuild/linux-arm@0.27.3":
@@ -313,7 +313,7 @@
 
 "@esbuild/linux-x64@0.27.3":
   version "0.27.3"
-  resolved "https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-0.27.3.tgz"
+  resolved "https://registry.yarnpkg.com/@esbuild/linux-x64/-/linux-x64-0.27.3.tgz#12383dcbf71b7cf6513e58b4b08d95a710bf52a5"
   integrity sha512-Czi8yzXUWIQYAtL/2y6vogER8pvcsOsk5cpwL4Gk5nJqH5UZiVByIY8Eorm5R13gq+DQKYg0+JyQoytLQas4dA==
 
 "@esbuild/netbsd-arm64@0.27.3":
@@ -693,6 +693,13 @@
   resolved "https://registry.npmjs.org/@pkgr/core/-/core-0.2.9.tgz"
   integrity sha512-QNqXyfVS2wm9hweSYD2O7F0G06uurj9kZ96TRQE5Y9hU7+tgdZwIkbAKc5Ocy1HxEY2kuDQa6cQ1WRs/O5LFKA==
 
+"@playwright/test@^1.58.2":
+  version "1.58.2"
+  resolved "https://registry.npmjs.org/@playwright/test/-/test-1.58.2.tgz"
+  integrity sha512-akea+6bHYBBfA9uQqSYmlJXn61cTa+jbO87xVLCWbTqbWadRVmhxlXATaOjOgcBaWU4ePo0wB41KMFv3o35IXA==
+  dependencies:
+    playwright "1.58.2"
+
 "@polka/url@^1.0.0-next.24":
   version "1.0.0-next.29"
   resolved "https://registry.npmjs.org/@polka/url/-/url-1.0.0-next.29.tgz"
@@ -745,7 +752,7 @@
 
 "@rollup/rollup-linux-arm64-gnu@4.59.0":
   version "4.59.0"
-  resolved "https://registry.yarnpkg.com/@rollup/rollup-linux-arm64-gnu/-/rollup-linux-arm64-gnu-4.59.0.tgz#d14992a2e653bc3263d284bc6579b7a2890e1c45"
+  resolved "https://registry.npmjs.org/@rollup/rollup-linux-arm64-gnu/-/rollup-linux-arm64-gnu-4.59.0.tgz"
   integrity sha512-jYgUGk5aLd1nUb1CtQ8E+t5JhLc9x5WdBKew9ZgAXg7DBk0ZHErLHdXM24rfX+bKrFe+Xp5YuJo54I5HFjGDAA==
 
 "@rollup/rollup-linux-arm64-musl@4.59.0":
@@ -790,12 +797,12 @@
 
 "@rollup/rollup-linux-x64-gnu@4.59.0":
   version "4.59.0"
-  resolved "https://registry.npmjs.org/@rollup/rollup-linux-x64-gnu/-/rollup-linux-x64-gnu-4.59.0.tgz"
+  resolved "https://registry.yarnpkg.com/@rollup/rollup-linux-x64-gnu/-/rollup-linux-x64-gnu-4.59.0.tgz#9b66b1f9cd95c6624c788f021c756269ffed1552"
   integrity sha512-3AHmtQq/ppNuUspKAlvA8HtLybkDflkMuLK4DPo77DfthRb71V84/c4MlWJXixZz4uruIH4uaa07IqoAkG64fg==
 
 "@rollup/rollup-linux-x64-musl@4.59.0":
   version "4.59.0"
-  resolved "https://registry.npmjs.org/@rollup/rollup-linux-x64-musl/-/rollup-linux-x64-musl-4.59.0.tgz"
+  resolved "https://registry.yarnpkg.com/@rollup/rollup-linux-x64-musl/-/rollup-linux-x64-musl-4.59.0.tgz#b007ca255dc7166017d57d7d2451963f0bd23fd9"
   integrity sha512-2UdiwS/9cTAx7qIUZB/fWtToJwvt0Vbo0zmnYt7ED35KPg13Q0ym1g442THLC7VyI6JfYTP4PiSOWyoMdV2/xg==
 
 "@rollup/rollup-openbsd-x64@4.59.0":
@@ -835,7 +842,7 @@
 
 "@stripe/stripe-js@^8.9.0":
   version "8.9.0"
-  resolved "https://registry.yarnpkg.com/@stripe/stripe-js/-/stripe-js-8.9.0.tgz#44e441c7f19555fdf627675a8190ab8024d2890e"
+  resolved "https://registry.npmjs.org/@stripe/stripe-js/-/stripe-js-8.9.0.tgz"
   integrity sha512-OJkXvUI5GAc56QdiSRimQDvWYEqn475J+oj8RzRtFTCPtkJNO2TWW619oDY+nn1ExR+2tCVTQuRQBbR4dRugww==
 
 "@tailwindcss/node@4.2.1":
@@ -878,7 +885,7 @@
 
 "@tailwindcss/oxide-linux-arm64-gnu@4.2.1":
   version "4.2.1"
-  resolved "https://registry.yarnpkg.com/@tailwindcss/oxide-linux-arm64-gnu/-/oxide-linux-arm64-gnu-4.2.1.tgz#f544b0faf166d80791347911b2dd4372a893129d"
+  resolved "https://registry.npmjs.org/@tailwindcss/oxide-linux-arm64-gnu/-/oxide-linux-arm64-gnu-4.2.1.tgz"
   integrity sha512-CTrwomI+c7n6aSSQlsPL0roRiNMDQ/YzMD9EjcR+H4f0I1SQ8QqIuPnsVp7QgMkC1Qi8rtkekLkOFjo7OlEFRQ==
 
 "@tailwindcss/oxide-linux-arm64-musl@4.2.1":
@@ -888,12 +895,12 @@
 
 "@tailwindcss/oxide-linux-x64-gnu@4.2.1":
   version "4.2.1"
-  resolved "https://registry.npmjs.org/@tailwindcss/oxide-linux-x64-gnu/-/oxide-linux-x64-gnu-4.2.1.tgz"
+  resolved "https://registry.yarnpkg.com/@tailwindcss/oxide-linux-x64-gnu/-/oxide-linux-x64-gnu-4.2.1.tgz#6ab4e6b8d308d037a1155b8443df5941dbfa6aa1"
   integrity sha512-qMFzxI2YlBOLW5PhblzuSWlWfwLHaneBE0xHzLrBgNtqN6mWfs+qYbhryGSXQjFYB1Dzf5w+LN5qbUTPhW7Y5g==
 
 "@tailwindcss/oxide-linux-x64-musl@4.2.1":
   version "4.2.1"
-  resolved "https://registry.npmjs.org/@tailwindcss/oxide-linux-x64-musl/-/oxide-linux-x64-musl-4.2.1.tgz"
+  resolved "https://registry.yarnpkg.com/@tailwindcss/oxide-linux-x64-musl/-/oxide-linux-x64-musl-4.2.1.tgz#52c55593394dff85f1fa88172f69f8fdcde182b6"
   integrity sha512-5r1X2FKnCMUPlXTWRYpHdPYUY6a1Ar/t7P24OuiEdEOmms5lyqjDRvVY1yy9Rmioh+AunQ0rWiOTPE8F9A3v5g==
 
 "@tailwindcss/oxide-wasm32-wasi@4.2.1":
@@ -1646,12 +1653,12 @@ escape-string-regexp@^4.0.0:
 
 eslint-config-prettier@^10.1.8:
   version "10.1.8"
-  resolved "https://registry.yarnpkg.com/eslint-config-prettier/-/eslint-config-prettier-10.1.8.tgz#15734ce4af8c2778cc32f0b01b37b0b5cd1ecb97"
+  resolved "https://registry.npmjs.org/eslint-config-prettier/-/eslint-config-prettier-10.1.8.tgz"
   integrity sha512-82GZUjRS0p/jganf6q1rEO25VSoHH0hKPCTrgillPjdI/3bgBhAE1QzHrHTizjpRvy6pGAvKjDJtk2pF9NDq8w==
 
 eslint-plugin-prettier@^5.5.5:
   version "5.5.5"
-  resolved "https://registry.yarnpkg.com/eslint-plugin-prettier/-/eslint-plugin-prettier-5.5.5.tgz#9eae11593faa108859c26f9a9c367d619a0769c0"
+  resolved "https://registry.npmjs.org/eslint-plugin-prettier/-/eslint-plugin-prettier-5.5.5.tgz"
   integrity sha512-hscXkbqUZ2sPithAuLm5MXL+Wph+U7wHngPBv9OMWwlP8iaflyxpjTYZkmdgB4/vPIhemRlBEoLrH7UC1n7aUw==
   dependencies:
     prettier-linter-helpers "^1.0.1"
@@ -1854,6 +1861,11 @@ form-data@^4.0.0, form-data@^4.0.5:
     es-set-tostringtag "^2.1.0"
     hasown "^2.0.2"
     mime-types "^2.1.12"
+
+fsevents@2.3.2:
+  version "2.3.2"
+  resolved "https://registry.yarnpkg.com/fsevents/-/fsevents-2.3.2.tgz#8a526f78b8fdf4623b709e0b975c52c24c02fd1a"
+  integrity sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==
 
 fsevents@~2.3.2, fsevents@~2.3.3:
   version "2.3.3"
@@ -2180,7 +2192,7 @@ lightningcss-linux-arm-gnueabihf@1.31.1:
 
 lightningcss-linux-arm64-gnu@1.31.1:
   version "1.31.1"
-  resolved "https://registry.yarnpkg.com/lightningcss-linux-arm64-gnu/-/lightningcss-linux-arm64-gnu-1.31.1.tgz#a5c4f6a5ac77447093f61b209c0bd7fef1f0a3e3"
+  resolved "https://registry.npmjs.org/lightningcss-linux-arm64-gnu/-/lightningcss-linux-arm64-gnu-1.31.1.tgz"
   integrity sha512-WKyLWztD71rTnou4xAD5kQT+982wvca7E6QoLpoawZ1gP9JM0GJj4Tp5jMUh9B3AitHbRZ2/H3W5xQmdEOUlLg==
 
 lightningcss-linux-arm64-musl@1.31.1:
@@ -2190,12 +2202,12 @@ lightningcss-linux-arm64-musl@1.31.1:
 
 lightningcss-linux-x64-gnu@1.31.1:
   version "1.31.1"
-  resolved "https://registry.npmjs.org/lightningcss-linux-x64-gnu/-/lightningcss-linux-x64-gnu-1.31.1.tgz"
+  resolved "https://registry.yarnpkg.com/lightningcss-linux-x64-gnu/-/lightningcss-linux-x64-gnu-1.31.1.tgz#a891d44e84b71c0d88959feb9a7522bbf61450ee"
   integrity sha512-xGlFWRMl+0KvUhgySdIaReQdB4FNudfUTARn7q0hh/V67PVGCs3ADFjw+6++kG1RNd0zdGRlEKa+T13/tQjPMA==
 
 lightningcss-linux-x64-musl@1.31.1:
   version "1.31.1"
-  resolved "https://registry.npmjs.org/lightningcss-linux-x64-musl/-/lightningcss-linux-x64-musl-1.31.1.tgz"
+  resolved "https://registry.yarnpkg.com/lightningcss-linux-x64-musl/-/lightningcss-linux-x64-musl-1.31.1.tgz#8c8b21def851f4d477fa897b80cb3db2b650bc6e"
   integrity sha512-eowF8PrKHw9LpoZii5tdZwnBcYDxRw2rRCyvAXLi34iyeYfqCQNA9rmUM0ce62NlPhCvof1+9ivRaTY6pSKDaA==
 
 lightningcss-win32-arm64-msvc@1.31.1:
@@ -2443,6 +2455,20 @@ picomatch@^4.0.3:
   resolved "https://registry.npmjs.org/picomatch/-/picomatch-4.0.3.tgz"
   integrity sha512-5gTmgEY/sqK6gFXLIsQNH19lWb4ebPDLA4SdLP7dsWkIXHWlG66oPuVvXSGFPppYZz8ZDZq0dYYrbHfBCVUb1Q==
 
+playwright-core@1.58.2:
+  version "1.58.2"
+  resolved "https://registry.npmjs.org/playwright-core/-/playwright-core-1.58.2.tgz"
+  integrity sha512-yZkEtftgwS8CsfYo7nm0KE8jsvm6i/PTgVtB8DL726wNf6H2IMsDuxCpJj59KDaxCtSnrWan2AeDqM7JBaultg==
+
+playwright@1.58.2:
+  version "1.58.2"
+  resolved "https://registry.npmjs.org/playwright/-/playwright-1.58.2.tgz"
+  integrity sha512-vA30H8Nvkq/cPBnNw4Q8TWz1EJyqgpuinBcHET0YVJVFldr8JDNiU9LaWAE1KqSkRYazuaBhTpB5ZzShOezQ6A==
+  dependencies:
+    playwright-core "1.58.2"
+  optionalDependencies:
+    fsevents "2.3.2"
+
 postcss@^8.5.6:
   version "8.5.6"
   resolved "https://registry.npmjs.org/postcss/-/postcss-8.5.6.tgz"
@@ -2466,7 +2492,7 @@ prettier-linter-helpers@^1.0.1:
 
 prettier@^3.8.1:
   version "3.8.1"
-  resolved "https://registry.yarnpkg.com/prettier/-/prettier-3.8.1.tgz#edf48977cf991558f4fcbd8a3ba6015ba2a3a173"
+  resolved "https://registry.npmjs.org/prettier/-/prettier-3.8.1.tgz"
   integrity sha512-UOnG6LftzbdaHZcKoPFtOcCKztrQ57WkHDeRD9t/PTQtmT0NHSeWWepj6pS0z/N7+08BHFDQVUrfmfMRcZwbMg==
 
 pretty-format@^27.0.2:

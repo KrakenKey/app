@@ -32,6 +32,7 @@ export class OrganizationsService {
   /**
    * Creates a new organization and sets the creator as owner.
    * A user may only be the owner of one organization at a time.
+   * Converts the owner's personal subscription to an org subscription.
    */
   async create(ownerId: string, name: string): Promise<Organization> {
     const plan = await this.billingService.resolveUserTier(ownerId);
@@ -56,15 +57,25 @@ export class OrganizationsService {
       );
     }
 
-    const org = this.orgRepo.create({ name, ownerId, plan: 'free' });
-    const savedOrg = await this.orgRepo.save(org);
+    return this.orgRepo.manager.transaction(async (manager) => {
+      const org = manager.create(Organization, { name, ownerId });
+      const savedOrg = await manager.save(Organization, org);
 
-    await this.userRepo.update(ownerId, {
-      organizationId: savedOrg.id,
-      role: 'owner',
+      await manager.update(User, ownerId, {
+        organizationId: savedOrg.id,
+        role: 'owner',
+      });
+
+      // Convert the owner's personal subscription to an org subscription
+      // Pass the transaction manager so the FK to the new org is visible
+      await this.billingService.convertToOrgSubscription(
+        ownerId,
+        savedOrg.id,
+        manager,
+      );
+
+      return savedOrg;
     });
-
-    return savedOrg;
   }
 
   async findById(orgId: string): Promise<Organization> {
@@ -101,6 +112,19 @@ export class OrganizationsService {
     if (target.organizationId && target.organizationId !== orgId) {
       throw new ConflictException(
         'That user is already a member of another organization',
+      );
+    }
+
+    // Block invite if target has an active paid subscription they haven't cancelled
+    const targetSub = await this.billingService.getSubscription(target.id);
+    if (
+      targetSub &&
+      targetSub.plan !== 'free' &&
+      targetSub.status === 'active' &&
+      !targetSub.cancelAtPeriodEnd
+    ) {
+      throw new ConflictException(
+        `This user has an active ${targetSub.plan} subscription. They must cancel it before joining your organization.`,
       );
     }
 
@@ -158,7 +182,8 @@ export class OrganizationsService {
   }
 
   /**
-   * Deletes the organization and removes all members from it.
+   * Deletes the organization, transfers all member resources to the owner,
+   * and converts the org subscription back to a personal subscription.
    * Only the owner may delete.
    */
   async delete(orgId: string, actorId: string): Promise<void> {
@@ -172,15 +197,9 @@ export class OrganizationsService {
       );
     }
 
-    // Clear all member associations before deleting
-    await this.userRepo
-      .createQueryBuilder()
-      .update()
-      .set({ organizationId: () => 'NULL', role: () => 'NULL' })
-      .where('organizationId = :orgId', { orgId })
-      .execute();
-
-    await this.orgRepo.delete(orgId);
+    // Dissolution marks org as dissolving, then handles resource transfer,
+    // member cleanup, sub conversion, and org deletion
+    await this.billingService.queueDissolution(orgId);
   }
 
   /**
@@ -268,6 +287,17 @@ export class OrganizationsService {
     ) {
       throw new ForbiddenException(
         'Only an owner or admin of this organization can perform this action',
+      );
+    }
+
+    // Reject operations on dissolving organizations
+    const org = await this.orgRepo.findOne({
+      where: { id: orgId },
+      select: { id: true, status: true },
+    });
+    if (org?.status === 'dissolving') {
+      throw new ConflictException(
+        'This organization is being dissolved and cannot accept changes',
       );
     }
   }

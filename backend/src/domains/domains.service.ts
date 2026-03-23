@@ -48,13 +48,17 @@ export class DomainsService {
       return existing;
     }
 
-    // Plan-based domain limit check
+    // Plan-based domain limit check (pooled across org members)
     const plan = (await this.billingService.resolveUserTier(
       userId,
     )) as SubscriptionPlan;
     const limits = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
     if (limits.domains !== Infinity) {
-      const count = await this.domainsRepository.count({ where: { userId } });
+      const memberIds =
+        await this.billingService.getResourceCountUserIds(userId);
+      const count = await this.domainsRepository.count({
+        where: { userId: In(memberIds) },
+      });
       if (count >= limits.domains) {
         throw new HttpException(
           {
@@ -132,9 +136,20 @@ export class DomainsService {
    * Throws an error if the domain is not found.
    */
   async findOne(id: string, userId: string): Promise<Domain> {
-    const domain = await this.domainsRepository.findOne({
+    let domain = await this.domainsRepository.findOne({
       where: { id, userId },
     });
+
+    // Check org membership if not directly owned
+    if (!domain) {
+      const memberIds = await this.getOrgMemberIds(userId);
+      if (memberIds) {
+        domain = await this.domainsRepository.findOne({
+          where: { id, userId: In(memberIds) },
+        });
+      }
+    }
+
     if (!domain) {
       throw new NotFoundException(`Domain #${id} not found`);
     }
@@ -211,7 +226,9 @@ export class DomainsService {
    * Throws an error if the domain to delete doesn't exist.
    */
   async delete(userId: string, id: string): Promise<void> {
-    const result = await this.domainsRepository.delete({ id, userId });
+    // Verify access (includes org membership check)
+    const domain = await this.findOne(id, userId);
+    const result = await this.domainsRepository.delete(domain.id);
     if (result.affected === 0) {
       throw new NotFoundException(`Domain #${id} not found`);
     }

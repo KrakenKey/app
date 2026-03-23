@@ -11,7 +11,10 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
-    "test:poc": "tsx test-peculiar-poc.ts"
+    "test:poc": "tsx test-peculiar-poc.ts",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:headed": "playwright test --headed"
   },
   "dependencies": {
     "@krakenkey/shared": "file:../shared",
@@ -27,6 +30,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@playwright/test": "^1.58.2",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
