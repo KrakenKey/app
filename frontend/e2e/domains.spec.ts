@@ -1,10 +1,10 @@
-import { test, expect, authenticateAs } from './fixtures/auth';
+import { test, expect, authenticateAs, api } from './fixtures/auth';
 import { mockDomains } from './fixtures/mock-data';
 
 test.describe('Domain management', () => {
   test.beforeEach(async ({ page }) => {
     await authenticateAs(page, { plan: 'starter' });
-    await page.route('**/domains', (route) => {
+    await page.route(api('/domains'), (route) => {
       if (route.request().method() === 'GET') {
         return route.fulfill({ status: 200, json: mockDomains });
       }
@@ -24,14 +24,14 @@ test.describe('Domain management', () => {
     const newDomain = {
       id: 'dom_003',
       hostname: 'new.example.com',
-      verified: false,
+      isVerified: false,
       verificationCode: 'kk-verify-new789',
       userId: 'usr_test_001',
       createdAt: new Date().toISOString(),
       verifiedAt: null,
     };
 
-    await page.route('**/domains', (route) => {
+    await page.route(api('/domains'), (route) => {
       if (route.request().method() === 'POST') {
         return route.fulfill({ status: 201, json: newDomain });
       }
@@ -40,19 +40,21 @@ test.describe('Domain management', () => {
 
     await page.goto('/dashboard/domains');
 
-    await page.getByPlaceholder(/hostname|domain/i).fill('new.example.com');
+    await page.getByPlaceholder('example.com').fill('new.example.com');
     await page.getByRole('button', { name: /add domain/i }).click();
 
-    await expect(page.getByText('new.example.com')).toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: 'new.example.com' }),
+    ).toBeVisible();
   });
 
   test('can verify an unverified domain', async ({ page }) => {
-    await page.route('**/domains/dom_002/verify', (route) =>
+    await page.route(api('/domains/dom_002/verify'), (route) =>
       route.fulfill({
         status: 200,
         json: {
           ...mockDomains[1],
-          verified: true,
+          isVerified: true,
           verifiedAt: new Date().toISOString(),
         },
       }),
@@ -67,7 +69,7 @@ test.describe('Domain management', () => {
   });
 
   test('can delete a domain', async ({ page }) => {
-    await page.route('**/domains/dom_001', (route) => {
+    await page.route(api('/domains/dom_001'), (route) => {
       if (route.request().method() === 'DELETE') {
         return route.fulfill({ status: 200, json: { affected: 1 } });
       }

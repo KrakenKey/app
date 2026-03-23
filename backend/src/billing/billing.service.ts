@@ -606,7 +606,8 @@ export class BillingService {
       plan,
       status: 'active' as const,
       currentPeriodEnd: new Date(this.extractPeriodEnd(stripeSub) * 1000),
-      cancelAtPeriodEnd: stripeSub.cancel_at_period_end,
+      cancelAtPeriodEnd:
+        stripeSub.cancel_at_period_end || stripeSub.cancel_at !== null,
     };
 
     // Find existing sub or create a new one.
@@ -647,7 +648,9 @@ export class BillingService {
 
     sub.status = stripeSub.status === 'active' ? 'active' : stripeSub.status;
     sub.currentPeriodEnd = new Date(this.extractPeriodEnd(stripeSub) * 1000);
-    sub.cancelAtPeriodEnd = stripeSub.cancel_at_period_end;
+    // Stripe portal may use cancel_at (timestamp) instead of cancel_at_period_end (boolean)
+    sub.cancelAtPeriodEnd =
+      stripeSub.cancel_at_period_end || stripeSub.cancel_at !== null;
 
     const priceId = stripeSub.items?.data?.[0]?.price?.id;
     if (priceId && this.reversePriceMap[priceId]) {

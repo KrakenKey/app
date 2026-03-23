@@ -1,6 +1,4 @@
-import { test, expect, authenticateAs } from './fixtures/auth';
-
-const API = '**/api-dev.krakenkey.io/';
+import { test, expect, authenticateAs, api } from './fixtures/auth';
 
 test.describe('Mobile Responsive', () => {
   test.beforeEach(async ({ page }) => {
@@ -29,7 +27,7 @@ test.describe('Mobile Responsive', () => {
   });
 
   test('clicking a nav link navigates and closes sidebar', async ({ page }) => {
-    await page.route(`${API}domains`, (route) =>
+    await page.route(api('/domains'), (route) =>
       route.fulfill({ status: 200, json: [] }),
     );
 

@@ -1,4 +1,4 @@
-import { test, expect, authenticateAs } from './fixtures/auth';
+import { test, expect, authenticateAs, api } from './fixtures/auth';
 import {
   mockOrg,
   dissolvingOrg,
@@ -25,7 +25,7 @@ test.describe('Organizations — eligible plan, no org yet', () => {
     });
 
     let createCalled = false;
-    await page.route('**/organizations', (route) => {
+    await page.route(api('/organizations'), (route) => {
       if (route.request().method() === 'POST') {
         createCalled = true;
         return route.fulfill({
@@ -40,12 +40,10 @@ test.describe('Organizations — eligible plan, no org yet', () => {
       return route.continue();
     });
 
-    // After creation, profile refetch shows the org
-    let profileCallCount = 0;
+    // After creation, profile refetch shows the org.
+    // Use createCalled flag to only return org user after POST happened.
     await page.route('**/auth/profile', (route) => {
-      profileCallCount++;
-      // After create, return user with org
-      if (profileCallCount > 1) {
+      if (createCalled) {
         return route.fulfill({
           status: 200,
           json: {
@@ -58,7 +56,7 @@ test.describe('Organizations — eligible plan, no org yet', () => {
       return route.fulfill({ status: 200, json: user });
     });
 
-    await page.route('**/organizations/' + mockOrg.id, (route) =>
+    await page.route(api('/organizations/' + mockOrg.id), (route) =>
       route.fulfill({
         status: 200,
         json: { ...mockOrg, name: 'My New Org', members: [mockOrg.members[0]] },
@@ -81,7 +79,7 @@ test.describe('Organizations — owner managing org', () => {
       organizationId: mockOrg.id,
       role: 'owner',
     });
-    await page.route('**/organizations/' + mockOrg.id, (route) => {
+    await page.route(api('/organizations/' + mockOrg.id), (route) => {
       if (route.request().method() === 'GET') {
         return route.fulfill({ status: 200, json: mockOrg });
       }
@@ -93,9 +91,10 @@ test.describe('Organizations — owner managing org', () => {
     await page.goto('/dashboard/organizations');
 
     await expect(page.getByText('Acme Corp')).toBeVisible();
-    await expect(page.getByText('test@example.com')).toBeVisible();
-    await expect(page.getByText('jane@example.com')).toBeVisible();
-    await expect(page.getByText('bob@example.com')).toBeVisible();
+    const main = page.getByRole('main');
+    await expect(main.getByText('test@example.com')).toBeVisible();
+    await expect(main.getByText('jane@example.com')).toBeVisible();
+    await expect(main.getByText('bob@example.com')).toBeVisible();
   });
 
   test('can invite a new member', async ({ page }) => {
@@ -114,7 +113,10 @@ test.describe('Organizations — owner managing org', () => {
     await page.goto('/dashboard/organizations');
     await page.getByRole('button', { name: /invite/i }).click();
 
-    await page.getByPlaceholder(/email/i).fill('newuser@example.com');
+    const emailInput = page
+      .getByPlaceholder(/alice|email/i)
+      .or(page.locator('dialog input').first());
+    await emailInput.fill('newuser@example.com');
     // Select role if there's a dropdown
     const roleSelect = page.locator('select').first();
     if (await roleSelect.isVisible()) {
@@ -145,21 +147,17 @@ test.describe('Organizations — owner managing org', () => {
     await page.goto('/dashboard/organizations');
 
     // Find Bob's row and click remove
-    const bobRow = page.getByText('bob@example.com').locator('..');
-    const removeBtn = bobRow.getByRole('button', { name: /remove|delete/i });
-    if (await removeBtn.isVisible()) {
-      await removeBtn.click();
-    } else {
-      // Might be a generic delete button in the row
-      await bobRow.locator('button').last().click();
-    }
+    await page
+      .getByRole('row', { name: /bob/i })
+      .getByRole('button', { name: /remove/i })
+      .click();
 
     expect(removeCalled).toBe(true);
   });
 
   test('can rename the organization', async ({ page }) => {
     let renameCalled = false;
-    await page.route('**/organizations/' + mockOrg.id, (route) => {
+    await page.route(api('/organizations/' + mockOrg.id), (route) => {
       if (route.request().method() === 'PATCH') {
         renameCalled = true;
         return route.fulfill({
@@ -173,7 +171,7 @@ test.describe('Organizations — owner managing org', () => {
     await page.goto('/dashboard/organizations');
     await page.getByRole('button', { name: /rename/i }).click();
 
-    const nameInput = page.locator('input[type="text"]').last();
+    const nameInput = page.locator('dialog input').first();
     await nameInput.clear();
     await nameInput.fill('Acme Inc');
     await page.getByRole('button', { name: /save/i }).click();
@@ -183,7 +181,7 @@ test.describe('Organizations — owner managing org', () => {
 
   test('can transfer ownership', async ({ page }) => {
     let transferCalled = false;
-    await page.route('**/organizations/*/transfer-ownership', (route) => {
+    await page.route(api('/organizations/*/transfer-ownership'), (route) => {
       transferCalled = true;
       return route.fulfill({ status: 200 });
     });
@@ -191,7 +189,7 @@ test.describe('Organizations — owner managing org', () => {
     await page.goto('/dashboard/organizations');
     await page.getByRole('button', { name: /transfer/i }).click();
 
-    await page.getByPlaceholder(/email/i).last().fill('jane@example.com');
+    await page.locator('dialog input').first().fill('jane@example.com');
     await page
       .getByRole('button', { name: /transfer/i })
       .last()
@@ -202,7 +200,7 @@ test.describe('Organizations — owner managing org', () => {
 
   test('can delete the organization with confirmation', async ({ page }) => {
     let deleteCalled = false;
-    await page.route('**/organizations/' + mockOrg.id, (route) => {
+    await page.route(api('/organizations/' + mockOrg.id), (route) => {
       if (route.request().method() === 'DELETE') {
         deleteCalled = true;
         return route.fulfill({ status: 200 });
@@ -217,9 +215,7 @@ test.describe('Organizations — owner managing org', () => {
       .click();
 
     // Type org name to confirm
-    const confirmInput = page
-      .getByPlaceholder(/type/i)
-      .or(page.locator('input[type="text"]').last());
+    const confirmInput = page.locator('dialog input').first();
     await confirmInput.fill('Acme Corp');
     await page
       .getByRole('button', { name: /delete/i })
@@ -240,7 +236,7 @@ test.describe('Organizations — member (non-owner)', () => {
       organizationId: mockOrg.id,
       role: 'admin',
     });
-    await page.route('**/organizations/' + mockOrg.id, (route) =>
+    await page.route(api('/organizations/' + mockOrg.id), (route) =>
       route.fulfill({ status: 200, json: mockOrg }),
     );
 
@@ -262,12 +258,12 @@ test.describe('Organizations — invite rejection', () => {
       organizationId: mockOrg.id,
       role: 'owner',
     });
-    await page.route('**/organizations/' + mockOrg.id, (route) =>
+    await page.route(api('/organizations/' + mockOrg.id), (route) =>
       route.fulfill({ status: 200, json: mockOrg }),
     );
 
     let inviteStatus = 0;
-    await page.route('**/organizations/*/members', (route) => {
+    await page.route(api('/organizations/*/members'), (route) => {
       if (route.request().method() === 'POST') {
         inviteStatus = 409;
         return route.fulfill({
@@ -314,7 +310,7 @@ test.describe('Organizations — dissolving state', () => {
       organizationId: mockOrg.id,
       role: 'owner',
     });
-    await page.route('**/organizations/' + mockOrg.id, (route) =>
+    await page.route(api('/organizations/' + mockOrg.id), (route) =>
       route.fulfill({ status: 200, json: dissolvingOrg }),
     );
 

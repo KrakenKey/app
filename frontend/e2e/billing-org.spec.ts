@@ -1,10 +1,10 @@
-import { test, expect, authenticateAs } from './fixtures/auth';
+import { test, expect, authenticateAs, api } from './fixtures/auth';
 import { teamSub, orgOwnerUser, orgMemberUser } from './fixtures/mock-data';
 
 test.describe('Billing — org member (read-only)', () => {
   test.beforeEach(async ({ page }) => {
     await authenticateAs(page, orgMemberUser);
-    await page.route('**/billing/subscription', (route) =>
+    await page.route(api('/billing/subscription'), (route) =>
       route.fulfill({ status: 200, json: teamSub }),
     );
   });
@@ -28,7 +28,7 @@ test.describe('Billing — org member (read-only)', () => {
 test.describe('Billing — org owner (full controls)', () => {
   test.beforeEach(async ({ page }) => {
     await authenticateAs(page, orgOwnerUser);
-    await page.route('**/billing/subscription', (route) =>
+    await page.route(api('/billing/subscription'), (route) =>
       route.fulfill({ status: 200, json: teamSub }),
     );
   });
@@ -43,7 +43,7 @@ test.describe('Billing — org owner (full controls)', () => {
 
   test('manage subscription opens Stripe portal', async ({ page }) => {
     let portalCalled = false;
-    await page.route('**/billing/portal', (route) => {
+    await page.route(api('/billing/portal'), (route) => {
       portalCalled = true;
       return route.fulfill({
         status: 200,

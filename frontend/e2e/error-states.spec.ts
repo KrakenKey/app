@@ -1,13 +1,9 @@
-import { test, expect, authenticateAs } from './fixtures/auth';
-
-// The API base URL used by axios. Route patterns must be specific enough
-// to match API calls without intercepting Vite page navigation.
-const API = '**/api-dev.krakenkey.io/**';
+import { test, expect, authenticateAs, api } from './fixtures/auth';
 
 test.describe('Error States', () => {
   test('500 server error shows error toast', async ({ page }) => {
     await authenticateAs(page);
-    await page.route(`${API}domains`, (route) =>
+    await page.route(api('/domains'), (route) =>
       route.fulfill({
         status: 500,
         json: { message: 'Internal server error' },
@@ -24,7 +20,7 @@ test.describe('Error States', () => {
   test('network failure shows connection error', async ({ page }) => {
     await authenticateAs(page);
     // Only abort API calls to the domains endpoint, not page navigation
-    await page.route(`${API}domains`, (route) =>
+    await page.route(api('/domains'), (route) =>
       route.abort('connectionfailed'),
     );
 
@@ -39,7 +35,7 @@ test.describe('Error States', () => {
     await authenticateAs(page);
 
     // GET succeeds, POST returns 429
-    await page.route(`${API}domains`, (route) => {
+    await page.route(api('/domains'), (route) => {
       if (route.request().method() === 'GET') {
         return route.fulfill({ status: 200, json: [] });
       }
@@ -66,7 +62,7 @@ test.describe('Error States', () => {
     await authenticateAs(page);
 
     // Override the domains API to return 401
-    await page.route(`${API}domains`, (route) =>
+    await page.route(api('/domains'), (route) =>
       route.fulfill({ status: 401, json: { message: 'Unauthorized' } }),
     );
 

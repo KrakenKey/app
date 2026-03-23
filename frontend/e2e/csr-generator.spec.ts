@@ -1,8 +1,5 @@
-import { test, expect, authenticateAs } from './fixtures/auth';
+import { test, expect, authenticateAs, api } from './fixtures/auth';
 import { mockDomains, mockCertificates } from './fixtures/mock-data';
-
-// Match API calls but not page navigation. The ** at start matches protocol+host.
-const API = '**/api-dev.krakenkey.io/';
 
 test.describe('CSR Generator', () => {
   test.beforeEach(async ({ page }) => {
@@ -11,7 +8,7 @@ test.describe('CSR Generator', () => {
       resourceCounts: { domains: 2, certificates: 1, apiKeys: 0 },
     });
 
-    await page.route(`${API}certs/tls`, (route) => {
+    await page.route(api('/certs/tls'), (route) => {
       if (route.request().method() === 'GET') {
         return route.fulfill({ status: 200, json: mockCertificates });
       }
@@ -24,7 +21,7 @@ test.describe('CSR Generator', () => {
       return route.continue();
     });
 
-    await page.route(`${API}domains`, (route) =>
+    await page.route(api('/domains'), (route) =>
       route.fulfill({ status: 200, json: mockDomains }),
     );
   });

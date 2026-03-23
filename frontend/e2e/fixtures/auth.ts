@@ -46,4 +46,13 @@ export const test = base.extend<{ authedPage: Page }>({
   },
 });
 
+/**
+ * API route prefix. Use this to scope page.route() patterns so they only
+ * intercept API calls (to api-dev.krakenkey.io) and NOT Vite page navigation
+ * (localhost:5173). Usage: `page.route(api('/domains'), handler)`
+ */
+export function api(path: string): string {
+  return `**/api-dev.krakenkey.io${path}`;
+}
+
 export { expect } from '@playwright/test';

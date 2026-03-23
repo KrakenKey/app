@@ -1,4 +1,4 @@
-import { test, expect, authenticateAs } from './fixtures/auth';
+import { test, expect, authenticateAs, api } from './fixtures/auth';
 import {
   freeSub,
   starterSub,
@@ -10,7 +10,7 @@ import {
 test.describe('Billing — free plan user', () => {
   test.beforeEach(async ({ page }) => {
     await authenticateAs(page, { plan: 'free' });
-    await page.route('**/billing/subscription', (route) =>
+    await page.route(api('/billing/subscription'), (route) =>
       route.fulfill({ status: 200, json: freeSub }),
     );
   });
@@ -18,41 +18,42 @@ test.describe('Billing — free plan user', () => {
   test('shows starter and team upgrade cards', async ({ page }) => {
     await page.goto('/dashboard/billing');
 
-    await expect(page.getByText('Starter')).toBeVisible();
-    await expect(page.getByText('Team')).toBeVisible();
-    await expect(page.getByText('$29')).toBeVisible();
-    await expect(page.getByText('$79')).toBeVisible();
+    await expect(page.getByText('Starter — $29/mo')).toBeVisible();
+    await expect(page.getByText('Team — $79/mo')).toBeVisible();
   });
 
-  test('clicking upgrade initiates Stripe checkout redirect', async ({
-    page,
-  }) => {
-    await page.route('**/billing/checkout', (route) =>
-      route.fulfill({
+  test('clicking upgrade calls checkout endpoint', async ({ page }) => {
+    let checkoutCalled = false;
+    await page.route(api('/billing/checkout'), (route) => {
+      checkoutCalled = true;
+      return route.fulfill({
         status: 200,
         json: { sessionUrl: 'https://checkout.stripe.com/test_session' },
-      }),
+      });
+    });
+
+    // Prevent actual navigation to Stripe
+    await page.route('**/checkout.stripe.com/**', (route) =>
+      route.fulfill({ status: 200, body: 'intercepted' }),
     );
 
     await page.goto('/dashboard/billing');
 
-    // Intercept the navigation to Stripe so the test doesn't leave the page
-    await Promise.all([
-      page.waitForEvent('popup').catch(() => null),
-      page
-        .getByRole('button', { name: /upgrade to starter/i })
-        .first()
-        .click(),
-    ]);
+    await page
+      .getByRole('button', { name: /upgrade to starter/i })
+      .first()
+      .click();
 
-    // Verify the checkout endpoint was called (the page would navigate to Stripe)
+    // Wait for the checkout API call
+    await page.waitForTimeout(1000);
+    expect(checkoutCalled).toBe(true);
   });
 });
 
 test.describe('Billing — starter plan user', () => {
   test.beforeEach(async ({ page }) => {
     await authenticateAs(page, { plan: 'starter' });
-    await page.route('**/billing/subscription', (route) =>
+    await page.route(api('/billing/subscription'), (route) =>
       route.fulfill({ status: 200, json: starterSub }),
     );
   });
@@ -64,7 +65,7 @@ test.describe('Billing — starter plan user', () => {
   });
 
   test('upgrade preview modal shows prorated cost', async ({ page }) => {
-    await page.route('**/billing/upgrade/preview', (route) =>
+    await page.route(api('/billing/upgrade/preview'), (route) =>
       route.fulfill({ status: 200, json: upgradePreview }),
     );
 
@@ -78,12 +79,12 @@ test.describe('Billing — starter plan user', () => {
   });
 
   test('confirming upgrade calls upgrade endpoint', async ({ page }) => {
-    await page.route('**/billing/upgrade/preview', (route) =>
+    await page.route(api('/billing/upgrade/preview'), (route) =>
       route.fulfill({ status: 200, json: upgradePreview }),
     );
 
     let upgradeCalled = false;
-    await page.route('**/billing/upgrade', (route) => {
+    await page.route(api('/billing/upgrade'), (route) => {
       upgradeCalled = true;
       return route.fulfill({
         status: 200,
@@ -108,7 +109,7 @@ test.describe('Billing — starter plan user', () => {
 test.describe('Billing — team+ plan user', () => {
   test.beforeEach(async ({ page }) => {
     await authenticateAs(page, { plan: 'team' });
-    await page.route('**/billing/subscription', (route) =>
+    await page.route(api('/billing/subscription'), (route) =>
       route.fulfill({ status: 200, json: teamSub }),
     );
   });
@@ -122,7 +123,7 @@ test.describe('Billing — team+ plan user', () => {
   });
 
   test('manage subscription opens Stripe portal', async ({ page }) => {
-    await page.route('**/billing/portal', (route) =>
+    await page.route(api('/billing/portal'), (route) =>
       route.fulfill({
         status: 200,
         json: { portalUrl: 'https://billing.stripe.com/test_portal' },
@@ -138,7 +139,7 @@ test.describe('Billing — team+ plan user', () => {
 test.describe('Billing — canceling subscription', () => {
   test('shows cancellation warning', async ({ page }) => {
     await authenticateAs(page, { plan: 'starter' });
-    await page.route('**/billing/subscription', (route) =>
+    await page.route(api('/billing/subscription'), (route) =>
       route.fulfill({ status: 200, json: cancelingSub }),
     );
 
