@@ -189,7 +189,9 @@ export class AcmeIssuerStrategy implements CertIssuerStrategy {
           return;
         }
       } catch (err) {
-        this.logger.error('risky failed', (err as Error).stack);
+        this.logger.warn(
+          `DNS lookup attempt failed for ${targetRecord}: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
       this.logger.log(
         `DNS propagation not yet detected for ${targetRecord}. Retrying in 10s...`,

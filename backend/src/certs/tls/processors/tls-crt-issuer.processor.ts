@@ -69,9 +69,7 @@ export class CertIssuerConsumer extends WorkerHost {
 
     // Validate CSR format before attempting ACME
     const raw = csrRecord.rawCsr ?? '';
-    this.logger.debug(
-      `CSR preview: ${raw.slice(0, 60).replace(/\n/g, ' ')}...`,
-    );
+    this.logger.debug(`Validating CSR format for cert #${certId}`);
     if (!raw.includes('-----BEGIN') || !raw.includes('-----END')) {
       await this.tlsService.updateInternal(
         csrRecord.id,

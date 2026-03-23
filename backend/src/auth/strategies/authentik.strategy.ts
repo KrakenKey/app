@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   OnModuleInit,
   InternalServerErrorException,
 } from '@nestjs/common';
@@ -14,6 +15,7 @@ export class AuthentikStrategy
   extends PassportStrategy(Strategy, 'authentik')
   implements OnModuleInit
 {
+  private readonly logger = new Logger(AuthentikStrategy.name);
   private client: any;
 
   constructor(private configService: ConfigService) {
@@ -33,9 +35,12 @@ export class AuthentikStrategy
       );
 
       this.client = config;
-      console.log('✅ Authentik Strategy Initialized');
+      this.logger.log('Authentik Strategy initialized');
     } catch (error) {
-      console.error('❌ Failed to discover Authentik:', error);
+      this.logger.error(
+        'Failed to discover Authentik',
+        error instanceof Error ? error.stack : undefined,
+      );
       throw new InternalServerErrorException('IdP Discovery failed');
     }
   }
