@@ -192,8 +192,11 @@ export class DomainsService {
 
     if (!hasVerification) {
       this.metricsService.domainsVerifiedTotal.inc({ status: 'failed' });
+      this.logger.debug(
+        `Verification failed for ${domain.hostname}: expected code not found among ${flatRecords.length} TXT records`,
+      );
       throw new BadRequestException(
-        `Verification record not found. Expected: "${domain.verificationCode}", Found: ${JSON.stringify(flatRecords)}`,
+        'Verification TXT record not found. Please ensure the record has propagated and try again.',
       );
     }
 
