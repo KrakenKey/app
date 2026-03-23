@@ -162,7 +162,7 @@ describe('TLS Certificates (e2e)', () => {
         .patch('/certs/tls/1')
         .send({})
         .expect(200)
-        .expect((res) => {
+        .expect((_res) => {
           expect(mockTlsService.update).toHaveBeenCalledWith(
             1,
             MOCK_USER.userId,

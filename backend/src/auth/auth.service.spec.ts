@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { createHash } from 'crypto';
-import { NotFoundException } from '@nestjs/common';
+import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { UserApiKey } from './entities/user-api-key.entity';
 import { User } from '../users/entities/user.entity';
@@ -106,6 +106,20 @@ describe('AuthService', () => {
       expect(parsed.searchParams.get('response_type')).toBe('code');
       expect(parsed.searchParams.get('scope')).toContain('openid');
     });
+
+    it('returns a random state parameter and includes it in the URL', () => {
+      const result = service.getLoginRedirect();
+      expect(result.state).toBeDefined();
+      expect(result.state).toHaveLength(64); // 32 bytes hex
+      const parsed = new URL(result.url);
+      expect(parsed.searchParams.get('state')).toBe(result.state);
+    });
+
+    it('generates a unique state on each call', () => {
+      const { state: s1 } = service.getLoginRedirect();
+      const { state: s2 } = service.getLoginRedirect();
+      expect(s1).not.toBe(s2);
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -127,12 +141,22 @@ describe('AuthService', () => {
       expect(next).toContain('/application/o/authorize/');
       expect(next).toContain('client_id=krakenkey-backend');
     });
+
+    it('returns a random state and includes it in the encoded OAuth URL', () => {
+      const result = service.getRegisterRedirect();
+      expect(result.state).toBeDefined();
+      expect(result.state).toHaveLength(64);
+      const next = decodeURIComponent(result.url.split('next=')[1]);
+      expect(next).toContain(`state=${result.state}`);
+    });
   });
 
   // ---------------------------------------------------------------------------
   // handleCallback
   // ---------------------------------------------------------------------------
   describe('handleCallback', () => {
+    const validState = 'a'.repeat(64);
+
     it('POSTs the auth code to the Authentik token endpoint', async () => {
       const tokens = {
         access_token: 'at',
@@ -143,7 +167,7 @@ describe('AuthService', () => {
         .fn()
         .mockResolvedValue({ ok: true, json: async () => tokens });
 
-      await service.handleCallback('auth-code-abc');
+      await service.handleCallback('auth-code-abc', validState, validState);
 
       const [url, init] = (global.fetch as jest.Mock).mock.calls[0] as [
         string,
@@ -164,7 +188,11 @@ describe('AuthService', () => {
         .fn()
         .mockResolvedValue({ ok: true, json: async () => tokens });
 
-      const result = await service.handleCallback('code');
+      const result = await service.handleCallback(
+        'code',
+        validState,
+        validState,
+      );
       expect(result).toEqual(tokens);
     });
 
@@ -191,7 +219,7 @@ describe('AuthService', () => {
       mockUserRepo.create.mockReturnValue(newUser);
       mockUserRepo.save.mockResolvedValue(newUser);
 
-      await service.handleCallback('code');
+      await service.handleCallback('code', validState, validState);
 
       expect(mockUserRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -218,7 +246,7 @@ describe('AuthService', () => {
       });
       mockUserRepo.findOne.mockResolvedValue({ id: 'sub-123' });
 
-      await service.handleCallback('code');
+      await service.handleCallback('code', validState, validState);
 
       expect(mockUserRepo.create).not.toHaveBeenCalled();
       expect(mockUserRepo.save).not.toHaveBeenCalled();
@@ -234,7 +262,11 @@ describe('AuthService', () => {
         .fn()
         .mockResolvedValue({ ok: true, json: async () => tokens });
 
-      const result = await service.handleCallback('code');
+      const result = await service.handleCallback(
+        'code',
+        validState,
+        validState,
+      );
 
       expect(result).toEqual(tokens);
       expect(mockUserRepo.findOne).not.toHaveBeenCalled();
@@ -246,9 +278,27 @@ describe('AuthService', () => {
         text: async () => 'invalid_grant',
       });
 
-      await expect(service.handleCallback('bad-code')).rejects.toThrow(
-        'Failed to exchange code for token',
-      );
+      await expect(
+        service.handleCallback('bad-code', validState, validState),
+      ).rejects.toThrow('Failed to exchange code for token');
+    });
+
+    it('throws UnauthorizedException when state is missing from cookie', async () => {
+      await expect(
+        service.handleCallback('code', validState, undefined),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('throws UnauthorizedException when state does not match cookie', async () => {
+      await expect(
+        service.handleCallback('code', validState, 'b'.repeat(64)),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('throws UnauthorizedException when state query param is empty', async () => {
+      await expect(
+        service.handleCallback('code', '', validState),
+      ).rejects.toThrow(UnauthorizedException);
     });
   });
 

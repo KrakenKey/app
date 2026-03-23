@@ -34,7 +34,9 @@ vi.mock('react-router-dom', async () => {
 describe('Callback', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSearchParams = new URLSearchParams('code=test-code-123');
+    mockSearchParams = new URLSearchParams(
+      'code=test-code-123&state=test-state-456',
+    );
   });
 
   it('renders authenticating message', () => {
@@ -43,12 +45,15 @@ describe('Callback', () => {
     expect(screen.getByText('Authenticating...')).toBeInTheDocument();
   });
 
-  it('calls handleCallback with code from URL', async () => {
+  it('calls handleCallback with code and state from URL', async () => {
     mockHandleCallback.mockResolvedValue(undefined);
     render(<Callback />);
 
     await waitFor(() => {
-      expect(mockHandleCallback).toHaveBeenCalledWith('test-code-123');
+      expect(mockHandleCallback).toHaveBeenCalledWith(
+        'test-code-123',
+        'test-state-456',
+      );
     });
   });
 

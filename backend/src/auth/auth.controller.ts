@@ -4,7 +4,7 @@ import {
   Patch,
   UseGuards,
   Req,
-  Redirect,
+  Res,
   Query,
   Post,
   Body,
@@ -19,6 +19,7 @@ import {
   ApiQuery,
   ApiParam,
 } from '@nestjs/swagger';
+import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import type { RequestWithUser } from './interfaces/request-with-user.interface';
 import { JwtOrApiKeyGuard } from './guards/jwt-or-api-key.guard';
@@ -27,6 +28,9 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { RateLimitCategoryDecorator } from '../throttler/decorators/rate-limit-category.decorator';
 import { RateLimitCategory } from '../throttler/interfaces/rate-limit-category.enum';
 
+const OAUTH_STATE_COOKIE = 'oauth_state';
+const OAUTH_STATE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
+
 @Controller('auth')
 @ApiTags('Authentication')
 @RateLimitCategoryDecorator(RateLimitCategory.PUBLIC)
@@ -34,33 +38,58 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Get('register')
-  @Redirect()
   @ApiOperation({ summary: 'Redirect to registration' })
   @ApiResponse({
     status: 302,
     description: 'Redirects to Authentik registration flow',
   })
-  register() {
-    return this.authService.getRegisterRedirect();
+  register(@Res() res: Response) {
+    const { url, state } = this.authService.getRegisterRedirect();
+    res.cookie(OAUTH_STATE_COOKIE, state, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: true,
+      maxAge: OAUTH_STATE_MAX_AGE_MS,
+      path: '/auth/callback',
+    });
+    res.redirect(302, url);
   }
 
   @Get('login')
-  @Redirect()
   @ApiOperation({ summary: 'Redirect to SSO login' })
   @ApiResponse({
     status: 302,
     description: 'Redirects to Authentik login flow',
   })
-  login() {
-    return this.authService.getLoginRedirect();
+  login(@Res() res: Response) {
+    const { url, state } = this.authService.getLoginRedirect();
+    res.cookie(OAUTH_STATE_COOKIE, state, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: true,
+      maxAge: OAUTH_STATE_MAX_AGE_MS,
+      path: '/auth/callback',
+    });
+    res.redirect(302, url);
   }
 
   @Get('callback')
   @ApiOperation({ summary: 'OAuth callback' })
   @ApiQuery({ name: 'code', description: 'Authorization code from Authentik' })
+  @ApiQuery({
+    name: 'state',
+    description: 'OAuth state parameter for CSRF protection',
+  })
   @ApiResponse({ status: 200, description: 'Returns JWT access token' })
-  async callback(@Query('code') code: string) {
-    return this.authService.handleCallback(code);
+  async callback(
+    @Query('code') code: string,
+    @Query('state') state: string,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const cookieState = req.cookies?.[OAUTH_STATE_COOKIE] as string | undefined;
+    res.clearCookie(OAUTH_STATE_COOKIE, { path: '/auth/callback' });
+    return this.authService.handleCallback(code, state, cookieState);
   }
 
   @Get('profile')

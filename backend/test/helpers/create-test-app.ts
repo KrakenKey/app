@@ -1,6 +1,5 @@
 import { Test, TestingModuleBuilder } from '@nestjs/testing';
 import {
-  INestApplication,
   Type,
   ValidationPipe,
   ExecutionContext,

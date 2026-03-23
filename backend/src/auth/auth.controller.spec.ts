@@ -2,6 +2,14 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 
+function mockRes(): Record<string, jest.Mock> {
+  return {
+    cookie: jest.fn(),
+    redirect: jest.fn(),
+    clearCookie: jest.fn(),
+  };
+}
+
 describe('AuthController', () => {
   let controller: AuthController;
   let mockAuthService: Record<string, jest.Mock>;
@@ -39,39 +47,79 @@ describe('AuthController', () => {
   });
 
   describe('register', () => {
-    it('delegates to authService.getRegisterRedirect()', () => {
+    it('sets oauth_state cookie and redirects', () => {
       const redirect = {
         url: 'https://auth.example.com/enrollment',
+        state: 'random-state-abc',
         statusCode: 302,
       };
       mockAuthService.getRegisterRedirect.mockReturnValue(redirect);
+      const res = mockRes();
 
-      expect(controller.register()).toEqual(redirect);
+      controller.register(res as any);
+
       expect(mockAuthService.getRegisterRedirect).toHaveBeenCalled();
+      expect(res.cookie).toHaveBeenCalledWith(
+        'oauth_state',
+        'random-state-abc',
+        expect.objectContaining({
+          httpOnly: true,
+          sameSite: 'lax',
+          secure: true,
+        }),
+      );
+      expect(res.redirect).toHaveBeenCalledWith(302, redirect.url);
     });
   });
 
   describe('login', () => {
-    it('delegates to authService.getLoginRedirect()', () => {
+    it('sets oauth_state cookie and redirects', () => {
       const redirect = {
         url: 'https://auth.example.com/authorize',
+        state: 'random-state-xyz',
         statusCode: 302,
       };
       mockAuthService.getLoginRedirect.mockReturnValue(redirect);
+      const res = mockRes();
 
-      expect(controller.login()).toEqual(redirect);
+      controller.login(res as any);
+
       expect(mockAuthService.getLoginRedirect).toHaveBeenCalled();
+      expect(res.cookie).toHaveBeenCalledWith(
+        'oauth_state',
+        'random-state-xyz',
+        expect.objectContaining({
+          httpOnly: true,
+          sameSite: 'lax',
+          secure: true,
+        }),
+      );
+      expect(res.redirect).toHaveBeenCalledWith(302, redirect.url);
     });
   });
 
   describe('callback', () => {
-    it('passes code to authService.handleCallback()', async () => {
+    it('passes code, state, and cookie state to authService.handleCallback()', async () => {
       const tokens = { access_token: 'at', token_type: 'Bearer' };
       mockAuthService.handleCallback.mockResolvedValue(tokens);
+      const req = { cookies: { oauth_state: 'state-123' } } as any;
+      const res = mockRes();
 
-      const result = await controller.callback('auth-code');
+      const result = await controller.callback(
+        'auth-code',
+        'state-123',
+        req,
+        res as any,
+      );
 
-      expect(mockAuthService.handleCallback).toHaveBeenCalledWith('auth-code');
+      expect(res.clearCookie).toHaveBeenCalledWith('oauth_state', {
+        path: '/auth/callback',
+      });
+      expect(mockAuthService.handleCallback).toHaveBeenCalledWith(
+        'auth-code',
+        'state-123',
+        'state-123',
+      );
       expect(result).toEqual(tokens);
     });
   });

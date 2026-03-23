@@ -10,11 +10,7 @@
  * Services are mocked at the TlsService boundary. Mock return values are
  * updated between steps to simulate realistic state progression.
  */
-import {
-  INestApplication,
-  BadRequestException,
-  NotFoundException,
-} from '@nestjs/common';
+import { INestApplication, BadRequestException } from '@nestjs/common';
 import request from 'supertest';
 import { TlsController } from '../src/certs/tls/tls.controller';
 import { TlsService } from '../src/certs/tls/tls.service';
@@ -25,7 +21,6 @@ import {
   MOCK_ISSUED_CERT,
   MOCK_FAILED_CERT,
   MOCK_REVOKED_CERT,
-  MOCK_USER,
 } from './helpers/mock-data';
 
 describe('Certificate Lifecycle (e2e)', () => {

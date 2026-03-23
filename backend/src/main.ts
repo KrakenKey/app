@@ -7,12 +7,14 @@ import { ValidationPipe } from '@nestjs/common';
 import { HttpExceptionFilter } from './filters/http-exception.filter';
 import { Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
 import { createSwaggerConfig } from './config/swagger.config';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
 
   app.use(helmet());
+  app.use(cookieParser());
 
   // Trust the first proxy hop so req.ip returns the real client IP
   const expressApp = app.getHttpAdapter().getInstance();
