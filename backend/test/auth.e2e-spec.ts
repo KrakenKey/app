@@ -15,10 +15,12 @@ describe('Auth (e2e)', () => {
     mockAuthService = {
       getRegisterRedirect: jest.fn().mockReturnValue({
         url: 'https://auth.example.com/if/flow/enrollment/',
+        state: 'mock-state-register',
         statusCode: 302,
       }),
       getLoginRedirect: jest.fn().mockReturnValue({
         url: 'https://auth.example.com/application/o/authorize/',
+        state: 'mock-state-login',
         statusCode: 302,
       }),
       handleCallback: jest.fn().mockResolvedValue({
@@ -67,32 +69,47 @@ describe('Auth (e2e)', () => {
 
   // ─── GET /auth/register ───────────────────────────────────────────────────
   describe('GET /auth/register', () => {
-    it('returns 302 redirect to Authentik enrollment', () =>
+    it('returns 302 redirect to Authentik enrollment and sets oauth_state cookie', () =>
       request(app.getHttpServer())
         .get('/auth/register')
         .expect(302)
         .expect((res) => {
           expect(res.headers.location).toContain('auth.example.com');
+          const cookies = res.headers['set-cookie'] as unknown as string[];
+          const stateCookie = cookies?.find((c: string) =>
+            c.startsWith('oauth_state='),
+          );
+          expect(stateCookie).toBeDefined();
+          expect(stateCookie).toContain('HttpOnly');
+          expect(stateCookie).toContain('mock-state-register');
         }));
   });
 
   // ─── GET /auth/login ─────────────────────────────────────────────────────
   describe('GET /auth/login', () => {
-    it('returns 302 redirect to Authentik login', () =>
+    it('returns 302 redirect to Authentik login and sets oauth_state cookie', () =>
       request(app.getHttpServer())
         .get('/auth/login')
         .expect(302)
         .expect((res) => {
           expect(res.headers.location).toContain('auth.example.com');
+          const cookies = res.headers['set-cookie'] as unknown as string[];
+          const stateCookie = cookies?.find((c: string) =>
+            c.startsWith('oauth_state='),
+          );
+          expect(stateCookie).toBeDefined();
+          expect(stateCookie).toContain('HttpOnly');
+          expect(stateCookie).toContain('mock-state-login');
         }));
   });
 
   // ─── GET /auth/callback ──────────────────────────────────────────────────
   describe('GET /auth/callback', () => {
-    it('returns 200 with token data when code is valid', () =>
+    it('returns 200 with token data when code and state are valid', () =>
       request(app.getHttpServer())
         .get('/auth/callback')
-        .query({ code: 'valid-code' })
+        .set('Cookie', 'oauth_state=valid-state')
+        .query({ code: 'valid-code', state: 'valid-state' })
         .expect(200)
         .expect((res) => {
           expect(res.body).toMatchObject({
@@ -101,6 +118,8 @@ describe('Auth (e2e)', () => {
           });
           expect(mockAuthService.handleCallback).toHaveBeenCalledWith(
             'valid-code',
+            'valid-state',
+            'valid-state',
           );
         }));
 
@@ -111,7 +130,8 @@ describe('Auth (e2e)', () => {
 
       await request(app.getHttpServer())
         .get('/auth/callback')
-        .query({ code: 'bad-code' })
+        .set('Cookie', 'oauth_state=some-state')
+        .query({ code: 'bad-code', state: 'some-state' })
         .expect(500);
     });
   });

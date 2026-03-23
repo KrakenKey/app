@@ -5,6 +5,7 @@ import {
   ExecutionContext,
   UnauthorizedException,
 } from '@nestjs/common';
+import cookieParser from 'cookie-parser';
 import { JwtOrApiKeyGuard } from '../../src/auth/guards/jwt-or-api-key.guard';
 import { HttpExceptionFilter } from '../../src/filters/http-exception.filter';
 import { MOCK_USER } from './mock-data';
@@ -76,7 +77,8 @@ export async function createTestApp(options: CreateTestAppOptions) {
   const module = await builder.compile();
   const app = module.createNestApplication();
 
-  // Match production setup (src/main.ts:62-70)
+  // Match production setup (src/main.ts)
+  app.use(cookieParser());
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   app.useGlobalFilters(new HttpExceptionFilter());
 
