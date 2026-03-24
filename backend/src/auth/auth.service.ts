@@ -3,6 +3,7 @@ import {
   Logger,
   NotFoundException,
   HttpException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { In, Repository } from 'typeorm';
@@ -58,12 +59,15 @@ export class AuthService {
       'KK_AUTHENTIK_REDIRECT_URI',
     ) as string;
 
+    const state = randomBytes(32).toString('hex');
+
     // Build OAuth authorization URL
     const oauthAuthUrl = new URL(`https://${domain}/application/o/authorize/`);
     oauthAuthUrl.searchParams.set('client_id', clientId);
     oauthAuthUrl.searchParams.set('redirect_uri', redirectUri);
     oauthAuthUrl.searchParams.set('response_type', 'code');
     oauthAuthUrl.searchParams.set('scope', 'openid email profile');
+    oauthAuthUrl.searchParams.set('state', state);
 
     // Use relative path for 'next' to avoid open redirect issues
     const nextTarget = encodeURIComponent(
@@ -71,7 +75,7 @@ export class AuthService {
     );
     const url = `https://${domain}/if/flow/${enrollmentSlug}/?next=${nextTarget}`;
 
-    return { url, statusCode: 302 };
+    return { url, state, statusCode: 302 };
   }
 
   /**
@@ -86,13 +90,16 @@ export class AuthService {
       'KK_AUTHENTIK_REDIRECT_URI',
     ) as string;
 
+    const state = randomBytes(32).toString('hex');
+
     const url = new URL(`https://${domain}/application/o/authorize/`);
     url.searchParams.set('client_id', clientId);
     url.searchParams.set('redirect_uri', redirectUri);
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('scope', 'openid email profile');
+    url.searchParams.set('state', state);
 
-    return { url: url.toString(), statusCode: 302 };
+    return { url: url.toString(), state, statusCode: 302 };
   }
 
   /**
@@ -107,7 +114,17 @@ export class AuthService {
    * The 'sub' claim from id_token is used as the primary key in our User table,
    * linking our local user records to Authentik identities.
    */
-  async handleCallback(code: string): Promise<AuthCallbackResponse> {
+  async handleCallback(
+    code: string,
+    state: string,
+    cookieState: string | undefined,
+  ): Promise<AuthCallbackResponse> {
+    if (!cookieState || !state || cookieState !== state) {
+      throw new UnauthorizedException(
+        'OAuth state mismatch. Please try logging in again.',
+      );
+    }
+
     const domain = this.config.get<string>('KK_AUTHENTIK_DOMAIN');
     const clientId = this.config.get<string>('KK_AUTHENTIK_CLIENT_ID');
     const clientSecret = this.config.get<string>('KK_AUTHENTIK_CLIENT_SECRET');

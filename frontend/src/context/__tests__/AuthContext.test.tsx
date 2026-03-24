@@ -68,7 +68,7 @@ describe('AuthContext', () => {
     });
 
     await act(async () => {
-      await result.current.handleCallback('test-auth-code');
+      await result.current.handleCallback('test-auth-code', 'test-state');
     });
 
     expect(result.current.user).toEqual(mockUser);
@@ -84,7 +84,7 @@ describe('AuthContext', () => {
     });
 
     await act(async () => {
-      await result.current.handleCallback('test-auth-code');
+      await result.current.handleCallback('test-auth-code', 'test-state');
     });
 
     expect(localStorage.getItem('access_token')).toBe('fake-id-token-67890');
@@ -107,7 +107,7 @@ describe('AuthContext', () => {
     });
 
     await act(async () => {
-      await result.current.handleCallback('test-auth-code');
+      await result.current.handleCallback('test-auth-code', 'test-state');
     });
 
     expect(localStorage.getItem('access_token')).toBe('fallback-access-token');
@@ -128,7 +128,7 @@ describe('AuthContext', () => {
 
     await expect(
       act(async () => {
-        await result.current.handleCallback('bad-code');
+        await result.current.handleCallback('bad-code', 'test-state');
       }),
     ).rejects.toThrow();
   });

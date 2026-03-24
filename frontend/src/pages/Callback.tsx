@@ -11,6 +11,7 @@ const Callback: React.FC = () => {
 
   useEffect(() => {
     const code = searchParams.get('code');
+    const state = searchParams.get('state');
 
     console.log(
       'Callback page loaded with code:',
@@ -20,7 +21,7 @@ const Callback: React.FC = () => {
     if (code && !processedRef.current) {
       processedRef.current = true; // Prevent double execution in Strict Mode
       console.log('Starting callback processing...');
-      handleCallback(code)
+      handleCallback(code, state)
         .then(() => {
           console.log('Callback successful, navigating to dashboard');
           navigate('/dashboard');

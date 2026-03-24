@@ -9,7 +9,7 @@ interface AuthContextType {
   login: () => void;
   register: () => void;
   logout: () => void;
-  handleCallback: (code: string) => Promise<void>;
+  handleCallback: (code: string, state: string | null) => Promise<void>;
   deleteAccount: () => Promise<void>;
   refreshUser: () => Promise<void>;
   isLoading: boolean;
@@ -80,13 +80,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
    * 4. Frontend stores id_token in localStorage (always a JWT with user claims)
    * 5. Frontend calls /auth/profile to get user data
    */
-  const handleCallback = async (code: string) => {
+  const handleCallback = async (code: string, state: string | null) => {
     try {
       setIsLoading(true);
       console.log('OAuth callback: exchanging code for tokens');
 
+      const params = new URLSearchParams({ code });
+      if (state) params.set('state', state);
+
       const response = await api.get<AuthCallbackResponse>(
-        `/auth/callback?code=${code}`,
+        `/auth/callback?${params.toString()}`,
       );
       console.log('Received response from /auth/callback');
 
