@@ -5,6 +5,7 @@ import { createHash } from 'crypto';
 import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { UserApiKey } from './entities/user-api-key.entity';
+import { ServiceApiKey } from './entities/service-api-key.entity';
 import { User } from '../users/entities/user.entity';
 import { Domain } from '../domains/entities/domain.entity';
 import { TlsCrt } from '../certs/tls/entities/tls-crt.entity';
@@ -61,6 +62,10 @@ describe('AuthService', () => {
         {
           provide: getRepositoryToken(UserApiKey),
           useValue: mockUserApiKeyRepo,
+        },
+        {
+          provide: getRepositoryToken(ServiceApiKey),
+          useValue: { findOne: jest.fn(), create: jest.fn(), save: jest.fn() },
         },
         { provide: getRepositoryToken(User), useValue: mockUserRepo },
         { provide: getRepositoryToken(Domain), useValue: { count: jest.fn() } },

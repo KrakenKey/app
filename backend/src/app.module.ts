@@ -18,6 +18,7 @@ import { MetricsModule } from './metrics/metrics.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { BillingModule } from './billing/billing.module';
 import { OrganizationsModule } from './organizations/organizations.module';
+import { ProbesModule } from './probes/probes.module';
 import { RoleGuard } from './auth/guards/role.guard';
 
 @Module({
@@ -72,6 +73,7 @@ import { RoleGuard } from './auth/guards/role.guard';
     MetricsModule,
     NotificationsModule,
     OrganizationsModule,
+    ProbesModule,
   ],
   controllers: [AppController],
   providers: [
