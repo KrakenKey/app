@@ -263,19 +263,18 @@ export class EndpointsService {
     userId: string,
   ): Promise<ProbeScanResult[]> {
     await this.findOne(endpointId, userId);
+
+    // Subquery: get the id of the latest result per probeId using DISTINCT ON
+    const latestIds = this.scanResultRepo
+      .createQueryBuilder('sub')
+      .select('DISTINCT ON (sub."probeId") sub.id')
+      .where('sub."endpointId" = :endpointId')
+      .orderBy('sub."probeId"')
+      .addOrderBy('sub."scannedAt"', 'DESC');
+
     return this.scanResultRepo
       .createQueryBuilder('r')
-      .where('r."endpointId" = :endpointId', { endpointId })
-      .andWhere(
-        'r.id IN ' +
-          this.scanResultRepo
-            .createQueryBuilder('sub')
-            .select('DISTINCT ON (sub."probeId") sub.id')
-            .where('sub."endpointId" = :endpointId')
-            .orderBy('sub."probeId"')
-            .addOrderBy('sub."scannedAt"', 'DESC')
-            .getQuery(),
-      )
+      .where('r.id IN (' + latestIds.getQuery() + ')')
       .setParameters({ endpointId })
       .getMany();
   }
