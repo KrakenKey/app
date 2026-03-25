@@ -102,61 +102,61 @@ export class ProbesService {
     const entities: ProbeScanResult[] = [];
 
     for (const r of dto.results) {
-      // Match host:port to a registered Endpoint
-      const endpoint = await this.resolveEndpoint(
+      // Match host:port to registered Endpoint(s)
+      // Hosted mode may return multiple endpoints (different users, same host:port)
+      const endpoints = await this.resolveEndpoints(
         r,
         probeMode,
         probeRegion,
         probeUserId,
       );
 
-      if (!endpoint && (probeMode === 'connected' || probeMode === 'hosted')) {
+      if (endpoints.length === 0) {
         this.logger.warn(
           `No matching endpoint for ${r.endpoint.host}:${r.endpoint.port} from probe ${dto.probeId} (${probeMode}), skipping`,
         );
         continue;
       }
 
-      // For hosted probes, userId comes from the endpoint owner
-      const resultUserId = endpoint?.userId ?? probeUserId;
-
-      entities.push(
-        this.scanResultRepo.create({
-          probeId: dto.probeId,
-          endpointId: endpoint?.id,
-          host: r.endpoint.host,
-          port: r.endpoint.port,
-          sni: r.endpoint.sni,
-          userId: resultUserId,
-          probeMode,
-          probeRegion,
-          connectionSuccess: r.connection.success,
-          connectionError: r.connection.error,
-          latencyMs: r.connection.latencyMs,
-          tlsVersion: r.connection.tlsVersion,
-          cipherSuite: r.connection.cipherSuite,
-          ocspStapled: r.connection.ocspStapled,
-          certSubject: r.certificate?.subject,
-          certSans: r.certificate?.sans,
-          certIssuer: r.certificate?.issuer,
-          certSerialNumber: r.certificate?.serialNumber,
-          certNotBefore: r.certificate?.notBefore
-            ? new Date(r.certificate.notBefore)
-            : undefined,
-          certNotAfter: r.certificate?.notAfter
-            ? new Date(r.certificate.notAfter)
-            : undefined,
-          certDaysUntilExpiry: r.certificate?.daysUntilExpiry,
-          certKeyType: r.certificate?.keyType,
-          certKeySize: r.certificate?.keySize,
-          certSignatureAlgorithm: r.certificate?.signatureAlgorithm,
-          certFingerprint: r.certificate?.fingerprint,
-          certChainDepth: r.certificate?.chainDepth,
-          certChainComplete: r.certificate?.chainComplete,
-          certTrusted: r.certificate?.trusted,
-          scannedAt,
-        }),
-      );
+      for (const endpoint of endpoints) {
+        entities.push(
+          this.scanResultRepo.create({
+            probeId: dto.probeId,
+            endpointId: endpoint.id,
+            host: r.endpoint.host,
+            port: r.endpoint.port,
+            sni: r.endpoint.sni,
+            userId: endpoint.userId,
+            probeMode,
+            probeRegion,
+            connectionSuccess: r.connection.success,
+            connectionError: r.connection.error,
+            latencyMs: r.connection.latencyMs,
+            tlsVersion: r.connection.tlsVersion,
+            cipherSuite: r.connection.cipherSuite,
+            ocspStapled: r.connection.ocspStapled,
+            certSubject: r.certificate?.subject,
+            certSans: r.certificate?.sans,
+            certIssuer: r.certificate?.issuer,
+            certSerialNumber: r.certificate?.serialNumber,
+            certNotBefore: r.certificate?.notBefore
+              ? new Date(r.certificate.notBefore)
+              : undefined,
+            certNotAfter: r.certificate?.notAfter
+              ? new Date(r.certificate.notAfter)
+              : undefined,
+            certDaysUntilExpiry: r.certificate?.daysUntilExpiry,
+            certKeyType: r.certificate?.keyType,
+            certKeySize: r.certificate?.keySize,
+            certSignatureAlgorithm: r.certificate?.signatureAlgorithm,
+            certFingerprint: r.certificate?.fingerprint,
+            certChainDepth: r.certificate?.chainDepth,
+            certChainComplete: r.certificate?.chainComplete,
+            certTrusted: r.certificate?.trusted,
+            scannedAt,
+          }),
+        );
+      }
     }
 
     if (entities.length > 0) {
@@ -258,35 +258,38 @@ export class ProbesService {
     }));
   }
 
-  private async resolveEndpoint(
+  /**
+   * Resolve scan result to one or more endpoints.
+   * Hosted mode can match multiple users' endpoints for the same host:port.
+   * Connected mode matches exactly one (the user's).
+   */
+  private async resolveEndpoints(
     result: ScanResultDto,
     probeMode: string,
     probeRegion: string | undefined,
     probeUserId: string | undefined,
-  ): Promise<Endpoint | null> {
+  ): Promise<Endpoint[]> {
     const host = result.endpoint.host;
     const port = result.endpoint.port;
 
     if (probeMode === 'connected' && probeUserId) {
-      // Connected: match against user's endpoints
-      return this.endpointRepo.findOne({
+      const ep = await this.endpointRepo.findOne({
         where: { userId: probeUserId, host, port },
       });
+      return ep ? [ep] : [];
     }
 
     if (probeMode === 'hosted' && probeRegion) {
-      // Hosted: match against endpoints that have this region configured
-      const row = await this.endpointRepo
+      return this.endpointRepo
         .createQueryBuilder('e')
         .innerJoin(EndpointHostedRegion, 'ehr', 'ehr."endpointId" = e.id')
         .where('e.host = :host AND e.port = :port', { host, port })
         .andWhere('ehr.region = :region', { region: probeRegion })
         .andWhere('e."isActive" = true')
-        .getOne();
-      return row;
+        .getMany();
     }
 
-    // Standalone mode or fallback: no endpoint matching
-    return null;
+    // Standalone mode: no endpoint matching
+    return [];
   }
 }
