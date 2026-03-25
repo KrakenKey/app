@@ -6,6 +6,7 @@ import { Probe } from './entities/probe.entity';
 import { ProbeScanResult } from './entities/probe-scan-result.entity';
 import { Endpoint } from '../endpoints/entities/endpoint.entity';
 import { EndpointHostedRegion } from '../endpoints/entities/endpoint-hosted-region.entity';
+import { EndpointProbeAssignment } from '../endpoints/entities/endpoint-probe-assignment.entity';
 import type { RegisterProbeDto } from './dto/register-probe.dto';
 import type { SubmitReportDto, ScanResultDto } from './dto/submit-report.dto';
 
@@ -14,6 +15,7 @@ export interface HostedEndpoint {
   port: number;
   sni: string;
   userId: string;
+  scanNow?: boolean;
 }
 
 interface ProbeAuthUser {
@@ -181,8 +183,8 @@ export class ProbesService {
       // Hosted probe: return all endpoints with hosted regions matching probe's region
       endpoints = await this.getHostedEndpoints(probe.region);
     } else {
-      // Connected probe: return user's active endpoints
-      endpoints = await this.getConnectedEndpoints(user.userId!);
+      // Connected probe: return endpoints assigned to this specific probe
+      endpoints = await this.getConnectedEndpoints(user.userId!, probeId);
     }
 
     const interval =
@@ -201,35 +203,58 @@ export class ProbesService {
       .addSelect('e.port', 'port')
       .addSelect('COALESCE(e.sni, e.host)', 'sni')
       .addSelect('e."userId"', 'userId')
+      .addSelect('e."lastScanRequestedAt"', 'lastScanRequestedAt')
       .where('e."isActive" = true');
 
     if (probeRegion) {
       query.andWhere('ehr.region = :region', { region: probeRegion });
     }
 
-    const rows: { host: string; port: number; sni: string; userId: string }[] =
-      await query.getRawMany();
+    const rows: {
+      host: string;
+      port: number;
+      sni: string;
+      userId: string;
+      lastScanRequestedAt: Date | null;
+    }[] = await query.getRawMany();
+
+    const scanNowCutoff = new Date(Date.now() - 5 * 60 * 1000);
 
     return rows.map((r) => ({
       host: r.host,
       port: r.port,
       sni: r.sni,
       userId: r.userId,
+      ...(r.lastScanRequestedAt &&
+      new Date(r.lastScanRequestedAt) > scanNowCutoff
+        ? { scanNow: true }
+        : {}),
     }));
   }
 
   private async getConnectedEndpoints(
     userId: string,
+    probeId: string,
   ): Promise<HostedEndpoint[]> {
-    const endpoints = await this.endpointRepo.find({
-      where: { userId, isActive: true },
-    });
+    // Return only endpoints explicitly assigned to this probe
+    const endpoints = await this.endpointRepo
+      .createQueryBuilder('e')
+      .innerJoin(EndpointProbeAssignment, 'epa', 'epa."endpointId" = e.id')
+      .where('e."userId" = :userId', { userId })
+      .andWhere('e."isActive" = true')
+      .andWhere('epa."probeId" = :probeId', { probeId })
+      .getMany();
+
+    const scanNowCutoff = new Date(Date.now() - 5 * 60 * 1000);
 
     return endpoints.map((e) => ({
       host: e.host,
       port: e.port,
       sni: e.sni ?? e.host,
       userId: e.userId,
+      ...(e.lastScanRequestedAt && e.lastScanRequestedAt > scanNowCutoff
+        ? { scanNow: true }
+        : {}),
     }));
   }
 

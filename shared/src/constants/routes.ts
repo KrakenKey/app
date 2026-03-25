@@ -36,6 +36,11 @@ export const API_ROUTES = {
     REGION: (id: string, region: string) =>
       `/endpoints/${id}/regions/${region}`,
     RESULTS: (id: string) => `/endpoints/${id}/results`,
+    PROBES_MINE: '/endpoints/probes/mine',
+    PROBES: (id: string) => `/endpoints/${id}/probes`,
+    PROBE: (id: string, probeId: string) =>
+      `/endpoints/${id}/probes/${probeId}`,
+    SCAN: (id: string) => `/endpoints/${id}/scan`,
     EXPORT_RESULTS: (id: string) => `/endpoints/${id}/results/export`,
     LATEST_RESULTS: (id: string) => `/endpoints/${id}/results/latest`,
   },

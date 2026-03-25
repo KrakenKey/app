@@ -24,6 +24,7 @@ import { EndpointsService } from './endpoints.service';
 import { CreateEndpointDto } from './dto/create-endpoint.dto';
 import { UpdateEndpointDto } from './dto/update-endpoint.dto';
 import { AddHostedRegionDto } from './dto/add-hosted-region.dto';
+import { AssignProbesDto } from './dto/assign-probes.dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-or-api-key.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import type { RequestWithUser } from '../auth/interfaces/request-with-user.interface';
@@ -91,6 +92,51 @@ export class EndpointsController {
     return this.endpointsService.delete(id, req.user.userId);
   }
 
+  @Get('probes/mine')
+  @ApiOperation({
+    summary: "List the user's connected probes available for assignment",
+  })
+  @ApiResponse({ status: 200, description: 'List of connected probes' })
+  @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
+  listUserProbes(@Request() req: RequestWithUser) {
+    return this.endpointsService.listUserProbes(req.user.userId);
+  }
+
+  @Post(':id/probes')
+  @ApiOperation({ summary: 'Assign connected probes to an endpoint' })
+  @ApiParam({ name: 'id', description: 'Endpoint UUID' })
+  @ApiResponse({ status: 201, description: 'Probes assigned' })
+  @ApiResponse({ status: 404, description: 'Endpoint not found' })
+  @Roles('owner', 'admin', 'member')
+  @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
+  assignProbes(
+    @Request() req: RequestWithUser,
+    @Param('id') id: string,
+    @Body() dto: AssignProbesDto,
+  ) {
+    return this.endpointsService.assignProbes(
+      id,
+      req.user.userId,
+      dto.probeIds,
+    );
+  }
+
+  @Delete(':id/probes/:probeId')
+  @ApiOperation({ summary: 'Unassign a connected probe from an endpoint' })
+  @ApiParam({ name: 'id', description: 'Endpoint UUID' })
+  @ApiParam({ name: 'probeId', description: 'Probe ID' })
+  @ApiResponse({ status: 200, description: 'Probe unassigned' })
+  @ApiResponse({ status: 404, description: 'Assignment not found' })
+  @Roles('owner', 'admin', 'member')
+  @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
+  unassignProbe(
+    @Request() req: RequestWithUser,
+    @Param('id') id: string,
+    @Param('probeId') probeId: string,
+  ) {
+    return this.endpointsService.unassignProbe(id, req.user.userId, probeId);
+  }
+
   @Post(':id/regions')
   @ApiOperation({ summary: 'Add a hosted probe region to an endpoint' })
   @ApiParam({ name: 'id', description: 'Endpoint UUID' })
@@ -129,6 +175,19 @@ export class EndpointsController {
       req.user.userId,
       region,
     );
+  }
+
+  @Post(':id/scan')
+  @ApiOperation({
+    summary: 'Request an on-demand scan of this endpoint',
+  })
+  @ApiParam({ name: 'id', description: 'Endpoint UUID' })
+  @ApiResponse({ status: 200, description: 'Scan requested' })
+  @ApiResponse({ status: 404, description: 'Endpoint not found' })
+  @Roles('owner', 'admin', 'member')
+  @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
+  requestScan(@Request() req: RequestWithUser, @Param('id') id: string) {
+    return this.endpointsService.requestScan(id, req.user.userId);
   }
 
   @Get(':id/results')

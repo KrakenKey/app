@@ -8,12 +8,14 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { Endpoint } from './entities/endpoint.entity';
 import { EndpointHostedRegion } from './entities/endpoint-hosted-region.entity';
+import { EndpointProbeAssignment } from './entities/endpoint-probe-assignment.entity';
 import { ProbeScanResult } from '../probes/entities/probe-scan-result.entity';
+import { Probe } from '../probes/entities/probe.entity';
 import { User } from '../users/entities/user.entity';
 import { BillingService } from '../billing/billing.service';
 import { PLAN_LIMITS } from '../billing/constants/plan-limits';
-import type { CreateEndpointDto } from './dto/create-endpoint.dto';
-import type { UpdateEndpointDto } from './dto/update-endpoint.dto';
+import { CreateEndpointDto } from './dto/create-endpoint.dto';
+import { UpdateEndpointDto } from './dto/update-endpoint.dto';
 import type { SubscriptionPlan } from '@krakenkey/shared';
 
 @Injectable()
@@ -25,8 +27,12 @@ export class EndpointsService {
     private readonly endpointRepo: Repository<Endpoint>,
     @InjectRepository(EndpointHostedRegion)
     private readonly hostedRegionRepo: Repository<EndpointHostedRegion>,
+    @InjectRepository(EndpointProbeAssignment)
+    private readonly probeAssignmentRepo: Repository<EndpointProbeAssignment>,
     @InjectRepository(ProbeScanResult)
     private readonly scanResultRepo: Repository<ProbeScanResult>,
+    @InjectRepository(Probe)
+    private readonly probeRepo: Repository<Probe>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     private readonly billingService: BillingService,
@@ -74,8 +80,93 @@ export class EndpointsService {
       port,
       sni: dto.sni,
       label: dto.label,
+      lastScanRequestedAt: new Date(), // trigger immediate scan
     });
 
+    const saved = await this.endpointRepo.save(endpoint);
+
+    // Assign connected probes if specified
+    if (dto.probeIds?.length) {
+      await this.assignProbes(saved.id, userId, dto.probeIds);
+    }
+
+    // Assign hosted regions if specified
+    if (dto.hostedRegions?.length) {
+      for (const region of dto.hostedRegions) {
+        await this.addHostedRegion(saved.id, userId, region);
+      }
+    }
+
+    // Re-fetch with relations
+    return this.findOne(saved.id, userId);
+  }
+
+  async listUserProbes(userId: string): Promise<Probe[]> {
+    const memberIds = await this.getOrgMemberIds(userId);
+    const where = memberIds
+      ? { userId: In(memberIds), mode: 'connected' }
+      : { userId, mode: 'connected' };
+    return this.probeRepo.find({
+      where,
+      order: { lastSeenAt: 'DESC' },
+    });
+  }
+
+  async assignProbes(
+    endpointId: string,
+    userId: string,
+    probeIds: string[],
+  ): Promise<EndpointProbeAssignment[]> {
+    // Validate all probes belong to the user (or their org)
+    const memberIds = await this.getOrgMemberIds(userId);
+    const validIds = memberIds ?? [userId];
+
+    const probes = await this.probeRepo.find({
+      where: { id: In(probeIds), userId: In(validIds), mode: 'connected' },
+    });
+
+    if (probes.length === 0) {
+      return [];
+    }
+
+    const assignments: EndpointProbeAssignment[] = [];
+    for (const probe of probes) {
+      const existing = await this.probeAssignmentRepo.findOne({
+        where: { endpointId, probeId: probe.id },
+      });
+      if (existing) {
+        assignments.push(existing);
+        continue;
+      }
+      const assignment = this.probeAssignmentRepo.create({
+        endpointId,
+        probeId: probe.id,
+      });
+      assignments.push(await this.probeAssignmentRepo.save(assignment));
+    }
+    return assignments;
+  }
+
+  async unassignProbe(
+    endpointId: string,
+    userId: string,
+    probeId: string,
+  ): Promise<void> {
+    await this.findOne(endpointId, userId); // access check
+    const result = await this.probeAssignmentRepo.delete({
+      endpointId,
+      probeId,
+    });
+    if (result.affected === 0) {
+      throw new NotFoundException(
+        `Probe '${probeId}' is not assigned to endpoint #${endpointId}`,
+      );
+    }
+  }
+
+  async requestScan(id: string, userId: string): Promise<Endpoint> {
+    const endpoint = await this.findOne(id, userId);
+    endpoint.lastScanRequestedAt = new Date();
     return this.endpointRepo.save(endpoint);
   }
 
@@ -84,13 +175,21 @@ export class EndpointsService {
     if (memberIds) {
       return this.endpointRepo.find({
         where: { userId: In(memberIds) },
-        relations: ['hostedRegions'],
+        relations: [
+          'hostedRegions',
+          'probeAssignments',
+          'probeAssignments.probe',
+        ],
         order: { createdAt: 'DESC' },
       });
     }
     return this.endpointRepo.find({
       where: { userId },
-      relations: ['hostedRegions'],
+      relations: [
+        'hostedRegions',
+        'probeAssignments',
+        'probeAssignments.probe',
+      ],
       order: { createdAt: 'DESC' },
     });
   }
@@ -98,7 +197,11 @@ export class EndpointsService {
   async findOne(id: string, userId: string): Promise<Endpoint> {
     let endpoint = await this.endpointRepo.findOne({
       where: { id, userId },
-      relations: ['hostedRegions'],
+      relations: [
+        'hostedRegions',
+        'probeAssignments',
+        'probeAssignments.probe',
+      ],
     });
 
     if (!endpoint) {
@@ -106,7 +209,11 @@ export class EndpointsService {
       if (memberIds) {
         endpoint = await this.endpointRepo.findOne({
           where: { id, userId: In(memberIds) },
-          relations: ['hostedRegions'],
+          relations: [
+            'hostedRegions',
+            'probeAssignments',
+            'probeAssignments.probe',
+          ],
         });
       }
     }

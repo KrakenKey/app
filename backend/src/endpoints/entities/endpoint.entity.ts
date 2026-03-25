@@ -12,6 +12,7 @@ import {
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { EndpointHostedRegion } from './endpoint-hosted-region.entity';
+import { EndpointProbeAssignment } from './endpoint-probe-assignment.entity';
 
 @Entity()
 @Unique('UQ_endpoint_userId_host_port', ['userId', 'host', 'port'])
@@ -42,8 +43,15 @@ export class Endpoint {
   @Column({ default: true })
   isActive: boolean;
 
+  /** Set when user triggers an on-demand scan; probes check this to prioritize */
+  @Column({ type: 'timestamp', nullable: true })
+  lastScanRequestedAt?: Date;
+
   @OneToMany(() => EndpointHostedRegion, (r) => r.endpoint)
   hostedRegions: EndpointHostedRegion[];
+
+  @OneToMany(() => EndpointProbeAssignment, (a) => a.endpoint)
+  probeAssignments: EndpointProbeAssignment[];
 
   @CreateDateColumn()
   createdAt: Date;

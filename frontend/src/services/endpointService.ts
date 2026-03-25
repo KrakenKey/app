@@ -3,6 +3,7 @@ import { API_ROUTES } from '@krakenkey/shared';
 import type {
   Endpoint,
   EndpointHostedRegion,
+  EndpointProbeAssignment,
   CreateEndpointRequest,
   UpdateEndpointRequest,
   AddHostedRegionRequest,
@@ -72,8 +73,48 @@ export async function fetchResults(
   return response.data;
 }
 
+export async function requestScan(id: string): Promise<Endpoint> {
+  const response = await api.post<Endpoint>(API_ROUTES.ENDPOINTS.SCAN(id));
+  return response.data;
+}
+
 export function getExportUrl(id: string, format: 'json' | 'csv'): string {
   return `${api.defaults.baseURL}${API_ROUTES.ENDPOINTS.EXPORT_RESULTS(id)}?format=${format}`;
+}
+
+/** Probe with basic metadata for the assignment picker */
+export interface ProbeOption {
+  id: string;
+  name: string;
+  mode: string;
+  region?: string;
+  status: string;
+  lastSeenAt?: string;
+}
+
+export async function fetchUserProbes(): Promise<ProbeOption[]> {
+  const response = await api.get<ProbeOption[]>(
+    API_ROUTES.ENDPOINTS.PROBES_MINE,
+  );
+  return response.data;
+}
+
+export async function assignProbes(
+  endpointId: string,
+  probeIds: string[],
+): Promise<EndpointProbeAssignment[]> {
+  const response = await api.post<EndpointProbeAssignment[]>(
+    API_ROUTES.ENDPOINTS.PROBES(endpointId),
+    { probeIds },
+  );
+  return response.data;
+}
+
+export async function unassignProbe(
+  endpointId: string,
+  probeId: string,
+): Promise<void> {
+  await api.delete(API_ROUTES.ENDPOINTS.PROBE(endpointId, probeId));
 }
 
 export async function fetchLatestResults(

@@ -8,6 +8,7 @@ import { Probe } from './entities/probe.entity';
 import { ProbeScanResult } from './entities/probe-scan-result.entity';
 import { Endpoint } from '../endpoints/entities/endpoint.entity';
 import { EndpointHostedRegion } from '../endpoints/entities/endpoint-hosted-region.entity';
+import { EndpointProbeAssignment } from '../endpoints/entities/endpoint-probe-assignment.entity';
 import { AuthModule } from '../auth/auth.module';
 
 @Module({
@@ -17,6 +18,7 @@ import { AuthModule } from '../auth/auth.module';
       ProbeScanResult,
       Endpoint,
       EndpointHostedRegion,
+      EndpointProbeAssignment,
     ]),
     AuthModule,
   ],

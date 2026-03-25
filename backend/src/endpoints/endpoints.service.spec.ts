@@ -4,7 +4,9 @@ import { NotFoundException, HttpException } from '@nestjs/common';
 import { EndpointsService } from './endpoints.service';
 import { Endpoint } from './entities/endpoint.entity';
 import { EndpointHostedRegion } from './entities/endpoint-hosted-region.entity';
+import { EndpointProbeAssignment } from './entities/endpoint-probe-assignment.entity';
 import { ProbeScanResult } from '../probes/entities/probe-scan-result.entity';
+import { Probe } from '../probes/entities/probe.entity';
 import { User } from '../users/entities/user.entity';
 import { BillingService } from '../billing/billing.service';
 
@@ -25,6 +27,7 @@ describe('EndpointsService', () => {
     label: undefined,
     isActive: true,
     hostedRegions: [],
+    probeAssignments: [],
     owner: {} as any,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -90,8 +93,28 @@ describe('EndpointsService', () => {
           useValue: hostedRegionRepo,
         },
         {
+          provide: getRepositoryToken(EndpointProbeAssignment),
+          useValue: {
+            findOne: jest.fn(),
+            create: jest.fn((dto: any) => ({
+              id: 'epa-uuid-1',
+              ...dto,
+              createdAt: new Date(),
+            })),
+            save: jest.fn((entity: any) => Promise.resolve(entity)),
+            delete: jest.fn().mockResolvedValue({ affected: 1 }),
+          },
+        },
+        {
           provide: getRepositoryToken(ProbeScanResult),
           useValue: scanResultRepo,
+        },
+        {
+          provide: getRepositoryToken(Probe),
+          useValue: {
+            find: jest.fn().mockResolvedValue([]),
+            findOne: jest.fn(),
+          },
         },
         {
           provide: getRepositoryToken(User),

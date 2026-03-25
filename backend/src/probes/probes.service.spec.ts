@@ -7,6 +7,7 @@ import { Probe } from './entities/probe.entity';
 import { ProbeScanResult } from './entities/probe-scan-result.entity';
 import { Endpoint } from '../endpoints/entities/endpoint.entity';
 import { EndpointHostedRegion } from '../endpoints/entities/endpoint-hosted-region.entity';
+import { EndpointProbeAssignment } from '../endpoints/entities/endpoint-probe-assignment.entity';
 
 describe('ProbesService', () => {
   let service: ProbesService;
@@ -39,6 +40,7 @@ describe('ProbesService', () => {
     port: 443,
     isActive: true,
     hostedRegions: [],
+    probeAssignments: [],
     owner: {} as any,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -81,6 +83,10 @@ describe('ProbesService', () => {
         { provide: getRepositoryToken(Endpoint), useValue: endpointRepo },
         {
           provide: getRepositoryToken(EndpointHostedRegion),
+          useValue: {},
+        },
+        {
+          provide: getRepositoryToken(EndpointProbeAssignment),
           useValue: {},
         },
         {

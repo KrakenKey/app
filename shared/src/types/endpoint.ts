@@ -8,7 +8,9 @@ export interface Endpoint {
   sni?: string;
   label?: string;
   isActive: boolean;
+  lastScanRequestedAt?: string;
   hostedRegions?: EndpointHostedRegion[];
+  probeAssignments?: EndpointProbeAssignment[];
   createdAt: string;
   updatedAt: string;
 }
@@ -20,11 +22,28 @@ export interface EndpointHostedRegion {
   createdAt: string;
 }
 
+export interface EndpointProbeAssignment {
+  id: string;
+  endpointId: string;
+  probeId: string;
+  probe?: {
+    id: string;
+    name: string;
+    mode: string;
+    region?: string;
+    status: string;
+    lastSeenAt?: string;
+  };
+  createdAt: string;
+}
+
 export interface CreateEndpointRequest {
   host: string;
   port?: number;
   sni?: string;
   label?: string;
+  probeIds?: string[];
+  hostedRegions?: string[];
 }
 
 export interface UpdateEndpointRequest {

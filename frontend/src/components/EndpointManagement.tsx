@@ -10,9 +10,11 @@ import {
   Download,
   Server,
   Cloud,
+  RefreshCw,
 } from 'lucide-react';
 import { toast } from '../utils/toast';
 import type { Endpoint, ProbeScanResult } from '@krakenkey/shared';
+import type { ProbeOption } from '../services/endpointService';
 import { useActionSet } from '../hooks/useActionSet';
 import * as endpointService from '../services/endpointService';
 import { Card } from './ui/Card';
@@ -238,6 +240,7 @@ export default function EndpointManagement() {
   const [creating, setCreating] = useState(false);
   const deletingIds = useActionSet<string>();
   const togglingIds = useActionSet<string>();
+  const scanningIds = useActionSet<string>();
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   // Latest results per endpoint (for the summary row)
@@ -245,16 +248,24 @@ export default function EndpointManagement() {
     Record<string, ProbeScanResult[]>
   >({});
 
+  // Available connected probes for assignment
+  const [availableProbes, setAvailableProbes] = useState<ProbeOption[]>([]);
+
   // Form state
   const [newHost, setNewHost] = useState('');
   const [newPort, setNewPort] = useState('443');
   const [newLabel, setNewLabel] = useState('');
+  const [selectedProbeIds, setSelectedProbeIds] = useState<string[]>([]);
 
   const fetchAll = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await endpointService.fetchEndpoints();
+      const [data, probes] = await Promise.all([
+        endpointService.fetchEndpoints(),
+        endpointService.fetchUserProbes().catch(() => [] as ProbeOption[]),
+      ]);
       setEndpoints(data);
+      setAvailableProbes(probes);
 
       // Fetch latest results for each endpoint
       const latestMap: Record<string, ProbeScanResult[]> = {};
@@ -294,11 +305,13 @@ export default function EndpointManagement() {
         host,
         port: parseInt(newPort, 10) || 443,
         label: newLabel.trim() || undefined,
+        probeIds: selectedProbeIds.length > 0 ? selectedProbeIds : undefined,
       });
       toast.success(`Endpoint ${endpoint.host}:${endpoint.port} added`);
       setNewHost('');
       setNewPort('443');
       setNewLabel('');
+      setSelectedProbeIds([]);
       setEndpoints((prev) => [endpoint, ...prev]);
     } catch (error) {
       console.error('Failed to create endpoint:', error);
@@ -345,6 +358,18 @@ export default function EndpointManagement() {
       console.error('Failed to toggle endpoint:', error);
     } finally {
       togglingIds.remove(ep.id);
+    }
+  };
+
+  const handleRequestScan = async (ep: Endpoint) => {
+    try {
+      scanningIds.add(ep.id);
+      await endpointService.requestScan(ep.id);
+      toast.success(`Scan requested for ${ep.host}:${ep.port}`);
+    } catch (error) {
+      console.error('Failed to request scan:', error);
+    } finally {
+      scanningIds.remove(ep.id);
     }
   };
 
@@ -439,6 +464,50 @@ export default function EndpointManagement() {
               {creating ? 'Adding...' : 'Add'}
             </Button>
           </div>
+
+          {/* Probe selection */}
+          {availableProbes.length > 0 && (
+            <div className="mt-4">
+              <p className="text-xs text-zinc-500 mb-2">
+                Assign connected probes (optional):
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {availableProbes.map((probe) => {
+                  const selected = selectedProbeIds.includes(probe.id);
+                  return (
+                    <button
+                      key={probe.id}
+                      type="button"
+                      onClick={() =>
+                        setSelectedProbeIds((prev) =>
+                          selected
+                            ? prev.filter((id) => id !== probe.id)
+                            : [...prev, probe.id],
+                        )
+                      }
+                      disabled={creating}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
+                        selected
+                          ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-400'
+                          : 'border-zinc-700 bg-zinc-900 text-zinc-400 hover:border-zinc-600'
+                      }`}
+                    >
+                      <Server className="w-3 h-3" />
+                      {probe.name}
+                      {probe.region && (
+                        <span className="text-zinc-500">({probe.region})</span>
+                      )}
+                      {probe.status === 'stale' && (
+                        <span className="text-amber-400 text-[10px]">
+                          stale
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </form>
       </Card>
 
@@ -541,6 +610,19 @@ export default function EndpointManagement() {
                         <div className="flex items-center gap-1.5">
                           <Button
                             size="sm"
+                            variant="secondary"
+                            icon={
+                              <RefreshCw
+                                className={`w-3.5 h-3.5 ${scanningIds.has(ep.id) ? 'animate-spin' : ''}`}
+                              />
+                            }
+                            onClick={() => handleRequestScan(ep)}
+                            disabled={scanningIds.has(ep.id) || !ep.isActive}
+                          >
+                            Scan
+                          </Button>
+                          <Button
+                            size="sm"
                             variant="ghost"
                             icon={
                               ep.isActive ? (
@@ -572,6 +654,44 @@ export default function EndpointManagement() {
                           colSpan={9}
                           className="bg-zinc-900/50 border-b border-zinc-800/50"
                         >
+                          {/* Assigned probes summary */}
+                          {ep.probeAssignments &&
+                            ep.probeAssignments.length > 0 && (
+                              <div className="px-4 pt-3 pb-1">
+                                <span className="text-xs text-zinc-500 mr-2">
+                                  Assigned probes:
+                                </span>
+                                {ep.probeAssignments.map((a) => (
+                                  <Badge
+                                    key={a.id}
+                                    variant="neutral"
+                                    dot={false}
+                                    className="mr-1"
+                                  >
+                                    <Server className="w-3 h-3 mr-0.5" />
+                                    {a.probe?.name ?? a.probeId}
+                                  </Badge>
+                                ))}
+                              </div>
+                            )}
+                          {ep.hostedRegions && ep.hostedRegions.length > 0 && (
+                            <div className="px-4 pt-1 pb-1">
+                              <span className="text-xs text-zinc-500 mr-2">
+                                Hosted regions:
+                              </span>
+                              {ep.hostedRegions.map((r) => (
+                                <Badge
+                                  key={r.id}
+                                  variant="info"
+                                  dot={false}
+                                  className="mr-1"
+                                >
+                                  <Cloud className="w-3 h-3 mr-0.5" />
+                                  {r.region}
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
                           <ScanResultsPanel endpointId={ep.id} />
                         </td>
                       </tr>

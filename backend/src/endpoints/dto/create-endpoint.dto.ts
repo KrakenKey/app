@@ -3,6 +3,7 @@ import {
   IsString,
   IsInt,
   IsOptional,
+  IsArray,
   Min,
   Max,
   MaxLength,
@@ -47,4 +48,22 @@ export class CreateEndpointDto {
   @IsString()
   @MaxLength(100)
   label?: string;
+
+  @ApiPropertyOptional({
+    description: 'IDs of connected probes to assign for scanning',
+    example: ['probe-uuid-1'],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  probeIds?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Hosted probe regions to enable for scanning (Team tier+)',
+    example: ['us-east-1'],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  hostedRegions?: string[];
 }
