@@ -17,8 +17,11 @@ export class RegisterProbeDto {
   @IsNotEmpty()
   version: string;
 
-  @ApiProperty({ enum: ['self-hosted', 'hosted'], example: 'hosted' })
-  @IsIn(['self-hosted', 'hosted'])
+  @ApiProperty({
+    enum: ['standalone', 'connected', 'hosted'],
+    example: 'connected',
+  })
+  @IsIn(['standalone', 'connected', 'hosted'])
   mode: string;
 
   @ApiPropertyOptional({ example: 'us-east-1' })

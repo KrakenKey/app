@@ -19,6 +19,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { BillingModule } from './billing/billing.module';
 import { OrganizationsModule } from './organizations/organizations.module';
 import { ProbesModule } from './probes/probes.module';
+import { EndpointsModule } from './endpoints/endpoints.module';
 import { RoleGuard } from './auth/guards/role.guard';
 
 @Module({
@@ -74,6 +75,7 @@ import { RoleGuard } from './auth/guards/role.guard';
     NotificationsModule,
     OrganizationsModule,
     ProbesModule,
+    EndpointsModule,
   ],
   controllers: [AppController],
   providers: [

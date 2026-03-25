@@ -1,6 +1,14 @@
-import { Controller, Post, Get, Body, Param, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Get,
+  Body,
+  Param,
+  UseGuards,
+  Request,
+} from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
-import { ServiceKeyGuard } from '../auth/guards/service-key.guard';
+import { ServiceOrUserKeyGuard } from '../auth/guards/service-or-user-key.guard';
 import { RateLimitCategoryDecorator } from '../throttler/decorators/rate-limit-category.decorator';
 import { RateLimitCategory } from '../throttler/interfaces/rate-limit-category.enum';
 import { ProbesService } from './probes.service';
@@ -10,25 +18,27 @@ import { SubmitReportDto } from './dto/submit-report.dto';
 @Controller('probes')
 @ApiTags('Probes')
 @ApiBearerAuth()
-@UseGuards(ServiceKeyGuard)
 export class ProbesController {
   constructor(private readonly probesService: ProbesService) {}
 
   @Post('register')
+  @UseGuards(ServiceOrUserKeyGuard)
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
-  register(@Body() dto: RegisterProbeDto) {
-    return this.probesService.registerProbe(dto);
+  register(@Request() req: any, @Body() dto: RegisterProbeDto) {
+    return this.probesService.registerProbe(dto, req.user);
   }
 
   @Post('report')
+  @UseGuards(ServiceOrUserKeyGuard)
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
-  report(@Body() dto: SubmitReportDto) {
-    return this.probesService.submitReport(dto);
+  report(@Request() req: any, @Body() dto: SubmitReportDto) {
+    return this.probesService.submitReport(dto, req.user);
   }
 
   @Get(':probeId/config')
+  @UseGuards(ServiceOrUserKeyGuard)
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
-  getConfig(@Param('probeId') probeId: string) {
-    return this.probesService.getHostedConfig(probeId);
+  getConfig(@Request() req: any, @Param('probeId') probeId: string) {
+    return this.probesService.getConfig(probeId, req.user);
   }
 }

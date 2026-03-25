@@ -29,6 +29,15 @@ export const API_ROUTES = {
     BASE: '/auth/api-keys',
     BY_ID: (id: string) => `/auth/api-keys/${id}`,
   },
+  ENDPOINTS: {
+    BASE: '/endpoints',
+    BY_ID: (id: string) => `/endpoints/${id}`,
+    REGIONS: (id: string) => `/endpoints/${id}/regions`,
+    REGION: (id: string, region: string) =>
+      `/endpoints/${id}/regions/${region}`,
+    RESULTS: (id: string) => `/endpoints/${id}/results`,
+    LATEST_RESULTS: (id: string) => `/endpoints/${id}/results/latest`,
+  },
   BILLING: {
     CHECKOUT: '/billing/checkout',
     SUBSCRIPTION: '/billing/subscription',

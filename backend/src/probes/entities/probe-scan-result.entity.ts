@@ -8,6 +8,7 @@ import {
   Index,
 } from 'typeorm';
 import { Probe } from './probe.entity';
+import { Endpoint } from '../../endpoints/entities/endpoint.entity';
 
 @Entity()
 @Index('IDX_probe_scan_result_probeId_scannedAt', ['probeId', 'scannedAt'])
@@ -16,6 +17,16 @@ import { Probe } from './probe.entity';
   'host',
   'port',
   'scannedAt',
+])
+@Index('IDX_probe_scan_result_endpointId_scannedAt', [
+  'endpointId',
+  'scannedAt',
+])
+@Index('IDX_probe_scan_result_userId_probeMode', ['userId', 'probeMode'])
+@Index('IDX_probe_scan_result_endpointId_probeMode_probeRegion', [
+  'endpointId',
+  'probeMode',
+  'probeRegion',
 ])
 export class ProbeScanResult {
   @PrimaryGeneratedColumn('uuid')
@@ -28,6 +39,13 @@ export class ProbeScanResult {
   @JoinColumn({ name: 'probeId' })
   probe: Probe;
 
+  @Column({ type: 'uuid', nullable: true })
+  endpointId?: string;
+
+  @ManyToOne(() => Endpoint, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'endpointId' })
+  endpoint?: Endpoint;
+
   @Column()
   host: string;
 
@@ -39,6 +57,14 @@ export class ProbeScanResult {
 
   @Column({ type: 'text', nullable: true })
   userId?: string;
+
+  /** Denormalized: 'standalone' | 'connected' | 'hosted' */
+  @Column({ type: 'varchar', nullable: true })
+  probeMode?: string;
+
+  /** Denormalized: geographic filtering for hosted results */
+  @Column({ type: 'varchar', nullable: true })
+  probeRegion?: string;
 
   // --- Connection ---
   @Column()

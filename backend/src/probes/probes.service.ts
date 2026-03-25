@@ -4,10 +4,25 @@ import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import { Probe } from './entities/probe.entity';
 import { ProbeScanResult } from './entities/probe-scan-result.entity';
-import { Domain } from '../domains/entities/domain.entity';
-import { TlsCrt } from '../certs/tls/entities/tls-crt.entity';
+import { Endpoint } from '../endpoints/entities/endpoint.entity';
+import { EndpointHostedRegion } from '../endpoints/entities/endpoint-hosted-region.entity';
 import type { RegisterProbeDto } from './dto/register-probe.dto';
 import type { SubmitReportDto, ScanResultDto } from './dto/submit-report.dto';
+
+export interface HostedEndpoint {
+  host: string;
+  port: number;
+  sni: string;
+  userId: string;
+}
+
+interface ProbeAuthUser {
+  /** Present when authenticated via user API key */
+  userId?: string;
+  /** Present when authenticated via service key */
+  isServiceKey?: boolean;
+  serviceKeyId?: string;
+}
 
 @Injectable()
 export class ProbesService {
@@ -18,15 +33,20 @@ export class ProbesService {
     private readonly probeRepo: Repository<Probe>,
     @InjectRepository(ProbeScanResult)
     private readonly scanResultRepo: Repository<ProbeScanResult>,
-    @InjectRepository(Domain)
-    private readonly domainRepo: Repository<Domain>,
+    @InjectRepository(Endpoint)
+    private readonly endpointRepo: Repository<Endpoint>,
     private readonly config: ConfigService,
   ) {}
 
-  async registerProbe(dto: RegisterProbeDto): Promise<Probe> {
+  async registerProbe(
+    dto: RegisterProbeDto,
+    user: ProbeAuthUser,
+  ): Promise<Probe> {
     const existing = await this.probeRepo.findOne({
       where: { id: dto.probeId },
     });
+
+    const userId = user.isServiceKey ? undefined : user.userId;
 
     if (existing) {
       existing.name = dto.name;
@@ -37,6 +57,7 @@ export class ProbesService {
       existing.arch = dto.arch;
       existing.status = 'active';
       existing.lastSeenAt = new Date();
+      if (userId) existing.userId = userId;
       return this.probeRepo.save(existing);
     }
 
@@ -50,11 +71,15 @@ export class ProbesService {
       arch: dto.arch,
       status: 'active',
       lastSeenAt: new Date(),
+      userId,
     });
     return this.probeRepo.save(probe);
   }
 
-  async submitReport(dto: SubmitReportDto): Promise<{ accepted: number }> {
+  async submitReport(
+    dto: SubmitReportDto,
+    user: ProbeAuthUser,
+  ): Promise<{ accepted: number }> {
     const probe = await this.probeRepo.findOne({
       where: { id: dto.probeId },
     });
@@ -66,85 +91,177 @@ export class ProbesService {
     await this.probeRepo.save(probe);
 
     const scannedAt = new Date(dto.timestamp);
-    const entities = dto.results.map((r: ScanResultDto) =>
-      this.scanResultRepo.create({
-        probeId: dto.probeId,
-        host: r.endpoint.host,
-        port: r.endpoint.port,
-        sni: r.endpoint.sni,
-        connectionSuccess: r.connection.success,
-        connectionError: r.connection.error,
-        latencyMs: r.connection.latencyMs,
-        tlsVersion: r.connection.tlsVersion,
-        cipherSuite: r.connection.cipherSuite,
-        ocspStapled: r.connection.ocspStapled,
-        certSubject: r.certificate?.subject,
-        certSans: r.certificate?.sans,
-        certIssuer: r.certificate?.issuer,
-        certSerialNumber: r.certificate?.serialNumber,
-        certNotBefore: r.certificate?.notBefore
-          ? new Date(r.certificate.notBefore)
-          : undefined,
-        certNotAfter: r.certificate?.notAfter
-          ? new Date(r.certificate.notAfter)
-          : undefined,
-        certDaysUntilExpiry: r.certificate?.daysUntilExpiry,
-        certKeyType: r.certificate?.keyType,
-        certKeySize: r.certificate?.keySize,
-        certSignatureAlgorithm: r.certificate?.signatureAlgorithm,
-        certFingerprint: r.certificate?.fingerprint,
-        certChainDepth: r.certificate?.chainDepth,
-        certChainComplete: r.certificate?.chainComplete,
-        certTrusted: r.certificate?.trusted,
-        scannedAt,
-      }),
-    );
+    const probeMode = dto.mode;
+    const probeRegion = dto.region;
 
-    await this.scanResultRepo.save(entities);
+    // For connected/hosted probes, resolve the userId to look up endpoints
+    const probeUserId = user.isServiceKey ? undefined : user.userId;
+
+    const entities: ProbeScanResult[] = [];
+
+    for (const r of dto.results) {
+      // Match host:port to a registered Endpoint
+      const endpoint = await this.resolveEndpoint(
+        r,
+        probeMode,
+        probeRegion,
+        probeUserId,
+      );
+
+      if (!endpoint && (probeMode === 'connected' || probeMode === 'hosted')) {
+        this.logger.warn(
+          `No matching endpoint for ${r.endpoint.host}:${r.endpoint.port} from probe ${dto.probeId} (${probeMode}), skipping`,
+        );
+        continue;
+      }
+
+      // For hosted probes, userId comes from the endpoint owner
+      const resultUserId = endpoint?.userId ?? probeUserId;
+
+      entities.push(
+        this.scanResultRepo.create({
+          probeId: dto.probeId,
+          endpointId: endpoint?.id,
+          host: r.endpoint.host,
+          port: r.endpoint.port,
+          sni: r.endpoint.sni,
+          userId: resultUserId,
+          probeMode,
+          probeRegion,
+          connectionSuccess: r.connection.success,
+          connectionError: r.connection.error,
+          latencyMs: r.connection.latencyMs,
+          tlsVersion: r.connection.tlsVersion,
+          cipherSuite: r.connection.cipherSuite,
+          ocspStapled: r.connection.ocspStapled,
+          certSubject: r.certificate?.subject,
+          certSans: r.certificate?.sans,
+          certIssuer: r.certificate?.issuer,
+          certSerialNumber: r.certificate?.serialNumber,
+          certNotBefore: r.certificate?.notBefore
+            ? new Date(r.certificate.notBefore)
+            : undefined,
+          certNotAfter: r.certificate?.notAfter
+            ? new Date(r.certificate.notAfter)
+            : undefined,
+          certDaysUntilExpiry: r.certificate?.daysUntilExpiry,
+          certKeyType: r.certificate?.keyType,
+          certKeySize: r.certificate?.keySize,
+          certSignatureAlgorithm: r.certificate?.signatureAlgorithm,
+          certFingerprint: r.certificate?.fingerprint,
+          certChainDepth: r.certificate?.chainDepth,
+          certChainComplete: r.certificate?.chainComplete,
+          certTrusted: r.certificate?.trusted,
+          scannedAt,
+        }),
+      );
+    }
+
+    if (entities.length > 0) {
+      await this.scanResultRepo.save(entities);
+    }
     this.logger.log(
       `Accepted ${entities.length} scan results from probe ${dto.probeId}`,
     );
     return { accepted: entities.length };
   }
 
-  async getHostedConfig(
+  async getConfig(
     probeId: string,
+    user: ProbeAuthUser,
   ): Promise<{ endpoints: HostedEndpoint[]; interval: string }> {
     const probe = await this.probeRepo.findOne({ where: { id: probeId } });
     if (!probe) {
       throw new NotFoundException(`Probe ${probeId} not registered`);
     }
 
-    // Find all verified domains that have at least one active certificate
-    const rows: { hostname: string; userId: string }[] = await this.domainRepo
-      .createQueryBuilder('d')
-      .select('DISTINCT d.hostname', 'hostname')
-      .addSelect('d.userId', 'userId')
-      .innerJoin(TlsCrt, 't', 't."userId" = d."userId"')
-      .where('d."isVerified" = true')
-      .andWhere('t.status IN (:...statuses)', {
-        statuses: ['issued', 'renewing'],
-      })
-      .andWhere('t."crtPem" IS NOT NULL')
-      .getRawMany();
+    let endpoints: HostedEndpoint[];
 
-    const endpoints: HostedEndpoint[] = rows.map((r) => ({
-      host: r.hostname,
-      port: 443,
-      sni: r.hostname,
-      userId: r.userId,
-    }));
+    if (user.isServiceKey) {
+      // Hosted probe: return all endpoints with hosted regions matching probe's region
+      endpoints = await this.getHostedEndpoints(probe.region);
+    } else {
+      // Connected probe: return user's active endpoints
+      endpoints = await this.getConnectedEndpoints(user.userId!);
+    }
 
     const interval =
       this.config.get<string>('KK_PROBE_HOSTED_INTERVAL') ?? '60m';
 
     return { endpoints, interval };
   }
-}
 
-export interface HostedEndpoint {
-  host: string;
-  port: number;
-  sni: string;
-  userId: string;
+  private async getHostedEndpoints(
+    probeRegion?: string,
+  ): Promise<HostedEndpoint[]> {
+    const query = this.endpointRepo
+      .createQueryBuilder('e')
+      .innerJoin(EndpointHostedRegion, 'ehr', 'ehr."endpointId" = e.id')
+      .select('e.host', 'host')
+      .addSelect('e.port', 'port')
+      .addSelect('COALESCE(e.sni, e.host)', 'sni')
+      .addSelect('e."userId"', 'userId')
+      .where('e."isActive" = true');
+
+    if (probeRegion) {
+      query.andWhere('ehr.region = :region', { region: probeRegion });
+    }
+
+    const rows: { host: string; port: number; sni: string; userId: string }[] =
+      await query.getRawMany();
+
+    return rows.map((r) => ({
+      host: r.host,
+      port: r.port,
+      sni: r.sni,
+      userId: r.userId,
+    }));
+  }
+
+  private async getConnectedEndpoints(
+    userId: string,
+  ): Promise<HostedEndpoint[]> {
+    const endpoints = await this.endpointRepo.find({
+      where: { userId, isActive: true },
+    });
+
+    return endpoints.map((e) => ({
+      host: e.host,
+      port: e.port,
+      sni: e.sni ?? e.host,
+      userId: e.userId,
+    }));
+  }
+
+  private async resolveEndpoint(
+    result: ScanResultDto,
+    probeMode: string,
+    probeRegion: string | undefined,
+    probeUserId: string | undefined,
+  ): Promise<Endpoint | null> {
+    const host = result.endpoint.host;
+    const port = result.endpoint.port;
+
+    if (probeMode === 'connected' && probeUserId) {
+      // Connected: match against user's endpoints
+      return this.endpointRepo.findOne({
+        where: { userId: probeUserId, host, port },
+      });
+    }
+
+    if (probeMode === 'hosted' && probeRegion) {
+      // Hosted: match against endpoints that have this region configured
+      const row = await this.endpointRepo
+        .createQueryBuilder('e')
+        .innerJoin(EndpointHostedRegion, 'ehr', 'ehr."endpointId" = e.id')
+        .where('e.host = :host AND e.port = :port', { host, port })
+        .andWhere('ehr.region = :region', { region: probeRegion })
+        .andWhere('e."isActive" = true')
+        .getOne();
+      return row;
+    }
+
+    // Standalone mode or fallback: no endpoint matching
+    return null;
+  }
 }

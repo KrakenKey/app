@@ -156,7 +156,7 @@ export class SubmitReportDto {
   @IsNotEmpty()
   probeId: string;
 
-  @ApiProperty({ enum: ['self-hosted', 'hosted'] })
+  @ApiProperty({ enum: ['standalone', 'connected', 'hosted'] })
   @IsString()
   @IsNotEmpty()
   mode: string;
