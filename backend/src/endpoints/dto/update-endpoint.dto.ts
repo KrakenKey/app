@@ -1,4 +1,10 @@
-import { IsString, IsOptional, IsBoolean, MaxLength } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsBoolean,
+  IsArray,
+  MaxLength,
+} from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class UpdateEndpointDto {
@@ -27,4 +33,23 @@ export class UpdateEndpointDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Connected probe IDs to assign (replaces existing assignments)',
+    example: ['probe-uuid-1'],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  probeIds?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Hosted probe regions to enable (replaces existing regions)',
+    example: ['us-east-1'],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  hostedRegions?: string[];
 }

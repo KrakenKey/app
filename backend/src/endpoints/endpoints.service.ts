@@ -41,12 +41,25 @@ export class EndpointsService {
   async create(userId: string, dto: CreateEndpointDto): Promise<Endpoint> {
     const port = dto.port ?? 443;
 
-    // Check for existing duplicate
+    // If endpoint already exists, merge new probe/region assignments
     const existing = await this.endpointRepo.findOne({
       where: { userId, host: dto.host, port },
     });
     if (existing) {
-      return existing;
+      if (dto.probeIds?.length) {
+        await this.assignProbes(existing.id, userId, dto.probeIds);
+      }
+      if (dto.hostedRegions?.length) {
+        for (const region of dto.hostedRegions) {
+          await this.addHostedRegion(existing.id, userId, region);
+        }
+      }
+      // Update label/sni if provided
+      if (dto.label !== undefined) existing.label = dto.label;
+      if (dto.sni !== undefined) existing.sni = dto.sni;
+      existing.lastScanRequestedAt = new Date();
+      await this.endpointRepo.save(existing);
+      return this.findOne(existing.id, userId);
     }
 
     // Plan-based endpoint limit check (pooled across org members)
@@ -230,8 +243,30 @@ export class EndpointsService {
     dto: UpdateEndpointDto,
   ): Promise<Endpoint> {
     const endpoint = await this.findOne(id, userId);
-    Object.assign(endpoint, dto);
-    return this.endpointRepo.save(endpoint);
+
+    // Update scalar fields
+    if (dto.sni !== undefined) endpoint.sni = dto.sni;
+    if (dto.label !== undefined) endpoint.label = dto.label;
+    if (dto.isActive !== undefined) endpoint.isActive = dto.isActive;
+    await this.endpointRepo.save(endpoint);
+
+    // Replace connected probe assignments if provided
+    if (dto.probeIds !== undefined) {
+      await this.probeAssignmentRepo.delete({ endpointId: id });
+      if (dto.probeIds.length > 0) {
+        await this.assignProbes(id, userId, dto.probeIds);
+      }
+    }
+
+    // Replace hosted regions if provided
+    if (dto.hostedRegions !== undefined) {
+      await this.hostedRegionRepo.delete({ endpointId: id });
+      for (const region of dto.hostedRegions) {
+        await this.addHostedRegion(id, userId, region);
+      }
+    }
+
+    return this.findOne(id, userId);
   }
 
   async delete(id: string, userId: string): Promise<void> {
