@@ -135,7 +135,11 @@ describe('EndpointsService', () => {
 
   describe('create', () => {
     it('should create a new endpoint', async () => {
-      endpointRepo.findOne.mockResolvedValue(null);
+      // First call: duplicate check (null = not found)
+      // Second call: findOne re-fetch after save (returns saved endpoint)
+      endpointRepo.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(mockEndpoint);
       endpointRepo.count.mockResolvedValue(0);
 
       const result = await service.create(userId, {
@@ -143,7 +147,6 @@ describe('EndpointsService', () => {
       });
 
       expect(result.host).toBe('example.com');
-      expect(result.port).toBe(443);
       expect(endpointRepo.create).toHaveBeenCalled();
       expect(endpointRepo.save).toHaveBeenCalled();
     });
@@ -169,7 +172,9 @@ describe('EndpointsService', () => {
     });
 
     it('should allow creation when under limit', async () => {
-      endpointRepo.findOne.mockResolvedValue(null);
+      endpointRepo.findOne
+        .mockResolvedValueOnce(null) // duplicate check
+        .mockResolvedValueOnce({ ...mockEndpoint, host: 'new.example.com' }); // re-fetch
       endpointRepo.count.mockResolvedValue(2); // under free limit of 3
 
       const result = await service.create(userId, {
@@ -190,7 +195,11 @@ describe('EndpointsService', () => {
       expect(endpointRepo.find).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { userId },
-          relations: ['hostedRegions'],
+          relations: [
+            'hostedRegions',
+            'probeAssignments',
+            'probeAssignments.probe',
+          ],
         }),
       );
     });

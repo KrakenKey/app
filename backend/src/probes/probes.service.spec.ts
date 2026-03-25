@@ -68,6 +68,7 @@ describe('ProbesService', () => {
         where: jest.fn().mockReturnThis(),
         andWhere: jest.fn().mockReturnThis(),
         getRawMany: jest.fn().mockResolvedValue([]),
+        getMany: jest.fn().mockResolvedValue([]),
         getOne: jest.fn().mockResolvedValue(null),
       }),
     };
@@ -191,9 +192,12 @@ describe('ProbesService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('should return user endpoints for connected probe', async () => {
+    it('should return assigned endpoints for connected probe', async () => {
       probeRepo.findOne.mockResolvedValue(mockProbe);
-      endpointRepo.find.mockResolvedValue([mockEndpoint]);
+      // getConnectedEndpoints now uses createQueryBuilder with getMany
+      endpointRepo
+        .createQueryBuilder()
+        .getMany.mockResolvedValue([mockEndpoint]);
 
       const result = await service.getConfig('probe-1', connectedUser);
 
