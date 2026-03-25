@@ -72,6 +72,10 @@ export async function fetchResults(
   return response.data;
 }
 
+export function getExportUrl(id: string, format: 'json' | 'csv'): string {
+  return `${api.defaults.baseURL}${API_ROUTES.ENDPOINTS.EXPORT_RESULTS(id)}?format=${format}`;
+}
+
 export async function fetchLatestResults(
   id: string,
 ): Promise<ProbeScanResult[]> {

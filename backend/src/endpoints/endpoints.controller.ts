@@ -9,7 +9,9 @@ import {
   Query,
   UseGuards,
   Request,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -149,6 +151,38 @@ export class EndpointsController {
       page ? parseInt(page, 10) : 1,
       limit ? Math.min(parseInt(limit, 10), 100) : 20,
     );
+  }
+
+  @Get(':id/results/export')
+  @ApiOperation({ summary: 'Export raw scan results as CSV or JSON' })
+  @ApiParam({ name: 'id', description: 'Endpoint UUID' })
+  @ApiQuery({
+    name: 'format',
+    required: false,
+    enum: ['json', 'csv'],
+    description: 'Export format (default: json)',
+  })
+  @ApiResponse({ status: 200, description: 'Exported scan results' })
+  @ApiResponse({ status: 404, description: 'Endpoint not found' })
+  @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
+  async exportResults(
+    @Request() req: RequestWithUser,
+    @Param('id') id: string,
+    @Query('format') format: string | undefined,
+    @Res() res: Response,
+  ) {
+    const fmt = format === 'csv' ? 'csv' : 'json';
+    const result = await this.endpointsService.exportResults(
+      id,
+      req.user.userId,
+      fmt,
+    );
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${result.filename}"`,
+    );
+    res.send(result.data);
   }
 
   @Get(':id/results/latest')

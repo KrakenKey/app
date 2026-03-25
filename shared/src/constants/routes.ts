@@ -36,6 +36,7 @@ export const API_ROUTES = {
     REGION: (id: string, region: string) =>
       `/endpoints/${id}/regions/${region}`,
     RESULTS: (id: string) => `/endpoints/${id}/results`,
+    EXPORT_RESULTS: (id: string) => `/endpoints/${id}/results/export`,
     LATEST_RESULTS: (id: string) => `/endpoints/${id}/results/latest`,
   },
   BILLING: {

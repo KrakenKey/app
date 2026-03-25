@@ -280,6 +280,96 @@ export class EndpointsService {
       .getMany();
   }
 
+  async exportResults(
+    endpointId: string,
+    userId: string,
+    format: 'json' | 'csv' = 'json',
+  ): Promise<{ data: string; contentType: string; filename: string }> {
+    const endpoint = await this.findOne(endpointId, userId);
+    const results = await this.scanResultRepo.find({
+      where: { endpointId },
+      order: { scannedAt: 'DESC' },
+    });
+
+    const filename = `${endpoint.host}_${endpoint.port}_scan_results`;
+
+    if (format === 'csv') {
+      const headers = [
+        'scannedAt',
+        'probeId',
+        'probeMode',
+        'probeRegion',
+        'connectionSuccess',
+        'connectionError',
+        'latencyMs',
+        'tlsVersion',
+        'cipherSuite',
+        'ocspStapled',
+        'certSubject',
+        'certIssuer',
+        'certNotBefore',
+        'certNotAfter',
+        'certDaysUntilExpiry',
+        'certKeyType',
+        'certKeySize',
+        'certSignatureAlgorithm',
+        'certFingerprint',
+        'certChainDepth',
+        'certChainComplete',
+        'certTrusted',
+        'certSans',
+      ];
+      const csvRows = [headers.join(',')];
+      for (const r of results) {
+        const row = [
+          r.scannedAt?.toISOString() ?? '',
+          r.probeId,
+          r.probeMode ?? '',
+          r.probeRegion ?? '',
+          String(r.connectionSuccess),
+          this.csvEscape(r.connectionError),
+          r.latencyMs?.toString() ?? '',
+          r.tlsVersion ?? '',
+          r.cipherSuite ?? '',
+          r.ocspStapled?.toString() ?? '',
+          this.csvEscape(r.certSubject),
+          this.csvEscape(r.certIssuer),
+          r.certNotBefore?.toISOString() ?? '',
+          r.certNotAfter?.toISOString() ?? '',
+          r.certDaysUntilExpiry?.toString() ?? '',
+          r.certKeyType ?? '',
+          r.certKeySize?.toString() ?? '',
+          r.certSignatureAlgorithm ?? '',
+          r.certFingerprint ?? '',
+          r.certChainDepth?.toString() ?? '',
+          r.certChainComplete?.toString() ?? '',
+          r.certTrusted?.toString() ?? '',
+          this.csvEscape(r.certSans?.join('; ')),
+        ];
+        csvRows.push(row.join(','));
+      }
+      return {
+        data: csvRows.join('\n'),
+        contentType: 'text/csv',
+        filename: `${filename}.csv`,
+      };
+    }
+
+    return {
+      data: JSON.stringify(results, null, 2),
+      contentType: 'application/json',
+      filename: `${filename}.json`,
+    };
+  }
+
+  private csvEscape(value: string | undefined | null): string {
+    if (value == null) return '';
+    if (value.includes(',') || value.includes('"') || value.includes('\n')) {
+      return `"${value.replace(/"/g, '""')}"`;
+    }
+    return value;
+  }
+
   private async getOrgMemberIds(userId: string): Promise<string[] | null> {
     const user = await this.userRepo.findOne({
       where: { id: userId },
