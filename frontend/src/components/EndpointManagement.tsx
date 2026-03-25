@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Activity,
   Plus,
@@ -242,6 +242,7 @@ export default function EndpointManagement() {
   const togglingIds = useActionSet<string>();
   const scanningIds = useActionSet<string>();
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Latest results per endpoint (for the summary row)
   const [latestResults, setLatestResults] = useState<
@@ -369,11 +370,33 @@ export default function EndpointManagement() {
     }
   };
 
+  const startAutoRefresh = useCallback(() => {
+    if (refreshTimerRef.current) return;
+    let ticks = 0;
+    refreshTimerRef.current = setInterval(() => {
+      ticks++;
+      fetchAll();
+      if (ticks >= 6) {
+        // Stop after ~60s (6 x 10s)
+        if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+    }, 10_000);
+  }, [fetchAll]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
+    };
+  }, []);
+
   const handleRequestScan = async (ep: Endpoint) => {
     try {
       scanningIds.add(ep.id);
       await endpointService.requestScan(ep.id);
       toast.success(`Scan requested for ${ep.host}:${ep.port}`);
+      startAutoRefresh();
     } catch (error) {
       console.error('Failed to request scan:', error);
     } finally {
@@ -531,9 +554,24 @@ export default function EndpointManagement() {
 
       {/* Endpoints List */}
       <Card>
-        <h3 className="text-sm font-medium text-zinc-400 mb-4">
-          Monitored Endpoints ({endpoints.length})
-        </h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-sm font-medium text-zinc-400">
+            Monitored Endpoints ({endpoints.length})
+          </h3>
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={
+              <RefreshCw
+                className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`}
+              />
+            }
+            onClick={fetchAll}
+            disabled={loading}
+          >
+            Refresh
+          </Button>
+        </div>
 
         {endpoints.length === 0 ? (
           <EmptyState
@@ -542,17 +580,15 @@ export default function EndpointManagement() {
             description="Add an endpoint above to start monitoring its TLS certificate."
           />
         ) : (
-          <Table>
+          <Table className="table-auto">
             <TableHeader>
-              <TableHead className="w-8" />
-              <TableHead>Host</TableHead>
-              <TableHead>Port</TableHead>
-              <TableHead>Label</TableHead>
+              <TableHead className="w-8 px-2" />
+              <TableHead>Endpoint</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead>Probe Source</TableHead>
-              <TableHead>Cert Expiry</TableHead>
-              <TableHead>Last Scan</TableHead>
-              <TableHead>Actions</TableHead>
+              <TableHead>Source</TableHead>
+              <TableHead>Expiry</TableHead>
+              <TableHead className="hidden xl:table-cell">Last Scan</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
             </TableHeader>
             <tbody>
               {endpoints.map((ep) => {
@@ -566,7 +602,7 @@ export default function EndpointManagement() {
                       className="cursor-pointer"
                       onClick={() => toggleExpand(ep.id)}
                     >
-                      <TableCell className="w-8 pr-0">
+                      <TableCell className="w-8 px-2 pr-0">
                         {isExpanded ? (
                           <ChevronDown className="w-4 h-4 text-zinc-500" />
                         ) : (
@@ -574,11 +610,17 @@ export default function EndpointManagement() {
                         )}
                       </TableCell>
                       <TableCell className="font-medium text-zinc-200">
-                        {ep.host}
-                      </TableCell>
-                      <TableCell>{ep.port}</TableCell>
-                      <TableCell className="text-zinc-400">
-                        {ep.label || '-'}
+                        <div>
+                          {ep.host}
+                          {ep.port !== 443 && (
+                            <span className="text-zinc-500">:{ep.port}</span>
+                          )}
+                        </div>
+                        {ep.label && (
+                          <div className="text-xs text-zinc-500 font-normal">
+                            {ep.label}
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell>
                         {summary?.anyFailed ? (
@@ -590,7 +632,7 @@ export default function EndpointManagement() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1">
                           {ep.hostedRegions && ep.hostedRegions.length > 0 && (
                             <Badge variant="info" dot={false}>
                               <Cloud className="w-3 h-3 mr-0.5" />
@@ -601,7 +643,7 @@ export default function EndpointManagement() {
                             ep.probeAssignments.length > 0 && (
                               <Badge variant="neutral" dot={false}>
                                 <Server className="w-3 h-3 mr-0.5" />
-                                {ep.probeAssignments.length} connected
+                                {ep.probeAssignments.length}
                               </Badge>
                             )}
                           {(!ep.hostedRegions ||
@@ -609,7 +651,7 @@ export default function EndpointManagement() {
                             (!ep.probeAssignments ||
                               ep.probeAssignments.length === 0) && (
                               <span className="text-zinc-500 text-xs">
-                                Not configured
+                                None
                               </span>
                             )}
                         </div>
@@ -623,13 +665,16 @@ export default function EndpointManagement() {
                           <span className="text-zinc-500">-</span>
                         )}
                       </TableCell>
-                      <TableCell className="text-zinc-400 text-xs whitespace-nowrap">
+                      <TableCell className="hidden xl:table-cell text-zinc-400 text-xs whitespace-nowrap">
                         {summary?.latestScan
                           ? new Date(summary.latestScan).toLocaleString()
                           : '-'}
                       </TableCell>
-                      <TableCell onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center gap-1.5">
+                      <TableCell
+                        className="text-right"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="inline-flex items-center gap-1">
                           <Button
                             size="sm"
                             variant="secondary"
@@ -641,7 +686,7 @@ export default function EndpointManagement() {
                             onClick={() => handleRequestScan(ep)}
                             disabled={scanningIds.has(ep.id) || !ep.isActive}
                           >
-                            Scan
+                            <span className="hidden lg:inline">Scan</span>
                           </Button>
                           <Button
                             size="sm"
@@ -656,7 +701,9 @@ export default function EndpointManagement() {
                             onClick={() => handleToggleActive(ep)}
                             disabled={togglingIds.has(ep.id)}
                           >
-                            {ep.isActive ? 'Disable' : 'Enable'}
+                            <span className="hidden lg:inline">
+                              {ep.isActive ? 'Disable' : 'Enable'}
+                            </span>
                           </Button>
                           <Button
                             size="sm"
@@ -665,7 +712,9 @@ export default function EndpointManagement() {
                             onClick={() => handleDelete(ep)}
                             disabled={deletingIds.has(ep.id)}
                           >
-                            {deletingIds.has(ep.id) ? '...' : 'Delete'}
+                            <span className="hidden lg:inline">
+                              {deletingIds.has(ep.id) ? '...' : 'Delete'}
+                            </span>
                           </Button>
                         </div>
                       </TableCell>
@@ -673,7 +722,7 @@ export default function EndpointManagement() {
                     {isExpanded && (
                       <tr key={`${ep.id}-detail`}>
                         <td
-                          colSpan={9}
+                          colSpan={7}
                           className="bg-zinc-900/50 border-b border-zinc-800/50"
                         >
                           {/* Assigned probes summary */}
