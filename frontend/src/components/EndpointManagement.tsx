@@ -255,6 +255,7 @@ export default function EndpointManagement() {
   const [newHost, setNewHost] = useState('');
   const [newPort, setNewPort] = useState('443');
   const [newLabel, setNewLabel] = useState('');
+  const [useManaged, setUseManaged] = useState(true);
   const [selectedProbeIds, setSelectedProbeIds] = useState<string[]>([]);
 
   const fetchAll = useCallback(async () => {
@@ -299,6 +300,11 @@ export default function EndpointManagement() {
       return;
     }
 
+    if (!useManaged && selectedProbeIds.length === 0) {
+      toast.error('Select at least one probe or enable managed monitoring');
+      return;
+    }
+
     try {
       setCreating(true);
       const endpoint = await endpointService.createEndpoint({
@@ -306,11 +312,13 @@ export default function EndpointManagement() {
         port: parseInt(newPort, 10) || 443,
         label: newLabel.trim() || undefined,
         probeIds: selectedProbeIds.length > 0 ? selectedProbeIds : undefined,
+        hostedRegions: useManaged ? ['us-east-1'] : undefined,
       });
       toast.success(`Endpoint ${endpoint.host}:${endpoint.port} added`);
       setNewHost('');
       setNewPort('443');
       setNewLabel('');
+      setUseManaged(true);
       setSelectedProbeIds([]);
       setEndpoints((prev) => [endpoint, ...prev]);
     } catch (error) {
@@ -465,49 +473,59 @@ export default function EndpointManagement() {
             </Button>
           </div>
 
-          {/* Probe selection */}
-          {availableProbes.length > 0 && (
-            <div className="mt-4">
-              <p className="text-xs text-zinc-500 mb-2">
-                Assign connected probes (optional):
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {availableProbes.map((probe) => {
-                  const selected = selectedProbeIds.includes(probe.id);
-                  return (
-                    <button
-                      key={probe.id}
-                      type="button"
-                      onClick={() =>
-                        setSelectedProbeIds((prev) =>
-                          selected
-                            ? prev.filter((id) => id !== probe.id)
-                            : [...prev, probe.id],
-                        )
-                      }
-                      disabled={creating}
-                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
+          {/* Monitoring type selection */}
+          <div className="mt-4">
+            <p className="text-xs text-zinc-500 mb-2">Monitoring source:</p>
+            <div className="flex flex-wrap gap-2">
+              {/* Managed (hosted) option -- always available */}
+              <button
+                type="button"
+                onClick={() => setUseManaged((prev) => !prev)}
+                disabled={creating}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
+                  useManaged
+                    ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-400'
+                    : 'border-zinc-700 bg-zinc-900 text-zinc-400 hover:border-zinc-600'
+                }`}
+              >
+                <Cloud className="w-3 h-3" />
+                Managed probe
+              </button>
+
+              {/* Connected probe options */}
+              {availableProbes.map((probe) => {
+                const selected = selectedProbeIds.includes(probe.id);
+                return (
+                  <button
+                    key={probe.id}
+                    type="button"
+                    onClick={() =>
+                      setSelectedProbeIds((prev) =>
                         selected
-                          ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-400'
-                          : 'border-zinc-700 bg-zinc-900 text-zinc-400 hover:border-zinc-600'
-                      }`}
-                    >
-                      <Server className="w-3 h-3" />
-                      {probe.name}
-                      {probe.region && (
-                        <span className="text-zinc-500">({probe.region})</span>
-                      )}
-                      {probe.status === 'stale' && (
-                        <span className="text-amber-400 text-[10px]">
-                          stale
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
+                          ? prev.filter((id) => id !== probe.id)
+                          : [...prev, probe.id],
+                      )
+                    }
+                    disabled={creating}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
+                      selected
+                        ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-400'
+                        : 'border-zinc-700 bg-zinc-900 text-zinc-400 hover:border-zinc-600'
+                    }`}
+                  >
+                    <Server className="w-3 h-3" />
+                    {probe.name}
+                    {probe.region && (
+                      <span className="text-zinc-500">({probe.region})</span>
+                    )}
+                    {probe.status === 'stale' && (
+                      <span className="text-amber-400 text-[10px]">stale</span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
-          )}
+          </div>
         </form>
       </Card>
 
@@ -573,23 +591,27 @@ export default function EndpointManagement() {
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1.5">
-                          {summary?.hasHosted && (
+                          {ep.hostedRegions && ep.hostedRegions.length > 0 && (
                             <Badge variant="info" dot={false}>
                               <Cloud className="w-3 h-3 mr-0.5" />
                               Managed
                             </Badge>
                           )}
-                          {summary?.hasConnected && (
-                            <Badge variant="neutral" dot={false}>
-                              <Server className="w-3 h-3 mr-0.5" />
-                              Connected
-                            </Badge>
-                          )}
-                          {!summary && (
-                            <span className="text-zinc-500 text-xs">
-                              No probes
-                            </span>
-                          )}
+                          {ep.probeAssignments &&
+                            ep.probeAssignments.length > 0 && (
+                              <Badge variant="neutral" dot={false}>
+                                <Server className="w-3 h-3 mr-0.5" />
+                                {ep.probeAssignments.length} connected
+                              </Badge>
+                            )}
+                          {(!ep.hostedRegions ||
+                            ep.hostedRegions.length === 0) &&
+                            (!ep.probeAssignments ||
+                              ep.probeAssignments.length === 0) && (
+                              <span className="text-zinc-500 text-xs">
+                                Not configured
+                              </span>
+                            )}
                         </div>
                       </TableCell>
                       <TableCell>
