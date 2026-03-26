@@ -243,6 +243,9 @@ export default function EndpointManagement() {
   const scanningIds = useActionSet<string>();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const scanRequestedRef = useRef<{ endpointId: string; at: Date } | null>(
+    null,
+  );
 
   // Latest results per endpoint (for the summary row)
   const [latestResults, setLatestResults] = useState<
@@ -370,19 +373,43 @@ export default function EndpointManagement() {
     }
   };
 
-  const startAutoRefresh = useCallback(() => {
-    if (refreshTimerRef.current) return;
-    let ticks = 0;
-    refreshTimerRef.current = setInterval(() => {
-      ticks++;
-      fetchAll();
-      if (ticks >= 6) {
-        // Stop after ~60s (6 x 10s)
-        if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
-        refreshTimerRef.current = null;
-      }
-    }, 10_000);
-  }, [fetchAll]);
+  const stopAutoRefresh = useCallback(() => {
+    if (refreshTimerRef.current) {
+      clearInterval(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+    }
+    scanRequestedRef.current = null;
+  }, []);
+
+  const startAutoRefresh = useCallback(
+    (endpointId: string) => {
+      if (refreshTimerRef.current) return;
+      const requestedAt = new Date();
+      scanRequestedRef.current = { endpointId, at: requestedAt };
+      let ticks = 0;
+      refreshTimerRef.current = setInterval(() => {
+        ticks++;
+        fetchAll();
+        if (ticks >= 6) {
+          stopAutoRefresh();
+        }
+      }, 10_000);
+    },
+    [fetchAll, stopAutoRefresh],
+  );
+
+  // Stop polling once fresh results arrive for the scanned endpoint
+  useEffect(() => {
+    const req = scanRequestedRef.current;
+    if (!req || !refreshTimerRef.current) return;
+    const results = latestResults[req.endpointId] ?? [];
+    const hasFreshResult = results.some(
+      (r) => r.scannedAt && new Date(r.scannedAt) > req.at,
+    );
+    if (hasFreshResult) {
+      stopAutoRefresh();
+    }
+  }, [latestResults, stopAutoRefresh]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -396,7 +423,7 @@ export default function EndpointManagement() {
       scanningIds.add(ep.id);
       await endpointService.requestScan(ep.id);
       toast.success(`Scan requested for ${ep.host}:${ep.port}`);
-      startAutoRefresh();
+      startAutoRefresh(ep.id);
     } catch (error) {
       console.error('Failed to request scan:', error);
     } finally {
