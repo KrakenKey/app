@@ -11,6 +11,7 @@ import Settings from './pages/Settings';
 import DomainManagement from './components/DomainManagement';
 import CertificateManagement from './components/CertificateManagement';
 import ApiKeyManagement from './components/ApiKeyManagement';
+import EndpointManagement from './components/EndpointManagement';
 import Feedback from './components/Feedback';
 import Billing from './pages/Billing';
 import Organizations from './pages/Organizations';
@@ -51,6 +52,7 @@ function AppRoutes() {
         <Route index element={<Overview />} />
         <Route path="domains" element={<DomainManagement />} />
         <Route path="certificates" element={<CertificateManagement />} />
+        <Route path="endpoints" element={<EndpointManagement />} />
         <Route path="api-keys" element={<ApiKeyManagement />} />
         <Route path="billing" element={<Billing />} />
         <Route path="organizations" element={<Organizations />} />

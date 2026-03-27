@@ -70,6 +70,42 @@ export class MetricsService implements OnModuleInit {
     registers: [this.registry],
   });
 
+  // --- Probes & Endpoints ---
+  readonly probeReportsTotal = new Counter({
+    name: 'probe_reports_total',
+    help: 'Total scan reports submitted by probes',
+    labelNames: ['probe_id', 'mode'] as const,
+    registers: [this.registry],
+  });
+
+  readonly monitoredEndpointsTotal = new Gauge({
+    name: 'monitored_endpoints_total',
+    help: 'Number of active monitored endpoints',
+    labelNames: ['mode'] as const,
+    registers: [this.registry],
+  });
+
+  readonly endpointCertExpiryDays = new Gauge({
+    name: 'endpoint_cert_expiry_days',
+    help: 'Days until endpoint certificate expires',
+    labelNames: ['host', 'port', 'mode', 'region'] as const,
+    registers: [this.registry],
+  });
+
+  readonly hostedProbeRegionsActive = new Gauge({
+    name: 'hosted_probe_regions_active',
+    help: 'Number of active hosted probe regions',
+    registers: [this.registry],
+  });
+
+  readonly endpointLatencyByRegion = new Histogram({
+    name: 'endpoint_latency_by_region_ms',
+    help: 'Endpoint scan latency by region in milliseconds',
+    labelNames: ['host', 'port', 'region'] as const,
+    buckets: [10, 25, 50, 100, 250, 500, 1000, 2500],
+    registers: [this.registry],
+  });
+
   onModuleInit() {
     collectDefaultMetrics({ register: this.registry });
   }

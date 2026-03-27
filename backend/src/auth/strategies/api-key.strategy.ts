@@ -12,7 +12,10 @@ export class ApiKeyStrategy extends PassportStrategy(Strategy, 'api-key') {
 
   async validate(req: Request) {
     const authHeader = req.headers['authorization'];
-    if (!authHeader?.startsWith('Bearer kk_')) {
+    if (
+      !authHeader?.startsWith('Bearer kk_') ||
+      authHeader.startsWith('Bearer kk_svc_')
+    ) {
       // Not an API key token — return null so Passport tries other strategies
       return null;
     }

@@ -4,10 +4,12 @@ import {
   NotFoundException,
   HttpException,
   UnauthorizedException,
+  type OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { In, Repository } from 'typeorm';
 import { UserApiKey } from './entities/user-api-key.entity';
+import { ServiceApiKey } from './entities/service-api-key.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash, randomBytes } from 'crypto';
 import { User } from '../users/entities/user.entity';
@@ -25,11 +27,15 @@ import type {
 } from '@krakenkey/shared';
 
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleInit {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly config: ConfigService,
     @InjectRepository(UserApiKey)
     private userApiKeyRepo: Repository<UserApiKey>,
+    @InjectRepository(ServiceApiKey)
+    private serviceApiKeyRepo: Repository<ServiceApiKey>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     @InjectRepository(Domain)
@@ -38,6 +44,30 @@ export class AuthService {
     private readonly tlsCrtRepo: Repository<TlsCrt>,
     private readonly billingService: BillingService,
   ) {}
+
+  async onModuleInit() {
+    await this.seedServiceKey();
+  }
+
+  /**
+   * Seeds a service key from KK_PROBE_API_KEY env var on startup.
+   * Idempotent: skips if the hash already exists.
+   */
+  private async seedServiceKey() {
+    const rawKey = this.config.get<string>('KK_PROBE_API_KEY');
+    if (!rawKey) return;
+
+    const hash = createHash('sha256').update(rawKey).digest('hex');
+    const existing = await this.serviceApiKeyRepo.findOne({ where: { hash } });
+    if (existing) return;
+
+    const key = this.serviceApiKeyRepo.create({
+      name: 'probe-service-key',
+      hash,
+    });
+    await this.serviceApiKeyRepo.save(key);
+    this.logger.log('Service key seeded from KK_PROBE_SERVICE_KEY');
+  }
 
   // --- Authentik OIDC Redirects ---
 
@@ -366,5 +396,42 @@ export class AuthService {
       await this.userRepo.save(user);
     }
     return user;
+  }
+
+  // --- Service API Key Management ---
+
+  async validateServiceKey(rawKey: string): Promise<ServiceApiKey | null> {
+    const hash = createHash('sha256').update(rawKey).digest('hex');
+    const record = await this.serviceApiKeyRepo.findOne({ where: { hash } });
+    if (!record) return null;
+    if (record.revokedAt) return null;
+    if (record.expiresAt && record.expiresAt < new Date()) return null;
+    return record;
+  }
+
+  async createServiceKey(
+    name: string,
+    expiresAt?: string,
+  ): Promise<{ apiKey: string; id: string; name: string }> {
+    const rawKey = `kk_svc_${randomBytes(24).toString('hex')}`;
+    const hash = createHash('sha256').update(rawKey).digest('hex');
+
+    const key = this.serviceApiKeyRepo.create({
+      name,
+      hash,
+      ...(expiresAt ? { expiresAt: new Date(expiresAt) } : {}),
+    });
+    await this.serviceApiKeyRepo.save(key);
+
+    return { apiKey: rawKey, id: key.id, name: key.name };
+  }
+
+  async revokeServiceKey(keyId: string): Promise<void> {
+    const result = await this.serviceApiKeyRepo.update(keyId, {
+      revokedAt: new Date(),
+    });
+    if (result.affected === 0) {
+      throw new NotFoundException(`Service key #${keyId} not found`);
+    }
   }
 }

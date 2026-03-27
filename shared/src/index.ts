@@ -6,4 +6,5 @@ export * from './types/api-key';
 export * from './types/api-error';
 export * from './types/auth';
 export * from './types/subscription';
+export * from './types/endpoint';
 export * from './constants/routes';
