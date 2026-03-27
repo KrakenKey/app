@@ -2,507 +2,355 @@
 
 ## System Overview
 
-KrakenKey is a modular, service-oriented backend built with NestJS for managing TLS certificate lifecycle through ACME protocol automation.
+KrakenKey is a modular NestJS backend for TLS certificate lifecycle management, endpoint monitoring, and team collaboration.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    KrakenKey Backend                        │
-└─────────────────────────────────────────────────────────────┘
-                           │
-        ┌──────────────────┼──────────────────┐
-        │                  │                  │
-    ┌───▼────┐        ┌───▼─────┐         ┌───▼──────┐
-    │ App    │        │ Certs   │         │Auth/Users│
-    │Module  │        │ Module  │         │ Modules  │
-    └────────┘        └───┬─────┘         └───┬──────┘
-                          │                   │
-                      ┌───▼──────┐        ┌───▼─────────┐
-                      │   TLS    │        │  Authentik  │
-                      │  Module  │        │  (OIDC)     │
-                      └───┬──────┘        └─────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                        KrakenKey Backend                         │
+├──────────┬──────────┬──────────┬──────────┬──────────┬──────────┤
+│   Auth   │  Certs   │ Domains  │ Billing  │   Orgs   │Endpoints │
+│  Module  │  Module  │  Module  │  Module  │  Module  │  Module  │
+└────┬─────┴────┬─────┴────┬─────┴────┬─────┴────┬─────┴────┬─────┘
+     │          │          │          │          │          │
+┌────▼───┐ ┌───▼────┐ ┌───▼──┐ ┌────▼───┐ ┌───▼──┐ ┌────▼────┐
+│Authentik│ │  ACME  │ │ DNS  │ │ Stripe │ │  DB  │ │ Probes  │
+│ (OIDC) │ │ (LE)   │ │ (CF/ │ │        │ │      │ │         │
+│        │ │        │ │ R53) │ │        │ │      │ │         │
+└────────┘ └────────┘ └──────┘ └────────┘ └──────┘ └─────────┘
                           │
-                    ┌─────┴─────┐
-                    │           │
-            ┌───────▼───┐  ┌────▼────────┐
-            │ TLS       │  │ Job Queue   │
-            │ Service   │  │ (BullMQ)    │
-            └────┬──────┘  └─────┬──────┘
-                 │               │
-        ┌────────┼───────────────┼────────┐
-        │        │               │        │
-    ┌───▼──┐ ┌──▼──┐ ┌─────────▼──┐ ┌─▼────┐
-    │ACME  │ │DNS  │ │PostgreSQL  │ │Redis │
-    │Issuer│ │Prov.│ │  Database  │ │Queue │
-    └──────┘ └─────┘ └────────────┘ └──────┘
+                    ┌─────┴──────┐
+                    │            │
+              ┌─────▼──┐  ┌─────▼──┐
+              │  Redis │  │Postgres│
+              │(BullMQ)│  │(TypeORM│
+              └────────┘  └────────┘
 ```
 
 ## Module Hierarchy
 
 ### Root Module (AppModule)
+
 **File**: `src/app.module.ts`
 
-Configuration and initialization of the entire application.
-
 **Imports**:
-- `AuthModule` - Authentication and OIDC integration
-- `UsersModule` - User management
-- `DomainsModule` - Domain verification
-- `CertsModule` - Certificate management functionality
-- `ConfigModule` - Environment variable loading (global)
-- `TypeOrmModule` - PostgreSQL database connection
-- `BullModule` - Redis-backed job queue initialization
-- `ScheduleModule` - NestJS cron scheduler (enables `@Cron` decorators globally)
-
-**Providers**:
-- `AppService` - Health check and version information
-- `AppController` - Root endpoint handler
-
-**Key Responsibilities**:
-- Initialize database connection with TypeORM
-- Load environment variables globally
-- Setup Redis connection for job queue
-- Bootstrap the application
-
-### Auth Module
-**File**: `src/auth/auth.module.ts`
-
-Handles authentication and authorization integration.
-
-**Imports**:
-- `UsersModule` - User persistence
-- `PassportModule` - Strategy execution
-
-**Providers**:
-- `AuthService` - OAuth/OIDC flow management
-- `JwtStrategy` - Validates Authentik JWTs
-- `ApiKeyStrategy` - Validates persistent API keys
-
-**Key Responsibilities**:
-- OIDC Redirects & Callback handling
-- API Key generation and hashing
-- Request Guards (JwtOrApiKeyGuard)
-
-### Users Module
-**File**: `src/users/users.module.ts`
-
-Manages user identities.
-
-**Imports**:
-- `TypeOrmModule` - User repository
-
-**Providers**:
-- `UsersService` - CRUD operations
-
-**Key Responsibilities**:
-- User persistence
-- Lookups by email/ID
-
-### Domains Module
-**File**: `src/domains/domains.module.ts`
-
-Handles domain ownership verification.
-
-**Providers**:
-- `DomainsService` - Verification logic (DNS TXT)
-- `DomainsController` - Endpoints
-- `DomainMonitorService` - Scheduled re-verification cron (`0 2 * * *`)
-
-**Key Responsibilities**:
-- Register domains for users
-- Verify ownership via DNS TXT records
-- Periodically re-check verified domains and revoke if TXT record is removed
-
-### Certs Module
-**File**: `src/certs/certs.module.ts`
-
-Container module for all certificate-related functionality.
-
-**Imports**:
-- `TlsModule` - TLS-specific operations
-
-**Exports**: None (used internally)
-
-**Key Responsibilities**:
-- Organize certificate-related features
-- Provide namespace for certificate endpoints (`/certs`)
-
-### TLS Module
-**File**: `src/certs/tls/tls.module.ts`
-
-Core module for TLS certificate issuance and management.
-
-**Imports**:
-- `TypeOrmModule` - TlsCrt entity repository
-- `BullModule` - Job queue for async processing
-
-**Providers**:
-- `TlsService` - Business logic
-- `CsrUtilService` - CSR parsing and validation
-- `CertUtilService` - Certificate parsing utilities
-- `CertIssuerConsumer` - Job processor (queue worker)
-- `AcmeIssuerStrategy` - ACME protocol implementation
-- `CloudflareDnsStrategy` - Cloudflare DNS integration
-- `Route53DnsStrategy` - AWS Route 53 DNS integration
-- `CertMonitorService` - Scheduled expiry monitoring cron (`0 6 * * *`)
-
-**Database Entities**:
-- `TlsCrt` - Certificate request record
-
-**Key Responsibilities**:
-- Handle CSR submission and validation
-- Manage certificate issuance workflow
-- Integrate with external ACME and DNS services
-- Process async jobs through BullMQ
-- Automatically queue renewal jobs for certificates expiring within 30 days
-
-## Data Flow Architecture
-
-### 1. Request Submission Flow
-
-```
-Client CSR
-    │
-    ▼
-TlsController.create()
-    │
-    ▼
-TlsService.create()
-    ├─ CsrUtilService.validateAndParse()
-    │  ├─ Verify CSR signature
-    │  ├─ Extract domains (SANs + CN)
-    │  ├─ Check key strength (min 2048 bits)
-    │  └─ Parse to JSON
-    ├─ Save to Database (TlsCrt entity)
-    ├─ Enqueue Job to BullMQ
-    │  ├─ Retry: 3 attempts
-    │  └─ Backoff: exponential (5s initial)
-    └─ Return { id, status: 'pending' }
-```
-
-### 2. Certificate Issuance Flow
-
-```
-BullMQ Job Processing
-    │
-    ▼
-CertIssuerConsumer.process()
-    ├─ Fetch CSR from Database
-    ├─ Validate CSR Format
-    ├─ Update Status: 'pending' → 'issuing'
-    ├─ AcmeIssuerStrategy.issue()
-    │  ├─ Initialize ACME Client
-    │  ├─ Create Account (if needed)
-    │  ├─ Extract Domains from CSR
-    │  ├─ Create Order
-    │  ├─ Get Authorizations & Challenges
-    │  ├─ For each domain:
-    │  │  ├─ CloudflareDnsStrategy.createRecord()
-    │  │  ├─ Wait for DNS Propagation
-    │  │  ├─ Notify ACME: Challenge Ready
-    │  │  ├─ Poll Challenge Status
-    │  │  └─ Clean up: removeRecord()
-    │  ├─ Finalize Order with CSR
-    │  ├─ Wait for CA Processing
-    │  ├─ Retrieve Certificate PEM
-    │  └─ Return certificate
-    ├─ Update Status: 'issuing' → 'issued'
-    ├─ Store Certificate in Database
-    └─ Log Success
-```
-
-### 3. Status Query Flow
-
-```
-Client GET /certs/tls/:id
-    │
-    ▼
-TlsController.findOne()
-    │
-    ▼
-TlsService.findOne()
-    │
-    ▼
-Database Query (TlsCrt)
-    │
-    ▼
-Return Certificate Record with Status
-```
-
-## Service Layer Architecture
-
-### TlsService
-**Responsibilities**:
-- CSR validation and persistence
-- Certificate record CRUD operations
-- Status management
-- Job enqueueing
-
-**Methods** (user-facing, ownership-checked):
-- `create(userId, createTlsCrtDto)` - Validate and queue CSR for issuance
-- `findAll(userId)` - List user's certificates
-- `findOne(id, userId)` - Retrieve one certificate
-- `update(id, userId, updateTlsCrtDto, status?)` - Update record
-- `renew(id, userId)` - Queue renewal for an `issued` certificate
-- `retry(id, userId)` - Re-queue issuance for a `failed` certificate
-- `remove(id, userId)` - Revoke certificate (stub)
-
-**Methods** (`@internal` — no ownership check, system use only):
-- `findOneInternal(id)` - Fetch cert without user scope (used by queue processors)
-- `updateInternal(id, dto, status?)` - Update cert without user scope (used by queue processors)
-- `renewInternal(id)` - Queue `tlsCertRenewal` job without user scope (used by `CertMonitorService`)
-
-### DomainsService
-**Responsibilities**:
-- Domain registration and ownership verification via DNS TXT lookup
-- Gating certificate issuance to verified domains only
-
-**Methods** (user-facing, ownership-checked):
-- `create(userId, createDomainDto)` - Register a domain and generate verification code
-- `findAll(userId)` - List user's domains
-- `findAllVerified(userId)` - List only verified domains (used by cert issuance auth check)
-- `findOne(id, userId)` - Retrieve one domain
-- `verify(userId, id)` - Perform DNS TXT lookup and mark as verified
-- `delete(userId, id)` - Remove a domain
-
-**Methods** (`@internal` — system use only):
-- `checkVerificationRecord(domain)` - DNS TXT lookup returning `boolean`; used by `DomainMonitorService` for periodic re-verification
-
-### CsrUtilService
-**Responsibilities**:
-- Parse and validate CSRs
-- Extract SANs and CN from CSR
-- Verify RSA key strength
-- Format PEM strings
-
-**Methods**:
-- `validateAndParse(pem)` - Complete CSR validation and parsing
-- `isAuthorized(dnsNames, allowedDomains)` - Domain authorization check
-- `formatPem(pem)` - Ensure correct PEM line wrapping
-
-### AcmeIssuerStrategy
-**Responsibilities**:
-- ACME protocol communication
-- Order creation and finalization
-- Challenge verification coordination
-- Certificate retrieval
-
-**Methods**:
-- `issue(csrPem, dnsProvider)` - Execute full issuance workflow
-- `waitForDns(recordName, expectedValue)` - Poll DNS propagation
-
-### CloudflareDnsStrategy
-**Responsibilities**:
-- Cloudflare API communication
-- DNS record creation and deletion
-- TXT record management
-
-**Methods**:
-- `createRecord(clientDomain, challengeToken)` - Create TXT record
-- `removeRecord(clientDomain)` - Delete TXT record
-
-## Database Schema
-
-### User Entity
-```typescript
-@Entity()
-export class User {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
-
-  @Column({ unique: true })
-  email: string;
-
-  @Column({ nullable: true })
-  username: string;
-
-  @Column({ type: 'simple-array', default: [] })
-  groups: string[];
-}
-```
-
-### Domain Entity
-```typescript
-@Entity()
-export class Domain {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
-
-  @Column()
-  hostname: string;
-
-  @Column()
-  verificationCode: string;
-
-  @Column({ default: false })
-  isVerified: boolean;
-
-  @ManyToOne(() => User)
-  user: User;
-}
-```
-
-### TlsCrt Entity
-```typescript
-@Entity()
-export class TlsCrt {
-  @PrimaryGeneratedColumn()
-  id: number;
-
-  @Column()
-  rawCsr: string;                    // Original PEM
-
-  @Column('jsonb')
-  parsedCsr: JSON;                   // Parsed structure
-
-  @Column({ type: 'text', nullable: true })
-  crtPem: string | null;             // Issued certificate
-
-  @Column({ default: 'pending', nullable: true })
-  status: string;                    // pending|issuing|issued|failed
-}
-```
-
-**Statuses**:
-- `pending` - CSR received, awaiting processing
-- `issuing` - Certificate issuance in progress
-- `issued` - Certificate successfully issued
-- `failed` - Issuance failed (manual intervention may be needed)
-
-## Scheduled Jobs
-
-All cron jobs are managed by `@nestjs/schedule` (`ScheduleModule.forRoot()` registered in `AppModule`). Jobs run in-process — no separate worker process is required.
-
-| Service | Cron | Time | Action |
-|---------|------|------|--------|
-| `DomainMonitorService` | `0 2 * * *` | Daily 02:00 UTC | Re-checks TXT record for all verified domains; marks unverified if record is absent |
-| `CertMonitorService` | `0 6 * * *` | Daily 06:00 UTC | Finds `issued` certs expiring within 30 days; queues `tlsCertRenewal` BullMQ jobs |
-
-**Ordering rationale**: Domain re-verification runs at 2AM so any domains that have lost their TXT record are marked unverified before the cert monitor runs at 6AM. New certificate submissions for those domains will be blocked immediately after 2AM.
-
-### DomainMonitorService
-
-- **File**: `src/domains/services/domain-monitor.service.ts`
-- **Query**: All domains where `isVerified = true`
-- **Check**: `resolveTxt(hostname)` — looks for `verificationCode` in flattened TXT records
-- **On failure**: Updates `isVerified = false`; logs a warning with domain hostname and ID
-- **On DNS error**: Returns `false` (cautious — transient DNS failures will revoke verification)
-- **Error isolation**: Per-domain try/catch so one failure does not abort the rest of the batch
-
-### CertMonitorService
-
-- **File**: `src/certs/tls/services/cert-monitor.service.ts`
-- **Query**: `status = 'issued' AND expiresAt < now() + 30 days` (DB-level filter via TypeORM `LessThan`)
-- **Action**: Calls `TlsService.renewInternal(certId)` for each result
-- **renewInternal**: Updates status to `renewing`, enqueues `tlsCertRenewal` BullMQ job
-- **Error isolation**: Per-cert try/catch so one failure does not abort the rest of the batch
+- `ConfigModule` — Global environment variable loading
+- `TypeOrmModule` — PostgreSQL connection with auto-running migrations
+- `BullModule` — Redis-backed job queue
+- `ScheduleModule` — Enables `@Cron` decorators globally
+- `AuthModule` — Authentication and OIDC
+- `UsersModule` — User management
+- `DomainsModule` — Domain verification
+- `CertsModule` — Certificate management
+- `BillingModule` — Stripe subscriptions and plan limits
+- `OrganizationsModule` — Team management
+- `EndpointsModule` — TLS endpoint monitoring
+- `HealthModule` — Health checks
+- `MetricsModule` — Prometheus metrics
+- `NotificationsModule` — Email notifications
+- `FeedbackModule` — User feedback
+- `ProbesModule` — Kubernetes probes
+- `ThrottlerModule` — Rate limiting
+
+**Global Guards**:
+- `RoleGuard` — Enforces role-based access control on all routes
 
 ---
 
-## Queue Architecture
+### Auth Module
 
-### Job Queues (BullMQ)
+**File**: `src/auth/auth.module.ts`
 
-**Queue**: `tlsCertIssuance` — initial certificate issuance
+Handles authentication via Authentik OIDC, JWT validation, and API key management.
 
-**Queue**: `tlsCertRenewal` — certificate renewal (triggered by user or `CertMonitorService`)
+**Providers**:
+- `AuthService` — OIDC flows, API key CRUD, profile management, service key seeding
+- `JwtStrategy` — Validates Authentik JWTs via JWKS (RS256)
+- `ApiKeyStrategy` — Validates `kk_*` bearer tokens via scrypt hash lookup
+- `ServiceKeyStrategy` — Validates `kk_svc_*` service tokens
 
-**Job Structure** (both queues):
-```typescript
-{
-  certId: number  // ID of the TlsCrt database record
-}
+**Guards**:
+- `JwtOrApiKeyGuard` — Tries JWT first, falls back to API key
+- `AdminGuard` — Checks Authentik `groups` for admin membership
+
+**Key behaviors**:
+- JIT user provisioning on first OIDC callback
+- API keys hashed with scrypt using `KK_HMAC_SECRET` as salt
+- Service key auto-seeded from `KK_PROBE_API_KEY` env var on startup
+
+---
+
+### Users Module
+
+**File**: `src/users/users.module.ts`
+
+**Providers**:
+- `UsersService` — CRUD operations
+- `AccountDeletionService` — Cascading account deletion (revokes certs, deletes domains, anonymizes feedback)
+
+---
+
+### Domains Module
+
+**File**: `src/domains/domains.module.ts`
+
+**Providers**:
+- `DomainsService` — Domain registration, DNS TXT verification, plan limit enforcement
+- `DomainsController` — REST endpoints
+- `DomainMonitorService` — Daily re-verification cron
+
+**Key behaviors**:
+- Generates unique verification codes on domain creation
+- Parent domain verification covers subdomains
+- Organization-scoped: org members share verified domains
+
+---
+
+### Certs Module → TLS Module
+
+**Files**: `src/certs/certs.module.ts`, `src/certs/tls/tls.module.ts`
+
+**Providers**:
+- `TlsService` — CSR validation, certificate CRUD, plan limits, job queuing
+- `CsrUtilService` — CSR parsing, signature verification, domain extraction
+- `CertUtilService` — Certificate parsing (expiry, details, fingerprint)
+- `CertIssuerConsumer` — BullMQ job processor for issuance and renewal
+- `AcmeIssuerStrategy` — ACME protocol (orders, challenges, finalization)
+- `CloudflareDnsStrategy` — Cloudflare TXT record management
+- `Route53DnsStrategy` — AWS Route 53 TXT record management
+- `CertMonitorService` — Daily expiry monitoring cron
+
+**DNS provider selection**: Factory pattern using `KK_DNS_PROVIDER` env var.
+
+---
+
+### Billing Module
+
+**File**: `src/billing/billing.module.ts`
+
+**Providers**:
+- `BillingService` — Stripe checkout, portal, upgrades, webhook processing, tier resolution
+- `SubscriptionTierResolverService` — Resolves user's current plan (gracefully degrades to `free`)
+- `OrgDissolutionProcessor` — BullMQ processor for async organization dissolution
+
+**Key behaviors**:
+- Plan limits enforced across all resource-creating modules
+- Flat-fee proration for upgrades (not day-based)
+- Organization subscriptions: personal ↔ org conversion on create/delete
+- Auto-dissolution of orgs when downgrading below Team tier
+
+**Plan tiers**: `free` → `starter` → `team` → `business` → `enterprise`
+
+---
+
+### Organizations Module
+
+**File**: `src/organizations/organizations.module.ts`
+
+**Providers**:
+- `OrganizationsService` — CRUD, member management, ownership transfer
+- `OrganizationsController` — REST endpoints with role-based access
+
+**Key behaviors**:
+- Role hierarchy: `owner` > `admin` > `member` > `viewer`
+- Requires Team+ plan to create
+- Users can only belong to one organization
+- Deletion queues async dissolution via BillingService
+
+---
+
+### Endpoints Module
+
+**File**: `src/endpoints/endpoints.module.ts`
+
+**Providers**:
+- `EndpointsService` — Endpoint CRUD, probe management, scan results, CSV/JSON export
+- `EndpointsController` — REST endpoints
+
+**Key behaviors**:
+- Dual scanning: managed (hosted) cloud probes and user-connected probes
+- Plan-based limits on endpoint count, hosted regions, hosted endpoints
+- Organization-scoped resource sharing
+
+---
+
+## Data Flow Architecture
+
+### 1. Certificate Submission Flow
+
+```
+Client → POST /certs/tls
+  │
+  ▼
+TlsController.create()
+  │
+  ▼
+TlsService.create()
+  ├─ CsrUtilService.validateAndParse()
+  │  ├─ Verify CSR signature
+  │  ├─ Extract domains (CN + SANs)
+  │  ├─ Validate key strength (RSA ≥2048, ECDSA P-256/P-384)
+  │  └─ Normalize PEM format
+  ├─ CsrUtilService.isAuthorized() — check domains against verified list
+  ├─ enforceCertLimits() — check plan quotas
+  ├─ Save TlsCrt to database (status: pending)
+  ├─ Enqueue tlsCertIssuance BullMQ job
+  └─ Return { id, status: 'pending' }
 ```
 
-**Retry Policy** (both queues):
-- Max attempts: 3
-- Backoff strategy: exponential
-- Initial delay: 5000ms
-- Schedule: attempt 1 → immediate, attempt 2 → ~5s, attempt 3 → ~25s
+### 2. ACME Issuance Flow (Background)
 
-**Processor**: `CertIssuerConsumer`
+```
+BullMQ picks up job
+  │
+  ▼
+CertIssuerConsumer.process()
+  ├─ Fetch TlsCrt from DB
+  ├─ Update status → 'issuing'
+  ├─ AcmeIssuerStrategy.issue()
+  │  ├─ Initialize ACME client (account key from env)
+  │  ├─ Create ACME order for all domains
+  │  ├─ For each domain:
+  │  │  ├─ DnsStrategy.createRecord() — TXT at _acme-challenge.{domain}
+  │  │  ├─ waitForDns() — poll 15x at 10s intervals
+  │  │  └─ Complete ACME challenge
+  │  ├─ Finalize order with CSR
+  │  ├─ Retrieve certificate PEM
+  │  └─ DnsStrategy.removeRecord() — cleanup
+  ├─ Extract expiration date from certificate
+  ├─ Update TlsCrt: status → 'issued', store crtPem + expiresAt
+  ├─ Send success notification email
+  └─ Update metrics
+```
 
-## External Service Integration
+### 3. Auto-Renewal Flow
 
-### Let's Encrypt ACME
-- **Purpose**: Certificate Authority
-- **Environment**: Staging (default) or Production
-- **Key Workflow**:
-  1. Account creation/reuse
-  2. Order creation for domains
-  3. Authorization retrieval
-  4. Challenge response
-  5. Order finalization
-  6. Certificate download
+```
+CertMonitorService (daily 06:00 UTC)
+  ├─ Query: status=issued, autoRenew=true, expiring within window
+  ├─ Filter by user tier (free: 5 days, paid: 30 days)
+  ├─ For each cert: TlsService.renewInternal()
+  │  ├─ Update status → 'renewing'
+  │  └─ Enqueue tlsCertRenewal BullMQ job
+  └─ Send expiry warning emails
+```
 
-### Cloudflare DNS
-- **Purpose**: DNS provider for DNS-01 challenges
-- **Key Operations**:
-  1. Create TXT record with challenge token
-  2. Verify propagation
-  3. Delete record after verification
-- **Configuration**: Zone ID and API token via environment
+### 4. Organization Dissolution Flow
 
-## Error Handling
+```
+OrganizationsService.delete()
+  ├─ Set org status → 'dissolving'
+  └─ Enqueue org-dissolution BullMQ job
+        │
+        ▼
+OrgDissolutionProcessor.process()
+  ├─ Transfer non-owner member resources to owner
+  ├─ Clear member org associations
+  ├─ Convert org subscription → personal subscription
+  └─ Delete organization record
+```
 
-### CSR Validation Errors
-- Invalid PEM format → `BadRequestException`
-- Signature verification failure → `BadRequestException`
-- Key too small → `BadRequestException`
-- Unauthorized domains → `BadRequestException`
+---
 
-### ACME Errors
-- Challenge setup failure → Job retry with backoff
-- DNS propagation timeout → Job failure
-- Certificate retrieval failure → Job retry
+## Scheduled Jobs
 
-### Job Processing
-- Max retries: 3 with exponential backoff
-- Failed jobs logged for manual review
-- Status updated to `failed` after all retries exhausted
+| Service | Cron | Time | Action |
+|---------|------|------|--------|
+| `DomainMonitorService` | `0 2 * * *` | 02:00 UTC | Re-verify DNS TXT for all verified domains. Marks unverified if missing. Sends email notification |
+| `CertMonitorService` | `0 6 * * *` | 06:00 UTC | Find expiring certs, queue renewal jobs, send warning emails, update metrics |
 
-## Scalability Considerations
+**Ordering**: Domain re-verification runs at 2AM so revoked domains block cert operations before the 6AM cert monitor runs.
 
-1. **Horizontal Scaling**:
-   - Stateless service design
-   - Redis-backed queue for distributed processing
-   - PostgreSQL for shared state
+Both services use per-item try/catch — one failure does not abort the batch.
 
-2. **Performance Optimization**:
-   - Async/await for non-blocking I/O
-   - BullMQ for parallel job processing
-   - Connection pooling via TypeORM
+---
 
-3. **Resource Management**:
-   - Graceful shutdown handling
-   - Configurable timeouts
-   - Exponential backoff to prevent thundering herd
+## Queue Architecture (BullMQ)
+
+| Queue | Purpose | Retry | Backoff |
+|-------|---------|-------|---------|
+| `tlsCertIssuance` | Initial certificate issuance | 3 attempts | Exponential (5s base) |
+| `tlsCertRenewal` | Certificate renewal | 3 attempts | Exponential (5s base) |
+| `org-dissolution` | Async organization deletion | 3 attempts | Exponential |
+
+All queues backed by Redis. Job payload is `{ certId }` for cert queues and `{ orgId }` for dissolution.
+
+---
+
+## Authentication Architecture
+
+```
+┌──────────────────────────────────────────────┐
+│                Request                        │
+│         Authorization: Bearer <token>         │
+└──────────────────┬───────────────────────────┘
+                   │
+            ┌──────▼──────┐
+            │JwtOrApiKey  │
+            │   Guard     │
+            └──────┬──────┘
+                   │
+         ┌─────────┴─────────┐
+         ▼                   ▼
+   ┌───────────┐      ┌───────────┐
+   │JWT Strategy│      │API Key    │
+   │(Authentik) │      │Strategy   │
+   │RS256 + JWKS│      │kk_* hash  │
+   └─────┬─────┘      └─────┬─────┘
+         │                   │
+         └─────────┬─────────┘
+                   ▼
+            ┌─────────────┐
+            │  RoleGuard  │
+            │(org roles)  │
+            └──────┬──────┘
+                   ▼
+            ┌─────────────┐
+            │  Controller │
+            └─────────────┘
+```
+
+**API key types**:
+
+| Prefix | Type | Purpose |
+|--------|------|---------|
+| `kk_` | User API key | Individual user access |
+| `kk_svc_` | Service key | System-level (probes, internal services) |
+
+---
 
 ## Security Architecture
 
-1. **CSR Validation**:
-   - Signature verification using embedded public key
-   - Key strength validation (min 2048 bits RSA)
-   - Domain authorization through DNS challenges
+1. **CSR validation**: Signature verification, key strength checks, domain authorization
+2. **API key hashing**: scrypt with `KK_HMAC_SECRET` salt — keys cannot be verified without the secret
+3. **OIDC**: JWT validated via JWKS endpoint, RS256 algorithm, issuer verification
+4. **Role-based access**: Global `RoleGuard` enforces org roles on all routes
+5. **Rate limiting**: Per IP, per user, per API key via `ThrottlerModule`
+6. **Webhook verification**: Stripe webhook signatures verified before processing
+7. **Helmet**: Security headers enabled globally
+8. **CORS**: Domain-based whitelist
+9. **Validation**: Global `ValidationPipe` with whitelist and transform
 
-2. **Credentials Management**:
-   - ACME account key via environment variable
-   - Cloudflare API token via environment variable
-   - No hardcoded secrets
+---
 
-3. **DNS Challenge**:
-   - DNS-01 challenge for domain validation
-   - TXT record creation/deletion
-   - DNS propagation verification before ACME notification
+## Configuration
 
-## Configuration Management
+All configuration via environment variables, loaded globally by `ConfigModule`. See [Configuration](./CONFIGURATION.md) for the full reference.
 
-**Global Configuration Module**: `ConfigModule.forRoot({ isGlobal: true })`
+**Variable prefixes**:
+- `KK_DB_*` — PostgreSQL
+- `KK_BULLMQ_*` — Redis
+- `KK_AUTHENTIK_*` — OIDC provider
+- `KK_STRIPE_*` — Billing
+- `CLOUDFLARE_*` — DNS provider
+- `AWS_*` / `KK_AWS_*` — Route 53
+- `ACME_*` — Let's Encrypt
 
-**Environment Variables**:
-- Database: `TYPEORM_*`
-- Redis: `BULLMQ_*`
-- ACME: `ACME_*`
-- Cloudflare: `CLOUDFLARE_*`
-- API: `PORT`, `API_VERSION`
+---
 
-All configuration loaded at startup and injected via `ConfigService`.
+## Scalability
+
+- **Stateless**: No in-process state — horizontally scalable behind a load balancer
+- **Async processing**: BullMQ distributes cert issuance across workers
+- **Connection pooling**: TypeORM manages database connections
+- **Redis-backed queues**: Shared job state across instances
+- **Graceful shutdown**: Properly drains connections and jobs

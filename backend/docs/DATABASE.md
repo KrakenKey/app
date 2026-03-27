@@ -2,336 +2,337 @@
 
 ## Overview
 
-The KrakenKey backend uses PostgreSQL as the primary data store via TypeORM ORM.
+KrakenKey uses PostgreSQL as the primary data store via TypeORM. Migrations run automatically on startup.
 
-## Database Configuration
+## Configuration
 
-### Connection Details
+Configured via environment variables (see [Configuration](./CONFIGURATION.md)):
 
-Configured via environment variables:
-
-```env
-TYPEORM_HOST=localhost           # Database host
-TYPEORM_PORT=5432               # Database port
-TYPEORM_USERNAME=postgres        # Database user
-TYPEORM_PASSWORD=password        # Database password
-TYPEORM_DATABASE=krakenkey       # Database name
-TYPEORM_SSL=false               # Enable SSL
-TYPEORM_SYNCHRONIZE=false       # Auto-sync schema (dev only)
-```
-
-### Connection Pool
-
-- Managed by TypeORM
-- Connection pooling enabled by default
-- Maximum connections: configurable via TypeORM options
-
-### Initialization
-
-```bash
-# Create database and tables
-yarn run db:create
-```
-
-**Script**: `scripts/create-db.ts`
+| Variable | Description |
+|----------|-------------|
+| `KK_DB_HOST` | Database hostname |
+| `KK_DB_PORT` | Database port (default: 5432) |
+| `KK_DB_USERNAME` | Database user |
+| `KK_DB_PASSWORD` | Database password |
+| `KK_DB_DATABASE` | Database name (default: krakenkey) |
+| `KK_DB_SYNCHRONIZE` | Auto-sync schema — **never enable in production** |
+| `KK_DB_SSL` | Enable SSL connections |
 
 ---
 
-## Entity: TlsCrt
+## Entities
 
-Represents a TLS certificate request and its associated data.
+### User
 
-### Schema
+Represents an authenticated user. The `id` comes from Authentik's `sub` claim (not a UUID).
+
+```sql
+CREATE TABLE "user" (
+  "id" TEXT PRIMARY KEY,                          -- Authentik sub claim
+  "username" VARCHAR NOT NULL UNIQUE,
+  "email" VARCHAR NOT NULL UNIQUE,
+  "groups" TEXT[] DEFAULT '{}',                    -- Authentik groups
+  "displayName" VARCHAR,
+  "notificationPreferences" JSONB,
+  "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  "autoRenewalConfirmedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  "autoRenewalReminderSentAt" TIMESTAMP,
+  "role" VARCHAR,                                 -- org role: owner/admin/member/viewer
+  "organizationId" UUID REFERENCES organization(id) ON DELETE CASCADE
+);
+```
+
+**Relationships:**
+- Has many `UserApiKey`
+- Has many `Domain`
+- Has many `TlsCrt`
+- Belongs to `Organization` (optional)
+
+---
+
+### Domain
+
+Represents a domain registered by a user for DNS verification. Verification is required before certificates can be issued.
+
+```sql
+CREATE TABLE "domain" (
+  "id" UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  "hostname" VARCHAR NOT NULL,                    -- FQDN (max 253 chars)
+  "verificationCode" VARCHAR NOT NULL,            -- DNS TXT value (hidden from API)
+  "isVerified" BOOLEAN DEFAULT FALSE,
+  "userId" TEXT NOT NULL REFERENCES "user"(id),
+  "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE("userId", "hostname")
+);
+
+CREATE INDEX idx_domain_user_verified ON domain("userId", "isVerified");
+```
+
+**Relationships:**
+- Belongs to `User`
+
+**Verification:**
+- A daily cron job at 02:00 UTC re-checks DNS TXT records
+- If the record is missing, `isVerified` is set to `false` and an email notification is sent
+- Parent domain verification covers subdomains (verifying `example.com` authorizes `sub.example.com`)
+
+---
+
+### TlsCrt
+
+Represents a TLS certificate request and its lifecycle from submission through issuance, renewal, and revocation.
 
 ```sql
 CREATE TABLE "tls_crt" (
   "id" SERIAL PRIMARY KEY,
-  "rawCsr" VARCHAR NOT NULL,
-  "parsedCsr" JSONB NOT NULL,
-  "crtPem" TEXT,
-  "status" VARCHAR DEFAULT 'pending',
+  "rawCsr" VARCHAR NOT NULL,                      -- Original CSR PEM (hidden from API)
+  "parsedCsr" JSONB NOT NULL,                     -- Parsed CSR metadata
+  "crtPem" TEXT,                                  -- Issued certificate PEM
+  "status" VARCHAR DEFAULT 'pending',             -- pending/issuing/issued/failed/renewing/revoking/revoked
+  "expiresAt" TIMESTAMP,                          -- Certificate expiration
+  "lastRenewedAt" TIMESTAMP,
+  "autoRenew" BOOLEAN DEFAULT TRUE,
+  "renewalCount" INTEGER DEFAULT 0,
+  "lastRenewalAttemptAt" TIMESTAMP,
+  "revocationReason" INTEGER,                     -- RFC 5280 reason code (0-10)
+  "revokedAt" TIMESTAMP,
   "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  "updatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  "userId" TEXT NOT NULL REFERENCES "user"(id)
 );
+
+CREATE INDEX idx_tls_crt_user ON tls_crt("userId");
+CREATE INDEX idx_tls_crt_renewal ON tls_crt("status", "autoRenew", "expiresAt");
 ```
 
-### TypeScript Definition
+**Status Values:**
 
-```typescript
-import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
+| Status | Description |
+|--------|-------------|
+| `pending` | CSR received, validated, job queued |
+| `issuing` | ACME workflow actively running |
+| `issued` | Certificate successfully issued |
+| `failed` | Issuance failed after 3 retries |
+| `renewing` | Renewal in progress |
+| `revoking` | Revocation request sent to ACME CA |
+| `revoked` | Certificate successfully revoked |
 
-@Entity()
-export class TlsCrt {
-  @PrimaryGeneratedColumn()
-  id: number;
-
-  @Column()
-  rawCsr: string;
-
-  @Column('jsonb')
-  parsedCsr: JSON;
-
-  @Column({ type: 'text', nullable: true })
-  crtPem: string | null;
-
-  @Column({ default: 'pending', nullable: true })
-  status: string;
-}
-```
-
-### Column Definitions
-
-| Column | Type | Required | Nullable | Default | Description |
-|--------|------|----------|----------|---------|-------------|
-| `id` | INTEGER | Yes | No | AUTO | Primary key, auto-incremented |
-| `rawCsr` | VARCHAR | Yes | No | - | Original CSR in PEM format |
-| `parsedCsr` | JSONB | Yes | No | - | Parsed CSR structure |
-| `crtPem` | TEXT | No | Yes | NULL | Issued certificate in PEM format |
-| `status` | VARCHAR | No | Yes | 'pending' | Certificate status |
-
-### Status Values
-
-| Status | Meaning | Description |
-|--------|---------|-------------|
-| `pending` | Awaiting Processing | CSR received, job queued |
-| `issuing` | In Progress | ACME workflow executing |
-| `issued` | Success | Certificate successfully issued and stored |
-| `failed` | Error | Issuance failed after max retries |
-
-### parsedCsr Structure
-
-JSON representation of the parsed CSR:
+**parsedCsr Structure:**
 
 ```json
 {
   "subject": [
-    {
-      "name": "countryName",
-      "shortName": "C",
-      "value": "US"
-    },
-    {
-      "name": "commonName",
-      "shortName": "CN",
-      "value": "example.com"
-    }
-  ],
-  "attributes": [
-    {
-      "name": "extensionRequest",
-      "value": {...}
-    }
+    {"name": "commonName", "shortName": "CN", "value": "example.com"}
   ],
   "extensions": [
     {
       "name": "subjectAltName",
       "altNames": [
-        {
-          "type": 2,
-          "value": "example.com"
-        },
-        {
-          "type": 2,
-          "value": "www.example.com"
-        }
+        {"type": 2, "value": "example.com"},
+        {"type": 2, "value": "www.example.com"}
       ]
     }
   ],
-  "publicKeyLength": 2048
+  "publicKeyLength": 4096
 }
 ```
 
-### Data Size Estimates
-
-**Average Record Size**:
-- `rawCsr`: 1-2 KB
-- `parsedCsr`: 2-3 KB
-- `crtPem`: 2-3 KB
-- **Total per record**: 5-8 KB
-
-**Storage for 100,000 records**: ~500 MB - 1 GB
+**Relationships:**
+- Belongs to `User`
 
 ---
 
-## Indexes
+### UserApiKey
 
-### Current Indexes
-
-```sql
--- Primary key index (auto-created)
-CREATE INDEX idx_tls_crt_pkey ON tls_crt(id);
-
--- Status index (recommended for queries)
-CREATE INDEX idx_tls_crt_status ON tls_crt(status);
-```
-
-### Recommended Indexes
+API keys for programmatic access. Keys are hashed with scrypt using `KK_HMAC_SECRET` as salt.
 
 ```sql
--- For status-based queries
-CREATE INDEX idx_tls_crt_status ON tls_crt(status);
+CREATE TABLE "user_api_key" (
+  "id" UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  "name" VARCHAR NOT NULL DEFAULT 'default',      -- Friendly name (max 100 chars)
+  "hash" VARCHAR NOT NULL UNIQUE,                 -- scrypt hash (hidden from API)
+  "expiresAt" TIMESTAMP,
+  "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  "userId" TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE
+);
 
--- For time-range queries
-CREATE INDEX idx_tls_crt_created_at ON tls_crt(createdAt);
-CREATE INDEX idx_tls_crt_updated_at ON tls_crt(updatedAt);
-
--- Composite index for common queries
-CREATE INDEX idx_tls_crt_status_created ON tls_crt(status, createdAt DESC);
+CREATE INDEX idx_api_key_user ON user_api_key("userId");
 ```
+
+Key format: `kk_` prefix followed by random bytes. The raw key is only returned once at creation time.
 
 ---
 
-## Queries
+### ServiceApiKey
 
-### Find by ID
+System-level API keys for probe instances and internal services. Separate from user keys.
 
-```typescript
-const tlsCrt = await this.TlsCrtRepository.findOneBy({ id });
-```
-
-**SQL**:
 ```sql
-SELECT * FROM tls_crt WHERE id = $1;
-```
-
-### Find by Status
-
-```typescript
-const pending = await this.TlsCrtRepository.find({
-  where: { status: 'pending' }
-});
-```
-
-**SQL**:
-```sql
-SELECT * FROM tls_crt WHERE status = $1;
-```
-
-### Count by Status
-
-```typescript
-const count = await this.TlsCrtRepository.count({
-  where: { status: 'issued' }
-});
-```
-
-**SQL**:
-```sql
-SELECT COUNT(*) FROM tls_crt WHERE status = $1;
-```
-
-### Update Status
-
-```typescript
-await this.TlsCrtRepository.update(
-  { id },
-  { status: 'issued', crtPem: certificate }
+CREATE TABLE "service_api_key" (
+  "id" UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  "name" VARCHAR NOT NULL,
+  "hash" VARCHAR NOT NULL UNIQUE,                 -- scrypt hash (hidden from API)
+  "expiresAt" TIMESTAMP,
+  "revokedAt" TIMESTAMP,
+  "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
-**SQL**:
+Key format: `kk_svc_` prefix. Can be revoked (soft delete via `revokedAt`).
+
+---
+
+### Subscription
+
+Stripe subscription records linked to users or organizations.
+
 ```sql
-UPDATE tls_crt
-SET status = $1, crtPem = $2, updatedAt = CURRENT_TIMESTAMP
-WHERE id = $3;
+CREATE TABLE "subscription" (
+  "id" UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  "plan" VARCHAR NOT NULL,                        -- starter/team/business/enterprise
+  "status" VARCHAR NOT NULL,                      -- active/past_due/canceled/incomplete/trialing
+  "stripeCustomerId" VARCHAR,
+  "stripeSubscriptionId" VARCHAR UNIQUE,
+  "currentPeriodStart" TIMESTAMP,
+  "currentPeriodEnd" TIMESTAMP,
+  "userId" TEXT REFERENCES "user"(id),
+  "organizationId" UUID REFERENCES organization(id),
+  "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_subscription_user ON subscription("userId");
+CREATE INDEX idx_subscription_org ON subscription("organizationId");
 ```
 
-### Recent Certificates (Issued)
+**Relationships:**
+- Belongs to `User` (personal subscription) OR `Organization` (team subscription)
 
-```typescript
-const recent = await this.TlsCrtRepository.find({
-  where: { status: 'issued' },
-  order: { id: 'DESC' },
-  take: 10
-});
+---
+
+### Organization
+
+Teams with role-based access control. Requires Team+ plan.
+
+```sql
+CREATE TABLE "organization" (
+  "id" UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  "name" VARCHAR NOT NULL,                        -- 2-80 characters
+  "ownerId" TEXT NOT NULL,
+  "status" VARCHAR DEFAULT 'active',              -- active/dissolving
+  "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_org_owner ON organization("ownerId");
 ```
 
-**SQL**:
+**Relationships:**
+- Has one owner (`User`)
+- Has many members (`User` via `organizationId` foreign key)
+- Has one `Subscription`
+
+---
+
+### Endpoint
+
+TLS endpoints monitored by probes.
+
 ```sql
-SELECT * FROM tls_crt
-WHERE status = 'issued'
-ORDER BY id DESC
-LIMIT 10;
+CREATE TABLE "endpoint" (
+  "id" UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  "host" VARCHAR NOT NULL,
+  "port" INTEGER NOT NULL,
+  "sni" VARCHAR,                                  -- SNI override
+  "label" VARCHAR,                                -- Friendly name
+  "isActive" BOOLEAN DEFAULT TRUE,
+  "lastScanRequestedAt" TIMESTAMP,
+  "ownerId" TEXT NOT NULL REFERENCES "user"(id)
+);
+```
+
+**Relationships:**
+- Belongs to `User`
+- Has many `EndpointHostedRegion`
+- Has many `EndpointProbeAssignment`
+
+---
+
+### EndpointHostedRegion
+
+Join table linking endpoints to managed cloud probe regions.
+
+```sql
+CREATE TABLE "endpoint_hosted_region" (
+  "id" UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  "endpointId" UUID NOT NULL REFERENCES endpoint(id),
+  "region" VARCHAR NOT NULL,
+  UNIQUE("endpointId", "region")
+);
 ```
 
 ---
 
-## Relationships
+### EndpointProbeAssignment
 
-**Current**: No relationships defined
+Join table linking endpoints to connected probe instances.
 
-**Potential Future Relationships**:
+```sql
+CREATE TABLE "endpoint_probe_assignment" (
+  "id" UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  "endpointId" UUID NOT NULL REFERENCES endpoint(id),
+  "probeId" UUID NOT NULL,
+  UNIQUE("endpointId", "probeId")
+);
+```
 
-```typescript
-// Future: User/Account relationship
-@ManyToOne(() => User)
-@JoinColumn({ name: 'userId' })
-user: User;
+---
 
-// Future: Certificate renewal chain
-@OneToMany(() => TlsCrt, (crt) => crt.previous)
-renewals: TlsCrt[];
+## Entity Relationship Diagram
 
-@ManyToOne(() => TlsCrt, (crt) => crt.renewals, { nullable: true })
-@JoinColumn({ name: 'previousCrtId' })
-previous: TlsCrt | null;
+```
+┌──────────┐       ┌──────────────┐       ┌───────────────┐
+│   User   │──1:N──│   Domain     │       │  Organization │
+│          │──1:N──│   TlsCrt     │       │               │
+│          │──1:N──│  UserApiKey  │       └───────┬───────┘
+│          │──N:1──│ Organization │──1:1──Subscription
+│          │──1:N──│  Endpoint    │
+└──────────┘       └──────────────┘
+                          │
+                   ┌──────┴──────┐
+                   │             │
+          EndpointHosted   EndpointProbe
+            Region          Assignment
 ```
 
 ---
 
 ## Migrations
 
-TypeORM synchronization can be enabled for development:
-
-```typescript
-// In app.module.ts
-synchronize: configService.get('TYPEORM_SYNCHRONIZE') === 'true'
-```
+Migrations run automatically on startup via TypeORM's `migrationsRun: true` configuration.
 
 ### Generating Migrations
 
 ```bash
-# Generate migration from schema changes
-npx typeorm migration:generate src/migrations/AddColumnX
+# Generate migration from entity changes
+npx typeorm migration:generate src/migrations/MigrationName
 
-# Run migrations
+# Create empty migration
+npx typeorm migration:create src/migrations/MigrationName
+
+# Run pending migrations
 npx typeorm migration:run
 
-# Revert migration
+# Revert last migration
 npx typeorm migration:revert
 ```
 
-### Manual Migration Example
-
-```typescript
-// src/migrations/1234567890000-AddExpiryDateToTlsCrt.ts
-import { MigrationInterface, QueryRunner, TableColumn } from 'typeorm';
-
-export class AddExpiryDateToTlsCrt1234567890000
-  implements MigrationInterface
-{
-  public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.addColumn(
-      'tls_crt',
-      new TableColumn({
-        name: 'expiresAt',
-        type: 'TIMESTAMP',
-        isNullable: true,
-      }),
-    );
-  }
-
-  public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.dropColumn('tls_crt', 'expiresAt');
-  }
-}
-```
+**Important:** In production, always use migrations (`KK_DB_SYNCHRONIZE=false`). The `synchronize` option is for development convenience only and can cause data loss.
 
 ---
 
 ## Backup & Recovery
 
-### Backup Strategies
+### Backup
 
 ```bash
 # Full database backup
@@ -340,11 +341,11 @@ pg_dump -h localhost -U postgres -d krakenkey > backup.sql
 # Compressed backup
 pg_dump -h localhost -U postgres -d krakenkey | gzip > backup.sql.gz
 
-# Custom format backup (faster restore)
+# Custom format (faster restore)
 pg_dump -h localhost -U postgres -d krakenkey -F custom > backup.dump
 ```
 
-### Restore Procedures
+### Restore
 
 ```bash
 # From SQL dump
@@ -357,302 +358,24 @@ gunzip -c backup.sql.gz | psql -h localhost -U postgres -d krakenkey
 pg_restore -h localhost -U postgres -d krakenkey backup.dump
 ```
 
-### Point-in-Time Recovery
-
-Requires WAL (Write-Ahead Logging) enabled:
-
-```sql
--- Enable WAL
-ALTER SYSTEM SET wal_level = replica;
--- Restart PostgreSQL
-```
-
----
-
-## Maintenance
-
-### Vacuum & Analyze
-
-```bash
-# Clean up dead tuples
-VACUUM ANALYZE tls_crt;
-
-# Or via command line
-vacuumdb -h localhost -U postgres -d krakenkey -v -z tls_crt
-```
-
-### Check Bloat
-
-```sql
-SELECT
-  schemaname,
-  tablename,
-  pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) as size
-FROM pg_tables
-WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
-ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
-```
-
-### Reindex
-
-```bash
-# Reindex table
-REINDEX TABLE tls_crt;
-
-# Or via command line
-reindexdb -h localhost -U postgres -d krakenkey -t tls_crt
-```
-
 ---
 
 ## Monitoring
-
-### Connection Monitoring
 
 ```sql
 -- Active connections
 SELECT datname, count(*) FROM pg_stat_activity GROUP BY datname;
 
--- Long-running queries
-SELECT pid, now() - query_start, query
-FROM pg_stat_activity
-WHERE query_start < now() - interval '5 minutes';
-```
-
-### Disk Usage
-
-```sql
 -- Database size
 SELECT pg_size_pretty(pg_database_size('krakenkey'));
 
--- Table size
-SELECT
-  schemaname,
-  tablename,
-  pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename))
-FROM pg_tables
-ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
-```
+-- Table sizes
+SELECT tablename, pg_size_pretty(pg_total_relation_size('public.' || tablename))
+FROM pg_tables WHERE schemaname = 'public'
+ORDER BY pg_total_relation_size('public.' || tablename) DESC;
 
-### Query Performance
-
-```sql
--- Enable query logging
-SET log_min_duration_statement = 1000;  -- Log queries > 1 second
-
--- View slow query log
-SELECT query, calls, total_time, mean_time
-FROM pg_stat_statements
-ORDER BY mean_time DESC
-LIMIT 10;
-```
-
----
-
-## Data Privacy & Compliance
-
-### Data Sensitivity
-
-| Field | Sensitivity | Notes |
-|-------|-------------|-------|
-| `rawCsr` | Medium | Contains domain names, public key |
-| `parsedCsr` | Medium | Parsed certificate details |
-| `crtPem` | Low | Public certificate |
-| `status` | Low | Processing status |
-
-### Retention Policies
-
-**Recommended**:
-- Keep issued certificates: Until expiry + 1 year
-- Keep failed attempts: 90 days
-- Archive old records: After 5 years
-
-```typescript
-// Example: Clean old failed records
-async cleanupOldFailures(daysOld: number) {
-  const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - daysOld);
-
-  await this.TlsCrtRepository.delete({
-    status: 'failed',
-    createdAt: LessThan(cutoffDate),
-  });
-}
-```
-
-### GDPR Considerations
-
-- No personal data stored directly (CSR/cert only contain domain names)
-- No user tracking without explicit user table
-- Implement data deletion on request
-- Log access to sensitive operations
-
----
-
-## Performance Tuning
-
-### Query Optimization
-
-```typescript
-// Bad: Fetches all columns
-const record = await this.TlsCrtRepository.findOneBy({ id });
-
-// Good: Select specific columns
-const record = await this.TlsCrtRepository.find({
-  select: { id: true, status: true },
-  where: { id },
-  take: 1,
-});
-```
-
-### Pagination
-
-```typescript
-// Efficient: Paginated results
-const page = 1;
-const pageSize = 50;
-
-const records = await this.TlsCrtRepository.find({
-  skip: (page - 1) * pageSize,
-  take: pageSize,
-  order: { id: 'DESC' },
-});
-```
-
-### Caching
-
-```typescript
-// Cache frequently accessed records
-private cache = new Map<number, TlsCrt>();
-
-async findOneWithCache(id: number) {
-  if (this.cache.has(id)) {
-    return this.cache.get(id);
-  }
-  const record = await this.TlsCrtRepository.findOneBy({ id });
-  if (record) {
-    this.cache.set(id, record);
-  }
-  return record;
-}
-```
-
----
-
-## Troubleshooting
-
-### Connection Issues
-
-```typescript
-// Error: "connect ECONNREFUSED 127.0.0.1:5432"
-// Solution: Ensure PostgreSQL is running and listening on correct port
-// Check: TYPEORM_HOST, TYPEORM_PORT, TYPEORM_USERNAME, TYPEORM_PASSWORD
-
-// Error: "password authentication failed"
-// Solution: Verify credentials in environment variables
-```
-
-### Synchronization Issues
-
-```typescript
-// Error: "migration error"
-// Solution: Check TYPEORM_SYNCHRONIZE is 'false' in production
-// Run migrations manually instead
-
-// Error: "column does not exist"
-// Solution: Ensure migrations have been run
-// Run: yarn run typeorm migration:run
-```
-
-### Performance Issues
-
-```typescript
-// Slow queries
-// Solution: Add indexes on frequently queried columns
-// Use EXPLAIN ANALYZE to identify bottlenecks
-
-// High memory usage
-// Solution: Use pagination instead of loading all records
-// Implement query result streaming for large datasets
-```
-
----
-
-## Future Schema Enhancements
-
-### Proposed Additions
-
-```typescript
-// Track certificate lifecycle
-@CreateDateColumn()
-createdAt: Date;
-
-@UpdateDateColumn()
-updatedAt: Date;
-
-@Column({ type: 'timestamp', nullable: true })
-expiresAt: Date;  // Certificate expiry date
-
-@Column({ type: 'timestamp', nullable: true })
-issuedAt: Date;   // When certificate was issued
-
-
-// Track user/API key ownership
-@Column({ nullable: true })
-userId: string;   // If user system added
-
-@Column({ nullable: true })
-apiKeyId: string; // If API key system added
-
-
-// Audit trail
-@Column('jsonb', { default: '[]' })
-statusHistory: Array<{
-  status: string;
-  timestamp: Date;
-  reason?: string;
-}>;
-
-
-// Links to related certificates
-@Column({ nullable: true })
-renewalOf: number;  // ID of certificate being renewed
-
-@Column({ default: false })
-autoRenewal: boolean;  // Enable auto-renewal
-
-
-// Certificate details extracted from issued cert
-@Column({ nullable: true })
-serialNumber: string;
-
-@Column({ type: 'text', nullable: true })
-issuer: string;
-
-@Column({ type: 'jsonb', nullable: true })
-extensions: JSON;  // Certificate extensions
-```
-
-### Migration Script
-
-```typescript
-// src/migrations/AddEnhancedFields.ts
-export class AddEnhancedFields1234567890000 implements MigrationInterface {
-  public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.addColumn(
-      'tls_crt',
-      new TableColumn({
-        name: 'createdAt',
-        type: 'timestamp',
-        default: 'CURRENT_TIMESTAMP',
-      }),
-    );
-    // ... add other columns
-  }
-
-  public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.dropColumn('tls_crt', 'createdAt');
-    // ... drop other columns
-  }
-}
+-- Long-running queries
+SELECT pid, now() - query_start AS duration, query
+FROM pg_stat_activity
+WHERE query_start < now() - interval '5 minutes';
 ```
