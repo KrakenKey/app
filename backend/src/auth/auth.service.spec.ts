@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { createHash } from 'crypto';
+import { createHmac } from 'crypto';
 import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { UserApiKey } from './entities/user-api-key.entity';
@@ -11,12 +11,15 @@ import { Domain } from '../domains/entities/domain.entity';
 import { TlsCrt } from '../certs/tls/entities/tls-crt.entity';
 import { BillingService } from '../billing/billing.service';
 
+const HMAC_SECRET = 'test-hmac-secret';
+
 const CONFIG: Record<string, string> = {
   KK_AUTHENTIK_DOMAIN: 'auth.example.com',
   KK_AUTHENTIK_ENROLLMENT_SLUG: 'krakenkey-enrollment',
   KK_AUTHENTIK_CLIENT_ID: 'krakenkey-backend',
   KK_AUTHENTIK_CLIENT_SECRET: 's3cr3t',
   KK_AUTHENTIK_REDIRECT_URI: 'https://api.example.com/auth/callback',
+  KK_HMAC_SECRET: HMAC_SECRET,
 };
 
 /** Build a fake JWT with a real base64 payload so handleCallback can decode it. */
@@ -320,7 +323,7 @@ describe('AuthService', () => {
       expect(result.apiKey).toMatch(/^kk_/);
     });
 
-    it('stores the SHA-256 hash, not the raw key', async () => {
+    it('stores the HMAC-SHA256 hash, not the raw key', async () => {
       let capturedHash = '';
       mockUserApiKeyRepo.create.mockImplementation(
         ({ hash }: { hash: string }) => {
@@ -331,7 +334,7 @@ describe('AuthService', () => {
       mockUserApiKeyRepo.save.mockResolvedValue({});
 
       const result = await service.createApiKey('user-1', 'k');
-      const expectedHash = createHash('sha256')
+      const expectedHash = createHmac('sha256', HMAC_SECRET)
         .update(result.apiKey)
         .digest('hex');
       expect(capturedHash).toBe(expectedHash);
@@ -361,13 +364,15 @@ describe('AuthService', () => {
   // validateApiKey
   // ---------------------------------------------------------------------------
   describe('validateApiKey', () => {
-    it('looks up the SHA-256 hash of the raw key', async () => {
+    it('looks up the HMAC-SHA256 hash of the raw key', async () => {
       mockUserApiKeyRepo.findOne.mockResolvedValue(null);
       const rawKey = 'kk_test_raw_key';
 
       await service.validateApiKey(rawKey);
 
-      const expectedHash = createHash('sha256').update(rawKey).digest('hex');
+      const expectedHash = createHmac('sha256', HMAC_SECRET)
+        .update(rawKey)
+        .digest('hex');
       expect(mockUserApiKeyRepo.findOne).toHaveBeenCalledWith({
         where: { hash: expectedHash },
         relations: ['user'],

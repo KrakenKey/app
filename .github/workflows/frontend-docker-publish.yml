@@ -15,6 +15,9 @@ on:
       - .github/workflows/frontend-docker-publish.yml
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}/frontend
