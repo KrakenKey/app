@@ -8,6 +8,9 @@ on:
       - 'shared/**'
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
 concurrency:
   group: sync-openapi
   cancel-in-progress: true

@@ -11,7 +11,7 @@ import { In, Repository } from 'typeorm';
 import { UserApiKey } from './entities/user-api-key.entity';
 import { ServiceApiKey } from './entities/service-api-key.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { createHash, randomBytes } from 'crypto';
+import { createHmac, randomBytes } from 'crypto';
 import { User } from '../users/entities/user.entity';
 import { Domain } from '../domains/entities/domain.entity';
 import { TlsCrt } from '../certs/tls/entities/tls-crt.entity';
@@ -50,6 +50,18 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
+   * HMAC-SHA256 key hashing with a server-side secret.
+   * Prevents offline key verification if the DB is compromised without the secret.
+   */
+  private hashKey(raw: string): string {
+    const secret = this.config.get<string>('KK_HMAC_SECRET');
+    if (!secret) {
+      throw new Error('KK_HMAC_SECRET must be set');
+    }
+    return createHmac('sha256', secret).update(raw).digest('hex');
+  }
+
+  /**
    * Seeds a service key from KK_PROBE_API_KEY env var on startup.
    * Idempotent: skips if the hash already exists.
    */
@@ -57,7 +69,7 @@ export class AuthService implements OnModuleInit {
     const rawKey = this.config.get<string>('KK_PROBE_API_KEY');
     if (!rawKey) return;
 
-    const hash = createHash('sha256').update(rawKey).digest('hex');
+    const hash = this.hashKey(rawKey);
     const existing = await this.serviceApiKeyRepo.findOne({ where: { hash } });
     if (existing) return;
 
@@ -242,7 +254,7 @@ export class AuthService implements OnModuleInit {
     }
 
     const rawKey = `kk_${randomBytes(24).toString('hex')}`;
-    const hash = createHash('sha256').update(rawKey).digest('hex');
+    const hash = this.hashKey(rawKey);
 
     const apiKey = this.userApiKeyRepo.create({
       name,
@@ -294,7 +306,7 @@ export class AuthService implements OnModuleInit {
    * Returns the UserApiKey record with user relation if valid, null otherwise.
    */
   async validateApiKey(rawKey: string) {
-    const hash = createHash('sha256').update(rawKey).digest('hex');
+    const hash = this.hashKey(rawKey);
     const record = await this.userApiKeyRepo.findOne({
       where: { hash },
       relations: ['user'],
@@ -401,7 +413,7 @@ export class AuthService implements OnModuleInit {
   // --- Service API Key Management ---
 
   async validateServiceKey(rawKey: string): Promise<ServiceApiKey | null> {
-    const hash = createHash('sha256').update(rawKey).digest('hex');
+    const hash = this.hashKey(rawKey);
     const record = await this.serviceApiKeyRepo.findOne({ where: { hash } });
     if (!record) return null;
     if (record.revokedAt) return null;
@@ -414,7 +426,7 @@ export class AuthService implements OnModuleInit {
     expiresAt?: string,
   ): Promise<{ apiKey: string; id: string; name: string }> {
     const rawKey = `kk_svc_${randomBytes(24).toString('hex')}`;
-    const hash = createHash('sha256').update(rawKey).digest('hex');
+    const hash = this.hashKey(rawKey);
 
     const key = this.serviceApiKeyRepo.create({
       name,

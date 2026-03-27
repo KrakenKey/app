@@ -14,6 +14,9 @@ on:
       - 'frontend/**'
       - 'shared/**'
 
+permissions:
+  contents: read
+
 jobs:
   backend-unit:
     name: Backend unit tests

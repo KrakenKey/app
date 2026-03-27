@@ -132,15 +132,16 @@ export class CsrUtilService {
     const header = '-----BEGIN CERTIFICATE REQUEST-----';
     const footer = '-----END CERTIFICATE REQUEST-----';
 
-    const match = trimmed.match(
-      /-----BEGIN CERTIFICATE REQUEST-----([\s\S]+?)-----END CERTIFICATE REQUEST-----/,
-    );
-    if (!match) {
+    const beginIdx = trimmed.indexOf(header);
+    const endIdx = trimmed.indexOf(footer);
+    if (beginIdx === -1 || endIdx <= beginIdx) {
       throw new BadRequestException('CSR must include PEM header and footer');
     }
 
     // Strip all whitespace from base64 body and re-wrap at 64 chars per line
-    const base64 = match[1].replace(/\s/g, '');
+    const base64 = trimmed
+      .slice(beginIdx + header.length, endIdx)
+      .replace(/\s/g, '');
     const chunks = base64.match(/.{1,64}/g) || [];
     return `${header}\n${chunks.join('\n')}\n${footer}`;
   }
