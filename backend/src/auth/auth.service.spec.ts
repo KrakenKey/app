@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { createHmac } from 'crypto';
+import { scryptSync } from 'crypto';
 import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { UserApiKey } from './entities/user-api-key.entity';
@@ -323,7 +323,7 @@ describe('AuthService', () => {
       expect(result.apiKey).toMatch(/^kk_/);
     });
 
-    it('stores the HMAC-SHA256 hash, not the raw key', async () => {
+    it('stores the scrypt hash, not the raw key', async () => {
       let capturedHash = '';
       mockUserApiKeyRepo.create.mockImplementation(
         ({ hash }: { hash: string }) => {
@@ -334,9 +334,9 @@ describe('AuthService', () => {
       mockUserApiKeyRepo.save.mockResolvedValue({});
 
       const result = await service.createApiKey('user-1', 'k');
-      const expectedHash = createHmac('sha256', HMAC_SECRET)
-        .update(result.apiKey)
-        .digest('hex');
+      const expectedHash = scryptSync(result.apiKey, HMAC_SECRET, 64).toString(
+        'hex',
+      );
       expect(capturedHash).toBe(expectedHash);
     });
 
@@ -364,15 +364,13 @@ describe('AuthService', () => {
   // validateApiKey
   // ---------------------------------------------------------------------------
   describe('validateApiKey', () => {
-    it('looks up the HMAC-SHA256 hash of the raw key', async () => {
+    it('looks up the scrypt hash of the raw key', async () => {
       mockUserApiKeyRepo.findOne.mockResolvedValue(null);
       const rawKey = 'kk_test_raw_key';
 
       await service.validateApiKey(rawKey);
 
-      const expectedHash = createHmac('sha256', HMAC_SECRET)
-        .update(rawKey)
-        .digest('hex');
+      const expectedHash = scryptSync(rawKey, HMAC_SECRET, 64).toString('hex');
       expect(mockUserApiKeyRepo.findOne).toHaveBeenCalledWith({
         where: { hash: expectedHash },
         relations: ['user'],

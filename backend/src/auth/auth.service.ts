@@ -11,7 +11,7 @@ import { In, Repository } from 'typeorm';
 import { UserApiKey } from './entities/user-api-key.entity';
 import { ServiceApiKey } from './entities/service-api-key.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { createHmac, randomBytes } from 'crypto';
+import { scryptSync, randomBytes } from 'crypto';
 import { User } from '../users/entities/user.entity';
 import { Domain } from '../domains/entities/domain.entity';
 import { TlsCrt } from '../certs/tls/entities/tls-crt.entity';
@@ -46,19 +46,28 @@ export class AuthService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
+    const secret = this.config.get<string>('KK_HMAC_SECRET');
+    if (!secret) {
+      this.logger.error(
+        'KK_HMAC_SECRET is not set — API key creation and validation will fail. ' +
+          'Add the secret to your environment before using key-based auth.',
+      );
+    }
     await this.seedServiceKey();
   }
 
   /**
-   * HMAC-SHA256 key hashing with a server-side secret.
+   * scrypt key hashing with a server-side secret as salt.
    * Prevents offline key verification if the DB is compromised without the secret.
    */
   private hashKey(raw: string): string {
     const secret = this.config.get<string>('KK_HMAC_SECRET');
     if (!secret) {
-      throw new Error('KK_HMAC_SECRET must be set');
+      throw new Error(
+        'KK_HMAC_SECRET must be set to use key-based authentication',
+      );
     }
-    return createHmac('sha256', secret).update(raw).digest('hex');
+    return scryptSync(raw, secret, 64).toString('hex');
   }
 
   /**
@@ -68,6 +77,12 @@ export class AuthService implements OnModuleInit {
   private async seedServiceKey() {
     const rawKey = this.config.get<string>('KK_PROBE_API_KEY');
     if (!rawKey) return;
+
+    const secret = this.config.get<string>('KK_HMAC_SECRET');
+    if (!secret) {
+      this.logger.warn('Skipping service key seed — KK_HMAC_SECRET is not set');
+      return;
+    }
 
     const hash = this.hashKey(rawKey);
     const existing = await this.serviceApiKeyRepo.findOne({ where: { hash } });
