@@ -39,9 +39,9 @@ export const PLAN_LIMITS: Record<SubscriptionPlan, PlanLimits> = {
     renewalWindowDays: 30,
     monitoredEndpoints: 10,
     minScanInterval: 30,
-    hostedProbeRegions: 0,
-    hostedMonitoredEndpoints: 0,
-    hostedScanInterval: 0,
+    hostedProbeRegions: 2,
+    hostedMonitoredEndpoints: 5,
+    hostedScanInterval: 30,
     scanResultRetentionDays: 30,
   },
   team: {

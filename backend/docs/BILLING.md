@@ -12,8 +12,8 @@ KrakenKey uses Stripe for subscription management with five plan tiers that cont
 | **Certificates / month** | 5 | 50 | 250 | 1,000 | Unlimited |
 | **Active Certificates** | 10 | 75 | 375 | 1,500 | Unlimited |
 | **Scan Interval** | 60 min | 30 min | 5 min | 1 min | Custom |
-| **Hosted Probe Regions** | — | — | 5 | 15 | Unlimited |
-| **Hosted Endpoints** | — | — | — | 100 | Unlimited |
+| **Hosted Probe Regions** | — | 2 | 5 | 15 | Unlimited |
+| **Hosted Endpoints** | — | 5 | 25 | 100 | Unlimited |
 | **Data Retention** | 5 days | 30 days | 90 days | 90 days | Custom |
 | **Auto-Renewal Window** | 5 days | 30 days | 30 days | 30 days | 30 days |
 | **Organizations** | — | — | Yes | Yes | Yes |
