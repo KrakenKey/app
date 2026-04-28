@@ -18,6 +18,7 @@ import { TlsCrt } from '../certs/tls/entities/tls-crt.entity';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { BillingService } from '../billing/billing.service';
 import { PLAN_LIMITS } from '../billing/constants/plan-limits';
+import { EmailService } from '../notifications/email.service';
 import type {
   ApiKey,
   AuthCallbackResponse,
@@ -43,6 +44,7 @@ export class AuthService implements OnModuleInit {
     @InjectRepository(TlsCrt)
     private readonly tlsCrtRepo: Repository<TlsCrt>,
     private readonly billingService: BillingService,
+    private readonly emailService: EmailService,
   ) {}
 
   async onModuleInit() {
@@ -360,6 +362,8 @@ export class AuthService implements OnModuleInit {
       plan,
       autoRenewalConfirmedAt:
         user.autoRenewalConfirmedAt?.toISOString() ?? null,
+      firstDomainAddedAt: user.firstDomainAddedAt?.toISOString() ?? null,
+      firstCertIssuedAt: user.firstCertIssuedAt?.toISOString() ?? null,
       organizationId: user.organizationId ?? null,
       role: user.role ?? null,
       resourceCounts: {
@@ -421,6 +425,10 @@ export class AuthService implements OnModuleInit {
         autoRenewalConfirmedAt: new Date(),
       });
       await this.userRepo.save(user);
+      await this.emailService.sendWelcome({
+        username: user.username,
+        email: user.email,
+      });
     }
     return user;
   }

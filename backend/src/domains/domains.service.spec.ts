@@ -62,7 +62,9 @@ describe('DomainsService', () => {
           provide: getRepositoryToken(User),
           useValue: {
             findOne: jest.fn().mockResolvedValue(null),
+            findOneBy: jest.fn().mockResolvedValue(null),
             find: jest.fn().mockResolvedValue([]),
+            save: jest.fn(),
           },
         },
         {

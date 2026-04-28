@@ -46,6 +46,15 @@ export class User {
   @Column({ type: 'timestamp', nullable: true, default: null })
   autoRenewalReminderSentAt: Date | null;
 
+  @Column({ type: 'timestamp', nullable: true, default: null })
+  firstDomainAddedAt: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true, default: null })
+  firstCertIssuedAt: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true, default: null })
+  onboardingEmailSentAt: Date | null;
+
   @Column({ type: 'varchar', nullable: true, default: null })
   role: OrgRole | null;
 

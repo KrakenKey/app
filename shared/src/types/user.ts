@@ -17,6 +17,8 @@ export interface UserProfile extends User {
   createdAt: string;
   plan?: string;
   autoRenewalConfirmedAt?: string | null;
+  firstDomainAddedAt?: string | null;
+  firstCertIssuedAt?: string | null;
   resourceCounts: {
     domains: number;
     certificates: number;
@@ -33,6 +35,8 @@ export const NotificationType = {
   DOMAIN_VERIFICATION_FAILED: 'domain_verification_failed',
   PLAN_LIMIT_REACHED: 'plan_limit_reached',
   AUTO_RENEWAL_PAUSED: 'auto_renewal_paused',
+  WELCOME: 'welcome',
+  ACTIVATION_REMINDER: 'activation_reminder',
 } as const;
 
 export type NotificationType =

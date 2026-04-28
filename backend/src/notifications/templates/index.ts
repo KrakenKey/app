@@ -2,6 +2,8 @@ import type {
   CertEmailContext,
   DomainVerificationFailedContext,
   PlanLimitReachedContext,
+  WelcomeContext,
+  ActivationReminderContext,
 } from '../email.service';
 
 function escapeHtml(str: string): string {
@@ -148,6 +150,52 @@ export function domainVerificationFailedTemplate(
       p(
         'Please add the TXT record back to your DNS configuration and re-verify the domain in KrakenKey.',
       ),
+    ].join(''),
+  );
+}
+
+export function welcomeTemplate(ctx: WelcomeContext): string {
+  return layout(
+    'Welcome to KrakenKey',
+    [
+      p(`Hi ${ctx.username}, welcome to KrakenKey! Your account is ready.`),
+      p('Get your first TLS certificate in three steps:'),
+      `<div style="margin:16px 0;padding:16px;background:#09090b;border-radius:8px">
+        <div style="margin:0 0 12px;font-size:14px;color:#fafafa"><strong style="color:#06b6d4">1.</strong> Add a domain and configure two DNS records</div>
+        <div style="margin:0 0 12px;font-size:14px;color:#fafafa"><strong style="color:#06b6d4">2.</strong> Verify your domain ownership</div>
+        <div style="margin:0;font-size:14px;color:#fafafa"><strong style="color:#06b6d4">3.</strong> Submit a CSR and receive your certificate in about 4 minutes</div>
+      </div>`,
+      `<div style="margin:24px 0;text-align:center">
+        <a href="https://app.krakenkey.io/dashboard" style="display:inline-block;padding:10px 24px;background:#06b6d4;color:#09090b;font-size:14px;font-weight:600;border-radius:6px;text-decoration:none">Go to Dashboard</a>
+      </div>`,
+      p(
+        'Need help? Check the getting-started guide at krakenkey.io/getting-started.',
+      ),
+    ].join(''),
+  );
+}
+
+export function activationReminderTemplate(
+  ctx: ActivationReminderContext,
+): string {
+  return layout(
+    'Your KrakenKey account is waiting',
+    [
+      p(
+        `Hi ${ctx.username}, you signed up for KrakenKey but haven't added a domain yet.`,
+      ),
+      p(
+        'Adding a domain is the first step to getting your TLS certificate. It takes about 5 minutes:',
+      ),
+      `<div style="margin:16px 0;padding:16px;background:#09090b;border-radius:8px">
+        <div style="margin:0 0 12px;font-size:14px;color:#fafafa"><strong style="color:#06b6d4">1.</strong> Add your domain in the dashboard</div>
+        <div style="margin:0 0 12px;font-size:14px;color:#fafafa"><strong style="color:#06b6d4">2.</strong> Add a TXT record and a CNAME record to your DNS</div>
+        <div style="margin:0;font-size:14px;color:#fafafa"><strong style="color:#06b6d4">3.</strong> Click "Verify" and you are ready to request certificates</div>
+      </div>`,
+      `<div style="margin:24px 0;text-align:center">
+        <a href="https://app.krakenkey.io/dashboard/domains" style="display:inline-block;padding:10px 24px;background:#06b6d4;color:#09090b;font-size:14px;font-weight:600;border-radius:6px;text-decoration:none">Add Your First Domain</a>
+      </div>`,
+      p('If you have questions or need help, just reply to this email.'),
     ].join(''),
   );
 }

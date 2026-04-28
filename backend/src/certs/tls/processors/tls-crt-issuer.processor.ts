@@ -8,11 +8,14 @@ import { CertUtilService } from '../util/cert-util.service';
 import { AcmeIssuerStrategy } from '../strategies/acme-issuer.strategy';
 import type { DnsProvider } from '../interfaces/dns-provider.interface';
 import { Inject, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { CertStatus } from '@krakenkey/shared';
 import type { TlsCertJobPayload } from '@krakenkey/shared';
 import { MetricsService } from '../../../metrics/metrics.service';
 import { EmailService } from '../../../notifications/email.service';
 import type { CertEmailContext } from '../../../notifications/email.service';
+import { User } from '../../../users/entities/user.entity';
 
 /**
  * Background job processor for certificate issuance and renewal.
@@ -34,6 +37,8 @@ export class CertIssuerConsumer extends WorkerHost {
     private readonly certUtilService: CertUtilService,
     private readonly metricsService: MetricsService,
     private readonly emailService: EmailService,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
   ) {
     super();
   }
@@ -122,6 +127,14 @@ export class CertIssuerConsumer extends WorkerHost {
       );
 
       this.metricsService.certIssuanceTotal.inc({ status: 'issued' });
+
+      if (csrRecord.user && !isRenewal) {
+        const user = await this.userRepo.findOneBy({ id: csrRecord.user.id });
+        if (user && !user.firstCertIssuedAt) {
+          user.firstCertIssuedAt = new Date();
+          await this.userRepo.save(user);
+        }
+      }
 
       if (csrRecord.user) {
         const ctx: CertEmailContext = {
