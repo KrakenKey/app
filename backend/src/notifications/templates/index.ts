@@ -158,18 +158,21 @@ export function welcomeTemplate(ctx: WelcomeContext): string {
   return layout(
     'Welcome to KrakenKey',
     [
-      p(`Hi ${ctx.username}, welcome to KrakenKey! Your account is ready.`),
-      p('Get your first TLS certificate in three steps:'),
-      `<div style="margin:16px 0;padding:16px;background:#09090b;border-radius:8px">
-        <div style="margin:0 0 12px;font-size:14px;color:#fafafa"><strong style="color:#06b6d4">1.</strong> Add a domain and configure two DNS records</div>
-        <div style="margin:0 0 12px;font-size:14px;color:#fafafa"><strong style="color:#06b6d4">2.</strong> Verify your domain ownership</div>
-        <div style="margin:0;font-size:14px;color:#fafafa"><strong style="color:#06b6d4">3.</strong> Submit a CSR and receive your certificate in about 4 minutes</div>
+      p(`Hi ${ctx.username}, thanks for signing up!`),
+      p(
+        'KrakenKey automates TLS certificate issuance, renewal, and monitoring so you never have to worry about expired certificates again.',
+      ),
+      `<div style="margin:20px 0;padding:16px;background:#1a1a2e;border:1px solid #27272a;border-radius:8px">
+        <div style="margin:0 0 8px;font-size:14px;font-weight:600;color:#fafafa">Get started in 3 steps:</div>
+        <div style="margin:0 0 6px;font-size:14px;color:#a1a1aa">1. Add a domain and verify ownership with a DNS TXT record</div>
+        <div style="margin:0 0 6px;font-size:14px;color:#a1a1aa">2. Set up the CNAME delegation for automatic ACME challenges</div>
+        <div style="font-size:14px;color:#a1a1aa">3. Issue your first certificate — private keys never leave your device</div>
       </div>`,
       `<div style="margin:24px 0;text-align:center">
         <a href="https://app.krakenkey.io/dashboard" style="display:inline-block;padding:10px 24px;background:#06b6d4;color:#09090b;font-size:14px;font-weight:600;border-radius:6px;text-decoration:none">Go to Dashboard</a>
       </div>`,
       p(
-        'Need help? Check the getting-started guide at krakenkey.io/getting-started.',
+        'Have questions or feedback? Just reply to this email — we read every message.',
       ),
     ].join(''),
   );

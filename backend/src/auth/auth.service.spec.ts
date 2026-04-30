@@ -77,7 +77,7 @@ describe('AuthService', () => {
         {
           provide: EmailService,
           useValue: {
-            sendWelcome: jest.fn(),
+            sendWelcome: jest.fn().mockResolvedValue(undefined),
           },
         },
         {

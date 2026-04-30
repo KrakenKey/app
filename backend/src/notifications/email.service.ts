@@ -55,6 +55,7 @@ export interface AutoRenewalPausedContext {
 }
 
 export interface WelcomeContext {
+  userId?: string;
   username: string;
   email: string;
 }
@@ -220,6 +221,7 @@ export class EmailService {
   }
 
   async sendWelcome(ctx: WelcomeContext): Promise<void> {
+    if (!(await this.shouldSend(ctx.userId, NotificationType.WELCOME))) return;
     await this.send(ctx.email, 'Welcome to KrakenKey', welcomeTemplate(ctx));
   }
 

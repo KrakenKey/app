@@ -425,10 +425,13 @@ export class AuthService implements OnModuleInit {
         autoRenewalConfirmedAt: new Date(),
       });
       await this.userRepo.save(user);
-      await this.emailService.sendWelcome({
-        username: user.username,
-        email: user.email,
-      });
+      this.emailService
+        .sendWelcome({
+          userId: user.id,
+          username: user.username,
+          email: user.email,
+        })
+        .catch((err) => this.logger.error('Failed to send welcome email', err));
     }
     return user;
   }
