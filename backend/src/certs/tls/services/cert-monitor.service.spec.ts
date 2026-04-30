@@ -25,6 +25,9 @@ describe('CertMonitorService', () => {
     createdAt: new Date(),
     autoRenewalConfirmedAt: new Date(), // freshly confirmed — not lapsed
     autoRenewalReminderSentAt: null,
+    firstDomainAddedAt: null,
+    firstCertIssuedAt: null,
+    onboardingEmailSentAt: null,
     role: null,
     organizationId: null,
     organization: null as any,

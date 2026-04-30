@@ -82,7 +82,15 @@ export class DomainsService {
       isVerified: false,
     });
 
-    return this.domainsRepository.save(domain);
+    const saved = await this.domainsRepository.save(domain);
+
+    const user = await this.userRepo.findOneBy({ id: userId });
+    if (user && !user.firstDomainAddedAt) {
+      user.firstDomainAddedAt = new Date();
+      await this.userRepo.save(user);
+    }
+
+    return saved;
   }
 
   /**

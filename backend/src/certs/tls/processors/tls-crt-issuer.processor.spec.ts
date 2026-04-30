@@ -45,6 +45,11 @@ describe('CertIssuerConsumer', () => {
       getExpirationDate: jest.fn().mockReturnValue(new Date('2027-01-01')),
     };
 
+    const mockUserRepo = {
+      findOneBy: jest.fn().mockResolvedValue(null),
+      save: jest.fn(),
+    };
+
     processor = new CertIssuerConsumer(
       mockTlsService as any,
       mockAcme as any,
@@ -53,6 +58,7 @@ describe('CertIssuerConsumer', () => {
       mockCertUtil as any,
       mockMetricsService,
       mockEmailService,
+      mockUserRepo as any,
     );
   });
 

@@ -17,14 +17,14 @@ import { SchemaObjectFactory } from '@nestjs/swagger/dist/services/schema-object
 import { SwaggerTypesMapper } from '@nestjs/swagger/dist/services/swagger-types-mapper';
 import { ModelPropertiesAccessor } from '@nestjs/swagger/dist/services/model-properties-accessor';
 import { ApplicationConfig } from '@nestjs/core';
-import { createSwaggerConfig } from 'src/config/swagger.config';
+import { createSwaggerConfig } from '../src/config/swagger.config';
 
 // ── Controllers ────────────────────────────────────────────────────
-import { AppController } from 'src/app.controller';
-import { AuthController } from 'src/auth/auth.controller';
-import { TlsController } from 'src/certs/tls/tls.controller';
-import { DomainsController } from 'src/domains/domains.controller';
-import { UsersController } from 'src/users/users.controller';
+import { AppController } from '../src/app.controller';
+import { AuthController } from '../src/auth/auth.controller';
+import { TlsController } from '../src/certs/tls/tls.controller';
+import { DomainsController } from '../src/domains/domains.controller';
+import { UsersController } from '../src/users/users.controller';
 // CertsController uses @ApiExcludeController, so skip it
 
 const log = (msg: string) => process.stderr.write(msg + '\n');

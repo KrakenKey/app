@@ -10,6 +10,7 @@ import { User } from '../users/entities/user.entity';
 import { Domain } from '../domains/entities/domain.entity';
 import { TlsCrt } from '../certs/tls/entities/tls-crt.entity';
 import { BillingService } from '../billing/billing.service';
+import { EmailService } from '../notifications/email.service';
 
 const HMAC_SECRET = 'test-hmac-secret';
 
@@ -73,6 +74,12 @@ describe('AuthService', () => {
         { provide: getRepositoryToken(User), useValue: mockUserRepo },
         { provide: getRepositoryToken(Domain), useValue: { count: jest.fn() } },
         { provide: getRepositoryToken(TlsCrt), useValue: { count: jest.fn() } },
+        {
+          provide: EmailService,
+          useValue: {
+            sendWelcome: jest.fn().mockResolvedValue(undefined),
+          },
+        },
         {
           provide: BillingService,
           useValue: {

@@ -8,6 +8,8 @@ import {
   Plus,
   AlertTriangle,
   X,
+  ArrowRight,
+  CheckCircle2,
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { Card } from '../components/ui/Card';
@@ -168,56 +170,131 @@ export default function Overview() {
         </div>
       )}
 
-      {/* Resource cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-        {resources.map(({ label, count, icon: Icon, path, color }) => (
-          <Card
-            key={label}
-            hover
-            className="cursor-pointer"
-            onClick={() => navigate(path)}
-          >
-            <div className="flex items-center justify-between mb-3">
-              <Icon className={`w-5 h-5 ${color}`} />
-              <span className="text-2xl font-bold text-zinc-100">{count}</span>
-            </div>
-            <p className="text-sm text-zinc-400">{label}</p>
-          </Card>
-        ))}
-      </div>
+      {/* Onboarding card — shown when user has no domains or certificates */}
+      {counts && counts.domains === 0 && counts.certificates === 0 ? (
+        <Card className="mb-8">
+          <h3 className="text-lg font-semibold text-zinc-100 mb-2">
+            Get your first TLS certificate
+          </h3>
+          <p className="text-sm text-zinc-400 mb-6">
+            Three steps to your first certificate. The whole process takes about
+            5 minutes.
+          </p>
+          <div className="space-y-4">
+            {[
+              {
+                step: 1,
+                title: 'Add a domain',
+                description:
+                  'Register a domain and configure a TXT record and a CNAME record in your DNS.',
+                path: '/dashboard/domains',
+                buttonLabel: 'Add Domain',
+                done: false,
+              },
+              {
+                step: 2,
+                title: 'Verify DNS ownership',
+                description:
+                  'Click "Verify" once your DNS records have propagated (usually 1–5 minutes).',
+                path: '/dashboard/domains',
+                buttonLabel: 'Go to Domains',
+                done: false,
+              },
+              {
+                step: 3,
+                title: 'Submit a CSR and get your certificate',
+                description:
+                  'Generate a CSR in-browser or with OpenSSL, submit it, and receive your certificate in about 4 minutes.',
+                path: '/dashboard/certificates',
+                buttonLabel: 'Submit CSR',
+                done: false,
+              },
+            ].map(({ step, title, description, path, buttonLabel, done }) => (
+              <div
+                key={step}
+                className="flex items-start gap-4 rounded-lg border border-zinc-800 bg-zinc-900/50 p-4"
+              >
+                <div className="flex-shrink-0 mt-0.5">
+                  {done ? (
+                    <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                  ) : (
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-cyan-500/20 text-xs font-bold text-cyan-400">
+                      {step}
+                    </span>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-zinc-100">{title}</p>
+                  <p className="text-xs text-zinc-500 mt-1">{description}</p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<ArrowRight className="w-3.5 h-3.5" />}
+                  onClick={() => navigate(path)}
+                >
+                  {buttonLabel}
+                </Button>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : (
+        <>
+          {/* Resource cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+            {resources.map(({ label, count, icon: Icon, path, color }) => (
+              <Card
+                key={label}
+                hover
+                className="cursor-pointer"
+                onClick={() => navigate(path)}
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <Icon className={`w-5 h-5 ${color}`} />
+                  <span className="text-2xl font-bold text-zinc-100">
+                    {count}
+                  </span>
+                </div>
+                <p className="text-sm text-zinc-400">{label}</p>
+              </Card>
+            ))}
+          </div>
 
-      {/* Quick actions */}
-      <Card>
-        <h3 className="text-sm font-medium text-zinc-400 mb-4">
-          Quick Actions
-        </h3>
-        <div className="flex flex-wrap gap-3">
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={<Plus className="w-3.5 h-3.5" />}
-            onClick={() => navigate('/dashboard/domains')}
-          >
-            Add Domain
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={<Plus className="w-3.5 h-3.5" />}
-            onClick={() => navigate('/dashboard/certificates')}
-          >
-            Submit CSR
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={<Plus className="w-3.5 h-3.5" />}
-            onClick={() => navigate('/dashboard/api-keys')}
-          >
-            Create API Key
-          </Button>
-        </div>
-      </Card>
+          {/* Quick actions */}
+          <Card>
+            <h3 className="text-sm font-medium text-zinc-400 mb-4">
+              Quick Actions
+            </h3>
+            <div className="flex flex-wrap gap-3">
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Plus className="w-3.5 h-3.5" />}
+                onClick={() => navigate('/dashboard/domains')}
+              >
+                Add Domain
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Plus className="w-3.5 h-3.5" />}
+                onClick={() => navigate('/dashboard/certificates')}
+              >
+                Submit CSR
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Plus className="w-3.5 h-3.5" />}
+                onClick={() => navigate('/dashboard/api-keys')}
+              >
+                Create API Key
+              </Button>
+            </div>
+          </Card>
+        </>
+      )}
     </div>
   );
 }

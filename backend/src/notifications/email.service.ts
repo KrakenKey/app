@@ -13,6 +13,8 @@ import {
   domainVerificationFailedTemplate,
   planLimitReachedTemplate,
   autoRenewalPausedTemplate,
+  welcomeTemplate,
+  activationReminderTemplate,
 } from './templates';
 import { User } from '../users/entities/user.entity';
 import { NotificationType } from '@krakenkey/shared';
@@ -48,6 +50,18 @@ export interface PlanLimitReachedContext {
 
 export interface AutoRenewalPausedContext {
   userId?: string;
+  username: string;
+  email: string;
+}
+
+export interface WelcomeContext {
+  userId?: string;
+  username: string;
+  email: string;
+}
+
+export interface ActivationReminderContext {
+  userId: string;
   username: string;
   email: string;
 }
@@ -203,6 +217,23 @@ export class EmailService {
       ctx.email,
       'KrakenKey auto-renewal paused — action required',
       autoRenewalPausedTemplate(ctx),
+    );
+  }
+
+  async sendWelcome(ctx: WelcomeContext): Promise<void> {
+    if (!(await this.shouldSend(ctx.userId, NotificationType.WELCOME))) return;
+    await this.send(ctx.email, 'Welcome to KrakenKey', welcomeTemplate(ctx));
+  }
+
+  async sendActivationReminder(ctx: ActivationReminderContext): Promise<void> {
+    if (
+      !(await this.shouldSend(ctx.userId, NotificationType.ACTIVATION_REMINDER))
+    )
+      return;
+    await this.send(
+      ctx.email,
+      'Your KrakenKey account is waiting',
+      activationReminderTemplate(ctx),
     );
   }
 
