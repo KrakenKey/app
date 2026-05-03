@@ -1,6 +1,5 @@
 import {
   Injectable,
-  Logger,
   BadRequestException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -11,41 +10,42 @@ import { isIP } from 'net';
 import type { PublicScanResponse } from '@krakenkey/shared';
 import type { PublicScanRequestDto } from './dto/public-scan.dto';
 
-const PRIVATE_RANGES_V4 = [
-  { prefix: '10.', mask: null },
-  { prefix: '127.', mask: null },
-  { prefix: '0.', mask: null },
-  { prefix: '169.254.', mask: null },
-  { prefix: '192.168.', mask: null },
-];
-
 function isPrivateIPv4(ip: string): boolean {
-  for (const range of PRIVATE_RANGES_V4) {
-    if (ip.startsWith(range.prefix)) return true;
-  }
-  // 172.16.0.0/12
-  const parts = ip.split('.');
-  if (parts[0] === '172') {
-    const second = parseInt(parts[1], 10);
-    if (second >= 16 && second <= 31) return true;
-  }
+  const parts = ip.split('.').map(Number);
+  if (parts.length !== 4 || parts.some((p) => isNaN(p))) return true;
+  const [a, b] = parts;
+
+  if (a === 0) return true; // 0.0.0.0/8
+  if (a === 10) return true; // 10.0.0.0/8
+  if (a === 127) return true; // 127.0.0.0/8
+  if (a === 169 && b === 254) return true; // 169.254.0.0/16
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+  if (a === 192 && b === 168) return true; // 192.168.0.0/16
+  if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 (CGNAT)
+  if (a === 198 && (b === 18 || b === 19)) return true; // 198.18.0.0/15
+  if (a >= 240) return true; // 240.0.0.0/4 (reserved) + broadcast
+
   return false;
 }
 
 function isPrivateIPv6(ip: string): boolean {
-  const lower = ip.toLowerCase();
-  return (
-    lower === '::1' ||
-    lower.startsWith('fc') ||
-    lower.startsWith('fd') ||
-    lower.startsWith('fe80')
-  );
+  const lower = ip.toLowerCase().replace(/^\[|\]$/g, '');
+
+  if (lower === '::1' || lower === '::') return true;
+  if (lower.startsWith('fc') || lower.startsWith('fd')) return true; // ULA
+  if (lower.startsWith('fe80')) return true; // link-local
+  if (lower.startsWith('ff')) return true; // multicast
+  if (lower.startsWith('2001:db8')) return true; // documentation
+
+  // IPv4-mapped IPv6 (::ffff:x.x.x.x) — extract and check the v4 part
+  const v4Mapped = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (v4Mapped) return isPrivateIPv4(v4Mapped[1]);
+
+  return false;
 }
 
 @Injectable()
 export class PublicScanService {
-  private readonly logger = new Logger(PublicScanService.name);
-
   constructor(private readonly httpService: HttpService) {}
 
   async scan(dto: PublicScanRequestDto): Promise<PublicScanResponse> {
@@ -57,38 +57,34 @@ export class PublicScanService {
       );
     }
 
-    await this.checkSSRF(hostname);
+    const resolved = await this.resolveToPublicIPs(hostname);
 
     try {
       const { data } = await firstValueFrom(
-        this.httpService.post('/scan', { host: hostname, port }),
+        this.httpService.post('/scan', {
+          host: resolved[0],
+          port,
+          sni: hostname,
+        }),
       );
+
+      data.endpoint = { host: hostname, port, sni: hostname };
 
       return {
         ...data,
         scannedAt: new Date().toISOString(),
       };
-    } catch (err) {
-      if (err?.response?.data?.error) {
-        throw new BadRequestException(err.response.data.error);
-      }
-      this.logger.error('Probe scan request failed', err?.message);
+    } catch {
       throw new ServiceUnavailableException(
         'Scanner is temporarily unavailable',
       );
     }
   }
 
-  private async checkSSRF(hostname: string): Promise<void> {
-    let addresses: string[] = [];
-
-    try {
-      const v4 = await dns.resolve4(hostname).catch(() => [] as string[]);
-      const v6 = await dns.resolve6(hostname).catch(() => [] as string[]);
-      addresses = [...v4, ...v6];
-    } catch {
-      throw new BadRequestException('Could not resolve hostname');
-    }
+  private async resolveToPublicIPs(hostname: string): Promise<string[]> {
+    const v4 = await dns.resolve4(hostname).catch(() => [] as string[]);
+    const v6 = await dns.resolve6(hostname).catch(() => [] as string[]);
+    const addresses = [...v4, ...v6];
 
     if (addresses.length === 0) {
       throw new BadRequestException('Could not resolve hostname');
@@ -102,5 +98,7 @@ export class PublicScanService {
         throw new BadRequestException('Cannot scan private/internal addresses');
       }
     }
+
+    return addresses;
   }
 }
