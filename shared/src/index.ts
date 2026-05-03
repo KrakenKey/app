@@ -7,4 +7,5 @@ export * from './types/api-error';
 export * from './types/auth';
 export * from './types/subscription';
 export * from './types/endpoint';
+export * from './types/public-scan';
 export * from './constants/routes';

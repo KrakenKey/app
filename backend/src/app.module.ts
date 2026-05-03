@@ -20,6 +20,7 @@ import { BillingModule } from './billing/billing.module';
 import { OrganizationsModule } from './organizations/organizations.module';
 import { ProbesModule } from './probes/probes.module';
 import { EndpointsModule } from './endpoints/endpoints.module';
+import { PublicScanModule } from './public-scan/public-scan.module';
 import { RoleGuard } from './auth/guards/role.guard';
 
 @Module({
@@ -76,6 +77,7 @@ import { RoleGuard } from './auth/guards/role.guard';
     OrganizationsModule,
     ProbesModule,
     EndpointsModule,
+    PublicScanModule,
   ],
   controllers: [AppController],
   providers: [

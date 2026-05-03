@@ -61,4 +61,7 @@ export const API_ROUTES = {
     TRANSFER_OWNERSHIP: (id: string) =>
       `/organizations/${id}/transfer-ownership`,
   },
+  PUBLIC_SCAN: {
+    SCAN: '/public-scan',
+  },
 } as const;
