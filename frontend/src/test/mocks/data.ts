@@ -53,6 +53,7 @@ export const mockCerts: TlsCert[] = [
     },
     crtPem:
       '-----BEGIN CERTIFICATE-----\nfake-cert-pem\n-----END CERTIFICATE-----',
+    chainPem: null,
     status: 'issued',
     expiresAt: '2026-01-01T00:00:00.000Z',
     lastRenewedAt: null,
@@ -75,6 +76,7 @@ export const mockCerts: TlsCert[] = [
       extensions: [],
     },
     crtPem: null,
+    chainPem: null,
     status: 'pending',
     expiresAt: null,
     lastRenewedAt: null,
