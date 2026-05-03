@@ -14,6 +14,7 @@ describe('TlsController', () => {
       findAll: jest.fn(),
       findOne: jest.fn(),
       getDetails: jest.fn(),
+      getChain: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
       renew: jest.fn(),
@@ -81,6 +82,29 @@ describe('TlsController', () => {
 
       expect(controller.getDetails(mockReq, '42')).toEqual(details);
       expect(mockService.getDetails).toHaveBeenCalledWith(42, userId);
+    });
+  });
+
+  describe('getChain', () => {
+    it('passes numeric id and userId to service.getChain()', () => {
+      const chainInfo = {
+        leafCert: {
+          serialNumber: '03A1',
+          issuer: 'CN=R3',
+          subject: 'CN=example.com',
+          validFrom: '2025-06-15T00:00:00.000Z',
+          validTo: '2026-06-15T00:00:00.000Z',
+          keyType: 'RSA',
+          keySize: 2048,
+          fingerprint: 'AB:CD',
+        },
+        intermediates: [],
+        fullChainPem: 'full-chain-pem',
+      };
+      mockService.getChain.mockReturnValue(chainInfo);
+
+      expect(controller.getChain(mockReq, '42')).toEqual(chainInfo);
+      expect(mockService.getChain).toHaveBeenCalledWith(42, userId);
     });
   });
 

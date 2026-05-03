@@ -73,6 +73,23 @@ export class TlsController {
     return this.tlsService.getDetails(+id, req.user.userId);
   }
 
+  @Get(':id/chain')
+  @ApiOperation({
+    summary: 'Get full certificate chain with parsed details',
+  })
+  @ApiParam({ name: 'id', description: 'Certificate ID' })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Full chain info: leaf cert details, intermediate details, and full chain PEM',
+  })
+  @ApiResponse({ status: 400, description: 'Certificate not yet issued' })
+  @ApiResponse({ status: 404, description: 'Certificate not found' })
+  @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
+  getChain(@Request() req: RequestWithUser, @Param('id') id: string) {
+    return this.tlsService.getChain(+id, req.user.userId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get certificate details' })
   @ApiParam({ name: 'id', description: 'Certificate ID' })

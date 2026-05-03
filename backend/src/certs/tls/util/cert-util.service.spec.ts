@@ -97,6 +97,83 @@ describe('CertUtilService', () => {
     });
   });
 
+  // ─── splitChain ──────────────────────────────────────────────────────────
+  describe('splitChain', () => {
+    const cert1 =
+      '-----BEGIN CERTIFICATE-----\nleafdata\n-----END CERTIFICATE-----';
+    const cert2 =
+      '-----BEGIN CERTIFICATE-----\nintermediate1\n-----END CERTIFICATE-----';
+    const cert3 =
+      '-----BEGIN CERTIFICATE-----\nintermediate2\n-----END CERTIFICATE-----';
+
+    it('returns leaf only when PEM contains a single cert', () => {
+      const result = service.splitChain(cert1);
+      expect(result.leaf).toBe(cert1);
+      expect(result.intermediates).toBeNull();
+    });
+
+    it('splits two concatenated certs into leaf and intermediates', () => {
+      const result = service.splitChain(`${cert1}\n${cert2}`);
+      expect(result.leaf).toBe(cert1);
+      expect(result.intermediates).toBe(cert2);
+    });
+
+    it('splits three concatenated certs into leaf and two intermediates', () => {
+      const result = service.splitChain(`${cert1}\n${cert2}\n${cert3}`);
+      expect(result.leaf).toBe(cert1);
+      expect(result.intermediates).toBe(`${cert2}\n${cert3}`);
+    });
+
+    it('throws for empty string', () => {
+      expect(() => service.splitChain('')).toThrow(
+        'No certificates found in PEM data',
+      );
+    });
+
+    it('throws when no valid PEM blocks found', () => {
+      expect(() => service.splitChain('not a cert')).toThrow(
+        'No certificates found in PEM data',
+      );
+    });
+  });
+
+  // ─── getChainInfo ───────────────────────────────────────────────────────
+  describe('getChainInfo', () => {
+    const leafPem =
+      '-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----';
+    const intPem1 =
+      '-----BEGIN CERTIFICATE-----\nint1\n-----END CERTIFICATE-----';
+    const intPem2 =
+      '-----BEGIN CERTIFICATE-----\nint2\n-----END CERTIFICATE-----';
+
+    it('returns leaf details and empty intermediates when chainPem is null', () => {
+      const result = service.getChainInfo(leafPem, null);
+
+      expect(result.leafCert).toEqual(
+        expect.objectContaining({ serialNumber: '03A1B2C3D4E5F6' }),
+      );
+      expect(result.intermediates).toEqual([]);
+      expect(result.fullChainPem).toBe(leafPem);
+    });
+
+    it('parses one intermediate cert', () => {
+      const result = service.getChainInfo(leafPem, intPem1);
+
+      expect(result.intermediates).toHaveLength(1);
+      expect(result.intermediates[0]).toEqual(
+        expect.objectContaining({ serialNumber: '03A1B2C3D4E5F6' }),
+      );
+      expect(result.fullChainPem).toBe(`${leafPem}\n${intPem1}`);
+    });
+
+    it('parses two intermediate certs', () => {
+      const result = service.getChainInfo(leafPem, `${intPem1}\n${intPem2}`);
+
+      expect(result.intermediates).toHaveLength(2);
+      expect(result.fullChainPem).toBe(`${leafPem}\n${intPem1}\n${intPem2}`);
+    });
+  });
+
   // ─── isExpiringSoon ───────────────────────────────────────────────────────
   describe('isExpiringSoon', () => {
     it('returns true when cert expires within 30 days', () => {
