@@ -68,6 +68,8 @@ Key variables:
 | `KK_REDIS_URL` | Redis connection URL |
 | `KK_JWT_SECRET` | JWT signing secret |
 | `KK_ACME_EMAIL` | Email for ACME account registration |
+| `KK_PROBE_INTERNAL_URL` | Internal URL to proxy public scan requests to the probe (e.g. `http://krakenkey-probe:8081`) |
+| `KK_PROBE_SCAN_SECRET` | Bearer secret for API → probe scan calls; must match `KK_PROBE_SCAN_API_SECRET` on the probe |
 
 See the env template for the full list.
 
