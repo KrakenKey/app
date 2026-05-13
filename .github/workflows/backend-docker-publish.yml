@@ -91,7 +91,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=sha
-            type=raw,value=dev
+            type=raw,value=dev,enable=${{ github.event_name == 'pull_request' || github.ref != 'refs/heads/main' }}
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push
@@ -99,7 +99,7 @@ jobs:
         with:
           context: .
           file: ./backend/Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
