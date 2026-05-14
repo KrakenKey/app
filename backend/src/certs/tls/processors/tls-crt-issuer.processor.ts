@@ -78,7 +78,7 @@ export class CertIssuerConsumer extends WorkerHost {
     if (!raw.includes('-----BEGIN') || !raw.includes('-----END')) {
       await this.tlsService.updateInternal(
         csrRecord.id,
-        { crtPem: null },
+        { crtPem: null, chainPem: null },
         CertStatus.FAILED,
       );
       throw new Error(
@@ -96,22 +96,25 @@ export class CertIssuerConsumer extends WorkerHost {
 
       await this.tlsService.updateInternal(
         csrRecord.id,
-        { crtPem: null },
+        { crtPem: null, chainPem: null },
         statusDuringProcess,
       );
 
       // ACME issuance handles DNS-01 challenge creation, validation, and cert retrieval
-      const crtPem = await this.acmeStrategy.issue(
+      const fullChainPem = await this.acmeStrategy.issue(
         this.csrUtilService.formatPem(csrRecord.rawCsr),
         this.dnsStrategy,
       );
+
+      const { leaf: crtPem, intermediates: chainPem } =
+        this.certUtilService.splitChain(fullChainPem);
 
       const expiresAt = this.certUtilService.getExpirationDate(crtPem);
 
       const updateData: InternalUpdateTlsCrtDto & {
         expiresAt: Date;
         lastRenewedAt?: Date;
-      } = { crtPem, expiresAt };
+      } = { crtPem, chainPem, expiresAt };
       if (isRenewal) {
         updateData.lastRenewedAt = new Date();
       }
@@ -158,7 +161,7 @@ export class CertIssuerConsumer extends WorkerHost {
       // Mark as failed and let BullMQ retry the job
       await this.tlsService.updateInternal(
         csrRecord.id,
-        { crtPem: null },
+        { crtPem: null, chainPem: null },
         CertStatus.FAILED,
       );
       if (csrRecord.user) {

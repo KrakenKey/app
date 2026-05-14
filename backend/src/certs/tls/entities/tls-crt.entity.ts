@@ -32,6 +32,9 @@ export class TlsCrt {
   @Column({ type: 'text', nullable: true })
   crtPem: string | null;
 
+  @Column({ type: 'text', nullable: true })
+  chainPem: string | null;
+
   @Column({ type: 'text', default: 'pending', nullable: true })
   status: CertStatus;
 

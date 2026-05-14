@@ -43,6 +43,10 @@ describe('CertIssuerConsumer', () => {
     };
     mockCertUtil = {
       getExpirationDate: jest.fn().mockReturnValue(new Date('2027-01-01')),
+      splitChain: jest.fn().mockReturnValue({
+        leaf: '-----BEGIN CERTIFICATE-----\ncert\n-----END CERTIFICATE-----',
+        intermediates: null,
+      }),
     };
 
     const mockUserRepo = {
@@ -77,7 +81,7 @@ describe('CertIssuerConsumer', () => {
       });
       expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
         1,
-        { crtPem: null },
+        { crtPem: null, chainPem: null },
         'issuing',
       );
       expect(mockAcme.issue).toHaveBeenCalled();
@@ -103,6 +107,39 @@ describe('CertIssuerConsumer', () => {
         1,
         expect.objectContaining({
           lastRenewedAt: expect.any(Date),
+        }),
+        'issued',
+      );
+    });
+
+    it('stores leaf and chain separately when ACME returns full chain', async () => {
+      mockAcme.issue.mockResolvedValue(
+        '-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nintermediate\n-----END CERTIFICATE-----',
+      );
+      mockCertUtil.splitChain.mockReturnValue({
+        leaf: '-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----',
+        intermediates:
+          '-----BEGIN CERTIFICATE-----\nintermediate\n-----END CERTIFICATE-----',
+      });
+
+      const job = {
+        name: 'tlsCertIssuance',
+        data: { certId: 1 },
+      } as any;
+
+      await processor.process(job);
+
+      expect(mockCertUtil.splitChain).toHaveBeenCalledWith(
+        '-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nintermediate\n-----END CERTIFICATE-----',
+      );
+      expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          crtPem:
+            '-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----',
+          chainPem:
+            '-----BEGIN CERTIFICATE-----\nintermediate\n-----END CERTIFICATE-----',
+          expiresAt: expect.any(Date),
         }),
         'issued',
       );
@@ -137,7 +174,7 @@ describe('CertIssuerConsumer', () => {
       );
       expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
         1,
-        { crtPem: null },
+        { crtPem: null, chainPem: null },
         'failed',
       );
     });
@@ -153,7 +190,7 @@ describe('CertIssuerConsumer', () => {
       await expect(processor.process(job)).rejects.toThrow('ACME timeout');
       expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
         1,
-        { crtPem: null },
+        { crtPem: null, chainPem: null },
         'failed',
       );
     });

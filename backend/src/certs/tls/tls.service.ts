@@ -28,6 +28,7 @@ import type {
   RevokeTlsCertResponse,
   TlsCertJobPayload,
   TlsCertDetails,
+  TlsCertChainInfo,
 } from '@krakenkey/shared';
 import { AcmeIssuerStrategy } from './strategies/acme-issuer.strategy';
 import { EmailService } from '../../notifications/email.service';
@@ -163,6 +164,18 @@ export class TlsService {
     }
 
     return this.certUtilService.getDetails(cert.crtPem);
+  }
+
+  async getChain(id: number, userId: string): Promise<TlsCertChainInfo> {
+    const cert = await this.findOne(id, userId);
+
+    if (!cert.crtPem) {
+      throw new BadRequestException(
+        'Certificate has not been issued yet. Chain is only available for issued certificates.',
+      );
+    }
+
+    return this.certUtilService.getChainInfo(cert.crtPem, cert.chainPem);
   }
 
   async update(

@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { X509Certificate } from 'crypto';
-import type { TlsCertDetails } from '@krakenkey/shared';
+import type {
+  TlsCertDetails,
+  TlsCertChainEntry,
+  TlsCertChainInfo,
+} from '@krakenkey/shared';
 
 @Injectable()
 export class CertUtilService {
@@ -81,5 +85,50 @@ export class CertUtilService {
       }
       throw new Error('Failed to parse certificate details: Unknown error');
     }
+  }
+
+  splitChain(fullPem: string): { leaf: string; intermediates: string | null } {
+    const certs = this.splitPemCerts(fullPem);
+    if (certs.length === 0) {
+      throw new Error('No certificates found in PEM data');
+    }
+    const leaf = certs[0];
+    const intermediates = certs.length > 1 ? certs.slice(1).join('\n') : null;
+    return { leaf, intermediates };
+  }
+
+  getChainInfo(leafPem: string, chainPem: string | null): TlsCertChainInfo {
+    const leafDetails = this.getDetails(leafPem);
+    const intermediates: TlsCertChainEntry[] = [];
+
+    if (chainPem) {
+      const certs = this.splitPemCerts(chainPem);
+      for (const pem of certs) {
+        intermediates.push(this.getChainEntry(pem));
+      }
+    }
+
+    const fullChainPem = chainPem ? `${leafPem}\n${chainPem}` : leafPem;
+
+    return { leafCert: leafDetails, intermediates, fullChainPem };
+  }
+
+  private getChainEntry(certPem: string): TlsCertChainEntry {
+    const cert = new X509Certificate(certPem);
+    return {
+      serialNumber: cert.serialNumber,
+      issuer: cert.issuer.replace(/\n/g, ', '),
+      subject: cert.subject.replace(/\n/g, ', '),
+      validFrom: new Date(cert.validFrom).toISOString(),
+      validTo: new Date(cert.validTo).toISOString(),
+      fingerprint: cert.fingerprint256,
+    };
+  }
+
+  private splitPemCerts(pem: string): string[] {
+    const matches = pem.match(
+      /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g,
+    );
+    return matches ?? [];
   }
 }

@@ -86,6 +86,20 @@ describe('TlsService', () => {
               keySize: 2048,
               fingerprint: 'AB:CD:EF:01:23:45:67:89',
             }),
+            getChainInfo: jest.fn().mockReturnValue({
+              leafCert: {
+                serialNumber: '03A1B2C3D4E5F6',
+                issuer: "C=US, O=Let's Encrypt, CN=R3",
+                subject: 'CN=example.com',
+                validFrom: '2025-06-15T00:00:00.000Z',
+                validTo: '2026-06-15T00:00:00.000Z',
+                keyType: 'RSA',
+                keySize: 2048,
+                fingerprint: 'AB:CD:EF:01:23:45:67:89',
+              },
+              intermediates: [],
+              fullChainPem: 'full-chain-pem',
+            }),
           },
         },
         {
@@ -344,6 +358,57 @@ describe('TlsService', () => {
       mockRepository.findOneBy.mockResolvedValue(null);
 
       await expect(service.getDetails(999, userId)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+
+  // ─── getChain ──────────────────────────────────────────────────────────
+  describe('getChain', () => {
+    const issuedCert = {
+      id: 1,
+      userId,
+      status: 'issued',
+      crtPem: '-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----',
+      chainPem:
+        '-----BEGIN CERTIFICATE-----\nintermediate\n-----END CERTIFICATE-----',
+    };
+
+    it('returns chain info for issued cert', async () => {
+      mockRepository.findOneBy.mockResolvedValue({ ...issuedCert });
+
+      const result = await service.getChain(1, userId);
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          leafCert: expect.objectContaining({
+            serialNumber: '03A1B2C3D4E5F6',
+          }),
+          intermediates: [],
+          fullChainPem: 'full-chain-pem',
+        }),
+      );
+      expect(certUtilService.getChainInfo).toHaveBeenCalledWith(
+        issuedCert.crtPem,
+        issuedCert.chainPem,
+      );
+    });
+
+    it('throws BadRequestException when crtPem is null', async () => {
+      mockRepository.findOneBy.mockResolvedValue({
+        ...issuedCert,
+        crtPem: null,
+      });
+
+      await expect(service.getChain(1, userId)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('throws NotFoundException when cert not found', async () => {
+      mockRepository.findOneBy.mockResolvedValue(null);
+
+      await expect(service.getChain(999, userId)).rejects.toThrow(
         NotFoundException,
       );
     });

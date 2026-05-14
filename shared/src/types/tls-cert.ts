@@ -17,6 +17,7 @@ export interface TlsCert {
   rawCsr: string;
   parsedCsr: ParsedCsr;
   crtPem: string | null;
+  chainPem: string | null;
   status: CertStatus;
   expiresAt: string | null;
   lastRenewedAt: string | null;
@@ -70,6 +71,21 @@ export interface TlsCertDetails {
   keyType: string;
   keySize: number;
   fingerprint: string;
+}
+
+export interface TlsCertChainEntry {
+  serialNumber: string;
+  issuer: string;
+  subject: string;
+  validFrom: string;
+  validTo: string;
+  fingerprint: string;
+}
+
+export interface TlsCertChainInfo {
+  leafCert: TlsCertDetails;
+  intermediates: TlsCertChainEntry[];
+  fullChainPem: string;
 }
 
 export interface TlsCertJobPayload {
