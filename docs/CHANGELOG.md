@@ -8,8 +8,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Dates a
 
 ## [Unreleased]
 
+---
+
+## [v0.4.0] — 2026-05-14
+
 ### Added
 - `GET /certs/tls/:id/chain` — returns intermediate CA chain details: per-entry subject, issuer, fingerprint, notAfter; plus `chainPem` (intermediates only) and `fullChainPem` (leaf + intermediates) fields. New `chainPem` column added to `tls_cert` table via migration. New shared types: `TlsCertChainEntry`, `TlsCertChainInfo`. (PR #79)
+
+### Depends on
+- KrakenKey/cli v0.2.0 (for `--chain-out` / `--fullchain-out` CLI flags)
+- KrakenKey/cert-action v1.1.0 (for `chain-path` / `fullchain-path` action inputs/outputs)
 
 ---
 
