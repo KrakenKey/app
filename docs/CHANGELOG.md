@@ -8,8 +8,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Dates a
 
 ## [Unreleased]
 
+---
+
+## [2026-05-28] — Certificate Chain
+
 ### Added
 - `GET /certs/tls/:id/chain` — returns intermediate CA chain details: per-entry subject, issuer, fingerprint, notAfter; plus `chainPem` (intermediates only) and `fullChainPem` (leaf + intermediates) fields. New `chainPem` column added to `tls_cert` table via migration. New shared types: `TlsCertChainEntry`, `TlsCertChainInfo`. (PR #79)
+
+### Suggested version tag
+- **v0.4.0** — new authenticated endpoint; minor version bump per semver.
 
 ---
 
