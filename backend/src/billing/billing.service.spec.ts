@@ -116,6 +116,20 @@ describe('BillingService', () => {
     expect(service).toBeDefined();
   });
 
+  it('boots without a Stripe key instead of crashing the app', () => {
+    // Local dev has no Stripe secret; construction must not throw.
+    expect(
+      () =>
+        new BillingService(
+          {} as any,
+          {} as any,
+          {} as any,
+          {} as any,
+          { get: jest.fn(() => '') } as any,
+        ),
+    ).not.toThrow();
+  });
+
   describe('resolveUserTier', () => {
     it('returns plan for active subscription', async () => {
       mockRepository.findOne.mockResolvedValue(mockSubscription);

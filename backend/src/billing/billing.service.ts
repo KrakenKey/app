@@ -48,9 +48,21 @@ export class BillingService {
     private readonly dissolutionQueue: Queue<OrgDissolutionJobPayload>,
     private readonly configService: ConfigService,
   ) {
-    this.stripe = new Stripe(
-      this.configService.get<string>('KK_STRIPE_SECRET_KEY', ''),
+    // Stripe's constructor throws on an empty key, which would prevent the
+    // whole app from booting (certs, auth, everything) just because billing
+    // is unconfigured. Local dev runs without Stripe, so fall back to a
+    // placeholder and warn — billing calls will fail, nothing else will.
+    // Same convention as the KK_HMAC_SECRET handling in AuthService.
+    const stripeKey = this.configService.get<string>(
+      'KK_STRIPE_SECRET_KEY',
+      '',
     );
+    if (!stripeKey) {
+      this.logger.warn(
+        'KK_STRIPE_SECRET_KEY is not set — billing operations will fail until it is configured',
+      );
+    }
+    this.stripe = new Stripe(stripeKey || 'sk_placeholder_billing_disabled');
 
     this.webhookSecret = this.configService.get<string>(
       'KK_STRIPE_WEBHOOK_SECRET',
