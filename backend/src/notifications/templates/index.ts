@@ -99,7 +99,7 @@ export function certFailedTemplate(ctx: CertEmailContext): string {
       detail('Common Name', ctx.commonName),
       ctx.errorMessage ? detail('Error', ctx.errorMessage) : '',
       p(
-        'The system will retry automatically. If this persists, please check your domain configuration.',
+        'Automatic retries are exhausted. Please check your domain and DNS configuration, then retry the request from the dashboard.',
       ),
     ].join(''),
   );
