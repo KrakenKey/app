@@ -9,6 +9,7 @@ import { Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { createSwaggerConfig } from './config/swagger.config';
+import { getTrustedProxies } from './config/trusted-proxies';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
@@ -16,9 +17,16 @@ async function bootstrap() {
   app.use(helmet());
   app.use(cookieParser());
 
-  // Trust the first proxy hop so req.ip returns the real client IP
+  // Trust the known proxy chain (Traefik + Cloudflare) so req.ip resolves
+  // to the real client address. A hop count would either expose a
+  // Cloudflare edge IP as the "client" (breaking IP-keyed throttling and
+  // API-key lockout) or allow XFF spoofing for direct-to-origin requests.
+  // See src/config/trusted-proxies.ts; override with KK_TRUSTED_PROXIES.
   const expressApp = app.getHttpAdapter().getInstance();
-  expressApp.set('trust proxy', 1);
+  expressApp.set(
+    'trust proxy',
+    getTrustedProxies(process.env.KK_TRUSTED_PROXIES),
+  );
 
   // Always generate the OpenAPI document so /swagger-json is available for the
   // public docs site (Scalar viewer at /docs/api).

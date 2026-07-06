@@ -82,12 +82,14 @@ describe('TierAwareThrottlerGuard', () => {
       expect(tracker).toBe('5.6.7.8');
     });
 
-    it('should use first forwarded IP when ips array exists', async () => {
+    it('ignores the spoofable ips array and keys on req.ip', async () => {
+      // req.ips[0] is the leftmost X-Forwarded-For entry, which a client
+      // can forge; req.ip resolves through the trusted proxy chain.
       const req = { headers: {}, ips: ['10.0.0.1', '10.0.0.2'], ip: '1.2.3.4' };
 
       const tracker = await (guard as any).getTracker(req);
 
-      expect(tracker).toBe('10.0.0.1');
+      expect(tracker).toBe('1.2.3.4');
     });
 
     it('should fall back to IP on malformed JWT', async () => {

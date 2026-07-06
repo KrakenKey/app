@@ -45,8 +45,11 @@ export class TierAwareThrottlerGuard extends ThrottlerGuard {
       return `user:${userId}`;
     }
 
-    // Fall back to client IP
-    return req.ips?.length ? req.ips[0] : req.ip;
+    // Fall back to client IP. req.ip already resolves the real client
+    // through the trusted proxy chain (see src/config/trusted-proxies.ts);
+    // req.ips[0] would trust the leftmost X-Forwarded-For entry, which a
+    // client can forge, so it must not be used for rate-limit keying.
+    return req.ip;
   }
 
   /**
