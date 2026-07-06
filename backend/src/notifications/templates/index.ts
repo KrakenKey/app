@@ -4,6 +4,7 @@ import type {
   PlanLimitReachedContext,
   WelcomeContext,
   ActivationReminderContext,
+  ApiKeyExpiredUseContext,
 } from '../email.service';
 
 function escapeHtml(str: string): string {
@@ -219,6 +220,26 @@ export function autoRenewalPausedTemplate(ctx: { username: string }): string {
       p(
         'If you no longer need auto-renewal, you can ignore this email. You can always re-enable it from your dashboard.',
       ),
+    ].join(''),
+  );
+}
+
+export function apiKeyExpiredUseTemplate(ctx: ApiKeyExpiredUseContext): string {
+  return layout(
+    'Expired API key was used',
+    [
+      p(
+        `Hi ${ctx.username}, an expired API key on your account was just presented for authentication. The request was rejected, but this usually means the key is still configured somewhere — or has leaked.`,
+      ),
+      detail('Key name', ctx.keyName),
+      detail('Key ID', ctx.keyId),
+      ctx.ip ? detail('Source IP', ctx.ip) : '',
+      p(
+        'If this was one of your own systems, update it to use a current key. If you do not recognize this activity, delete the key and review your account.',
+      ),
+      `<div style="margin:24px 0;text-align:center">
+        <a href="https://app.krakenkey.io/dashboard/api-keys" style="display:inline-block;padding:10px 24px;background:#06b6d4;color:#09090b;font-size:14px;font-weight:600;border-radius:6px;text-decoration:none">Manage API Keys</a>
+      </div>`,
     ].join(''),
   );
 }

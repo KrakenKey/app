@@ -11,6 +11,7 @@ import { Domain } from '../domains/entities/domain.entity';
 import { TlsCrt } from '../certs/tls/entities/tls-crt.entity';
 import { BillingService } from '../billing/billing.service';
 import { EmailService } from '../notifications/email.service';
+import { ApiKeySecurityService } from './services/api-key-security.service';
 
 const HMAC_SECRET = 'test-hmac-secret';
 
@@ -38,6 +39,11 @@ describe('AuthService', () => {
     count: jest.Mock;
   };
   let mockUserRepo: { findOne: jest.Mock; create: jest.Mock; save: jest.Mock };
+  let mockEmailService: {
+    sendWelcome: jest.Mock;
+    sendApiKeyExpiredUse: jest.Mock;
+  };
+  let mockApiKeySecurity: { shouldNotifyExpiredKeyUse: jest.Mock };
 
   beforeEach(async () => {
     mockUserApiKeyRepo = {
@@ -52,6 +58,13 @@ describe('AuthService', () => {
       findOne: jest.fn(),
       create: jest.fn(),
       save: jest.fn(),
+    };
+    mockEmailService = {
+      sendWelcome: jest.fn().mockResolvedValue(undefined),
+      sendApiKeyExpiredUse: jest.fn().mockResolvedValue(undefined),
+    };
+    mockApiKeySecurity = {
+      shouldNotifyExpiredKeyUse: jest.fn().mockResolvedValue(true),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -76,9 +89,11 @@ describe('AuthService', () => {
         { provide: getRepositoryToken(TlsCrt), useValue: { count: jest.fn() } },
         {
           provide: EmailService,
-          useValue: {
-            sendWelcome: jest.fn().mockResolvedValue(undefined),
-          },
+          useValue: mockEmailService,
+        },
+        {
+          provide: ApiKeySecurityService,
+          useValue: mockApiKeySecurity,
         },
         {
           provide: BillingService,
@@ -395,6 +410,61 @@ describe('AuthService', () => {
       mockUserApiKeyRepo.findOne.mockResolvedValue(null);
 
       expect(await service.validateApiKey('kk_nonexistent')).toBeNull();
+    });
+
+    it('returns null for an expired key and notifies the owner', async () => {
+      const record = {
+        id: 'key-1',
+        name: 'ci-deploy',
+        hash: 'h',
+        expiresAt: new Date(Date.now() - 1000),
+        user: { id: 'user-1', username: 'luke', email: 'luke@example.com' },
+      };
+      mockUserApiKeyRepo.findOne.mockResolvedValue(record);
+
+      expect(
+        await service.validateApiKey('kk_expired', { ip: '10.0.0.1' }),
+      ).toBeNull();
+      expect(mockApiKeySecurity.shouldNotifyExpiredKeyUse).toHaveBeenCalledWith(
+        'key-1',
+      );
+      expect(mockEmailService.sendApiKeyExpiredUse).toHaveBeenCalledWith({
+        userId: 'user-1',
+        username: 'luke',
+        email: 'luke@example.com',
+        keyId: 'key-1',
+        keyName: 'ci-deploy',
+        ip: '10.0.0.1',
+      });
+    });
+
+    it('rate-limits expired-key notifications via the security service', async () => {
+      mockApiKeySecurity.shouldNotifyExpiredKeyUse.mockResolvedValue(false);
+      mockUserApiKeyRepo.findOne.mockResolvedValue({
+        id: 'key-1',
+        name: 'ci-deploy',
+        hash: 'h',
+        expiresAt: new Date(Date.now() - 1000),
+        user: { id: 'user-1', username: 'luke', email: 'luke@example.com' },
+      });
+
+      expect(await service.validateApiKey('kk_expired')).toBeNull();
+      expect(mockEmailService.sendApiKeyExpiredUse).not.toHaveBeenCalled();
+    });
+
+    it('still returns null when the expired-key notification fails', async () => {
+      mockApiKeySecurity.shouldNotifyExpiredKeyUse.mockRejectedValue(
+        new Error('redis down'),
+      );
+      mockUserApiKeyRepo.findOne.mockResolvedValue({
+        id: 'key-1',
+        name: 'ci-deploy',
+        hash: 'h',
+        expiresAt: new Date(Date.now() - 1000),
+        user: { id: 'user-1', username: 'luke', email: 'luke@example.com' },
+      });
+
+      expect(await service.validateApiKey('kk_expired')).toBeNull();
     });
   });
 

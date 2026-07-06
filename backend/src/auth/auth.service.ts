@@ -19,6 +19,7 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { BillingService } from '../billing/billing.service';
 import { PLAN_LIMITS } from '../billing/constants/plan-limits';
 import { EmailService } from '../notifications/email.service';
+import { ApiKeySecurityService } from './services/api-key-security.service';
 import type {
   ApiKey,
   AuthCallbackResponse,
@@ -45,6 +46,7 @@ export class AuthService implements OnModuleInit {
     private readonly tlsCrtRepo: Repository<TlsCrt>,
     private readonly billingService: BillingService,
     private readonly emailService: EmailService,
+    private readonly apiKeySecurity: ApiKeySecurityService,
   ) {}
 
   async onModuleInit() {
@@ -321,16 +323,53 @@ export class AuthService implements OnModuleInit {
    * Validates an API key by hashing and looking up in the database.
    *
    * Returns the UserApiKey record with user relation if valid, null otherwise.
+   * Use of a correct-but-expired key triggers an owner notification (the only
+   * failure mode attributable to a specific key), rate-limited per key.
    */
-  async validateApiKey(rawKey: string) {
+  async validateApiKey(rawKey: string, meta?: { ip?: string }) {
     const hash = this.hashKey(rawKey);
     const record = await this.userApiKeyRepo.findOne({
       where: { hash },
       relations: ['user'],
     });
     if (!record) return null;
-    if (record.expiresAt && record.expiresAt < new Date()) return null;
+    if (record.expiresAt && record.expiresAt < new Date()) {
+      await this.notifyExpiredKeyUse(record, meta?.ip);
+      return null;
+    }
     return record;
+  }
+
+  /**
+   * Notifies a key owner that their expired key was presented for auth —
+   * a signal the key is still deployed somewhere (or leaked). Never throws.
+   */
+  private async notifyExpiredKeyUse(
+    record: UserApiKey,
+    ip?: string,
+  ): Promise<void> {
+    try {
+      if (!record.user) return;
+      if (!(await this.apiKeySecurity.shouldNotifyExpiredKeyUse(record.id))) {
+        return;
+      }
+      this.logger.warn(
+        `Expired API key ${record.id} ("${record.name}") presented for user ${record.user.id}${ip ? ` from ${ip}` : ''}`,
+      );
+      await this.emailService.sendApiKeyExpiredUse({
+        userId: record.user.id,
+        username: record.user.username,
+        email: record.user.email,
+        keyId: record.id,
+        keyName: record.name,
+        ip,
+      });
+    } catch (err) {
+      this.logger.error(
+        'Failed to send expired-key-use notification',
+        err instanceof Error ? err.stack : err,
+      );
+    }
   }
 
   // --- Profile Management ---
