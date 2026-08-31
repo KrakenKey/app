@@ -2,10 +2,12 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ConflictException,
   InternalServerErrorException,
   HttpException,
   Logger,
 } from '@nestjs/common';
+import { createHash } from 'crypto';
 import { CreateTlsCrtDto } from './dto/create-tls-crt.dto';
 import {
   UpdateTlsCrtDto,
@@ -46,6 +48,24 @@ import type { SubscriptionPlan } from '@krakenkey/shared';
  * - failed: ACME challenge or issuance failed
  * - renewing: Certificate renewal in progress
  */
+/** How long a create request stays idempotent (seconds). */
+const IDEMPOTENCY_TTL_SECONDS = 15 * 60;
+/** Placeholder stored while the original request is still being processed. */
+const IDEMPOTENCY_PENDING = '__pending__';
+
+/** Minimal Redis surface used for idempotency (satisfied by BullMQ's client). */
+interface IdempotencyStore {
+  set(
+    key: string,
+    value: string,
+    ex: 'EX',
+    ttl: number,
+    nx?: 'NX',
+  ): Promise<'OK' | null>;
+  get(key: string): Promise<string | null>;
+  del(key: string): Promise<number>;
+}
+
 @Injectable()
 export class TlsService {
   private readonly logger = new Logger(TlsService.name);
@@ -109,27 +129,150 @@ export class TlsService {
     this.csrUtilService.isAuthorized(csr.domains, allowedDomainNames);
     // This throws BadRequestException if any domain is unauthorized
 
-    // Plan-based limit checks
-    await this.enforceCertLimits(userId);
+    // Idempotency: a retried/duplicated request with the same CSR within the
+    // idempotency window returns the original cert instead of creating another.
+    const idemKey = this.idempotencyKey(userId, csr.raw);
+    const store = await this.getIdempotencyStore();
+    if (store) {
+      const replay = await this.claimOrReplay(store, idemKey, userId);
+      if (replay) return replay;
+    }
 
-    const savedCsr = await this.TlsCrtRepository.save({
-      rawCsr: csr.raw,
-      parsedCsr: csr.parsed,
-      status: CertStatus.PENDING,
-      userId,
-    });
-    // Queue background job for ACME issuance
-    const jobPayload: TlsCertJobPayload = { certId: savedCsr.id };
-    await this.tlsCertQueue.add('tlsCertIssuance', jobPayload, {
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 5000 },
-    });
+    try {
+      // Plan-based limit checks
+      await this.enforceCertLimits(userId);
 
-    const response: CreateTlsCertResponse = {
-      id: savedCsr.id,
-      status: savedCsr.status,
-    };
-    return response;
+      const savedCsr = await this.TlsCrtRepository.save({
+        rawCsr: csr.raw,
+        parsedCsr: csr.parsed,
+        status: CertStatus.PENDING,
+        userId,
+      });
+      // Queue background job for ACME issuance
+      const jobPayload: TlsCertJobPayload = { certId: savedCsr.id };
+      await this.tlsCertQueue.add('tlsCertIssuance', jobPayload, {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+      });
+
+      if (store) {
+        // Replace the pending marker with the cert id for replay lookups.
+        await store
+          .set(idemKey, String(savedCsr.id), 'EX', IDEMPOTENCY_TTL_SECONDS)
+          .catch((err: unknown) =>
+            this.logger.warn(
+              `Failed to store idempotency result for ${idemKey}: ${err instanceof Error ? err.message : String(err)}`,
+            ),
+          );
+      }
+
+      const response: CreateTlsCertResponse = {
+        id: savedCsr.id,
+        status: savedCsr.status,
+      };
+      return response;
+    } catch (err) {
+      // Release the idempotency claim so a corrected retry isn't blocked.
+      if (store) {
+        await store
+          .del(idemKey)
+          .catch(() => undefined /* key expires via TTL anyway */);
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Attempts to claim the idempotency key for this request.
+   *
+   * Returns null when the claim succeeded (caller proceeds with creation).
+   * Returns the original create response when this is a replay of a recent
+   * identical request. Throws 409 when the original request is still in flight.
+   */
+  private async claimOrReplay(
+    store: IdempotencyStore,
+    idemKey: string,
+    userId: string,
+  ): Promise<CreateTlsCertResponse | null> {
+    try {
+      const claimed = await store.set(
+        idemKey,
+        IDEMPOTENCY_PENDING,
+        'EX',
+        IDEMPOTENCY_TTL_SECONDS,
+        'NX',
+      );
+      if (claimed === 'OK') return null;
+
+      const existing = await store.get(idemKey);
+      if (existing === IDEMPOTENCY_PENDING) {
+        throw new ConflictException(
+          'An identical certificate request is already being processed. Retry shortly to get its result.',
+        );
+      }
+
+      if (existing) {
+        const cert = await this.TlsCrtRepository.findOneBy({
+          id: Number(existing),
+          userId,
+        });
+        // Replay only certs that are still progressing or issued; a failed,
+        // revoked, or deleted cert should not block a fresh attempt.
+        if (
+          cert &&
+          cert.status !== CertStatus.FAILED &&
+          cert.status !== CertStatus.REVOKED
+        ) {
+          this.logger.log(
+            `Idempotent replay of cert #${cert.id} for duplicate create request (user ${userId})`,
+          );
+          return { id: cert.id, status: cert.status };
+        }
+        await store.del(idemKey);
+        const reclaimed = await store.set(
+          idemKey,
+          IDEMPOTENCY_PENDING,
+          'EX',
+          IDEMPOTENCY_TTL_SECONDS,
+          'NX',
+        );
+        if (reclaimed !== 'OK') {
+          throw new ConflictException(
+            'An identical certificate request is already being processed. Retry shortly to get its result.',
+          );
+        }
+      }
+      return null;
+    } catch (err) {
+      if (err instanceof HttpException) throw err;
+      // Redis trouble must not block issuance — fail open without idempotency.
+      this.logger.warn(
+        `Idempotency check unavailable, proceeding without it: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+  }
+
+  private idempotencyKey(userId: string, rawCsr: string): string {
+    const csrHash = createHash('sha256')
+      .update(rawCsr.replace(/\s+/g, ''))
+      .digest('hex');
+    return `tls:idem:${userId}:${csrHash}`;
+  }
+
+  /**
+   * Reuses the BullMQ queue's Redis connection for idempotency bookkeeping.
+   * Returns null (disabling idempotency) when the connection is unavailable.
+   */
+  private async getIdempotencyStore(): Promise<IdempotencyStore | null> {
+    try {
+      return (await this.tlsCertQueue.client) as unknown as IdempotencyStore;
+    } catch (err) {
+      this.logger.warn(
+        `Redis unavailable for idempotency: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
   }
 
   async findOne(id: number, userId: string) {

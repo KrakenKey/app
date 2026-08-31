@@ -47,6 +47,9 @@ jest.mock('dns', () => ({
   },
 }));
 
+// dns-01 keyAuthorization values are 43-char base64url SHA-256 digests
+const KEY_AUTHZ = 'AAAAAAAAAAAAAAAAAAAAb2c3d4e5f6g7h8i9j0K-_23';
+
 describe('AcmeIssuerStrategy', () => {
   let strategy: AcmeIssuerStrategy;
   let mockDnsProvider: jest.Mocked<DnsProvider>;
@@ -233,7 +236,7 @@ describe('AcmeIssuerStrategy', () => {
         .mockReturnValue({ commonName: 'example.com', altNames: [] });
       mockClient.createOrder.mockResolvedValue(mockOrder);
       mockClient.getAuthorizations.mockResolvedValue([mockAuthz]);
-      mockClient.getChallengeKeyAuthorization.mockResolvedValue('key-authz');
+      mockClient.getChallengeKeyAuthorization.mockResolvedValue(KEY_AUTHZ);
       mockClient.completeChallenge.mockResolvedValue({});
       mockClient.waitForValidStatus.mockResolvedValue({});
       mockClient.finalizeOrder.mockResolvedValue({});
@@ -244,7 +247,7 @@ describe('AcmeIssuerStrategy', () => {
       mockClient.getCertificate.mockResolvedValue(FAKE_CERT_PEM);
 
       // DNS resolves immediately
-      mockResolveTxt.mockResolvedValue([['key-authz']]);
+      mockResolveTxt.mockResolvedValue([[KEY_AUTHZ]]);
     });
 
     it('issues a certificate through the full ACME flow', async () => {
@@ -259,7 +262,7 @@ describe('AcmeIssuerStrategy', () => {
       });
       expect(mockDnsProvider.createRecord).toHaveBeenCalledWith(
         '_acme-challenge.example.com',
-        'key-authz',
+        KEY_AUTHZ,
       );
       expect(mockClient.completeChallenge).toHaveBeenCalledWith(
         mockAuthz.challenges[0],
@@ -298,6 +301,17 @@ describe('AcmeIssuerStrategy', () => {
       expect(mockDnsProvider.removeRecord).toHaveBeenCalledWith(
         '_acme-challenge.example.com',
       );
+    });
+
+    it('refuses to publish a malformed keyAuthorization to DNS', async () => {
+      mockClient.getChallengeKeyAuthorization.mockResolvedValue(
+        'not-a-digest; DROP TXT',
+      );
+
+      await expect(
+        strategy.issue(FAKE_CSR_PEM, mockDnsProvider),
+      ).rejects.toThrow(/Unexpected ACME keyAuthorization format/);
+      expect(mockDnsProvider.createRecord).not.toHaveBeenCalled();
     });
 
     it('throws when no DNS-01 challenge is found', async () => {

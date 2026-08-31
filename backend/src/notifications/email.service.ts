@@ -15,6 +15,7 @@ import {
   autoRenewalPausedTemplate,
   welcomeTemplate,
   activationReminderTemplate,
+  apiKeyExpiredUseTemplate,
 } from './templates';
 import { User } from '../users/entities/user.entity';
 import { NotificationType } from '@krakenkey/shared';
@@ -64,6 +65,15 @@ export interface ActivationReminderContext {
   userId: string;
   username: string;
   email: string;
+}
+
+export interface ApiKeyExpiredUseContext {
+  userId?: string;
+  username: string;
+  email: string;
+  keyId: string;
+  keyName: string;
+  ip?: string;
 }
 
 @Injectable()
@@ -246,6 +256,18 @@ export class EmailService {
       ctx.email,
       `Plan limit reached: ${ctx.resourceType}`,
       planLimitReachedTemplate(ctx),
+    );
+  }
+
+  /**
+   * Security notification — intentionally not gated by notification
+   * preferences: owners should always learn their expired key is in use.
+   */
+  async sendApiKeyExpiredUse(ctx: ApiKeyExpiredUseContext): Promise<void> {
+    await this.send(
+      ctx.email,
+      `Security notice: expired API key "${ctx.keyName}" was used`,
+      apiKeyExpiredUseTemplate(ctx),
     );
   }
 }

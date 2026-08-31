@@ -53,6 +53,12 @@ export class TlsController {
     status: 403,
     description: 'Viewers cannot request certificates',
   })
+  @ApiResponse({
+    status: 409,
+    description:
+      'An identical certificate request (same CSR) is already being processed. ' +
+      'Duplicate requests within 15 minutes return the original certificate instead of creating a new one.',
+  })
   @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.EXPENSIVE)
   create(

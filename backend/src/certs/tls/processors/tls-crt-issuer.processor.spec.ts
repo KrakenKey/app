@@ -26,6 +26,7 @@ describe('CertIssuerConsumer', () => {
   };
 
   beforeEach(() => {
+    jest.clearAllMocks(); // the metrics/email mocks are module-scoped
     mockTlsService = {
       findOneInternal: jest.fn().mockResolvedValue(mockCsrRecord),
       updateInternal: jest.fn().mockResolvedValue({}),
@@ -203,9 +204,120 @@ describe('CertIssuerConsumer', () => {
         data: { certId: 1 },
       } as any;
 
-      await expect(processor.process(job)).rejects.toThrow(
-        'Unknown error processing certificate',
+      await expect(processor.process(job)).rejects.toThrow('string error');
+      expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
+        1,
+        { crtPem: null, chainPem: null },
+        'failed',
       );
+    });
+  });
+
+  describe('retry semantics', () => {
+    const userRecord = {
+      ...mockCsrRecord,
+      user: { id: 'user-1', username: 'luke', email: 'luke@example.com' },
+    };
+
+    it('keeps in-progress status and stays quiet when a transient error will retry', async () => {
+      mockTlsService.findOneInternal.mockResolvedValue(userRecord);
+      mockAcme.issue.mockRejectedValue(new Error('DNS propagation timeout'));
+
+      const job = {
+        name: 'tlsCertIssuance',
+        data: { certId: 1 },
+        attemptsMade: 0,
+        opts: { attempts: 3 },
+      } as any;
+
+      await expect(processor.process(job)).rejects.toThrow(
+        'DNS propagation timeout',
+      );
+      // No failure bookkeeping mid-retry:
+      expect(mockTlsService.updateInternal).not.toHaveBeenCalledWith(
+        1,
+        expect.anything(),
+        'failed',
+      );
+      expect(mockEmailService.sendCertFailed).not.toHaveBeenCalled();
+      expect(
+        (mockMetricsService.certIssuanceTotal.inc as jest.Mock).mock.calls,
+      ).not.toContainEqual([{ status: 'failed' }]);
+    });
+
+    it('marks failed and emails the owner once on the final transient attempt', async () => {
+      mockTlsService.findOneInternal.mockResolvedValue(userRecord);
+      mockAcme.issue.mockRejectedValue(new Error('DNS propagation timeout'));
+
+      const job = {
+        name: 'tlsCertIssuance',
+        data: { certId: 1 },
+        attemptsMade: 2,
+        opts: { attempts: 3 },
+      } as any;
+
+      const err = await processor.process(job).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect((err as Error).message).toBe('DNS propagation timeout');
+      expect((err as Error).name).not.toBe('UnrecoverableError');
+      expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
+        1,
+        { crtPem: null, chainPem: null },
+        'failed',
+      );
+      expect(mockEmailService.sendCertFailed).toHaveBeenCalledTimes(1);
+    });
+
+    it('aborts retries via UnrecoverableError for permanent ACME rejections', async () => {
+      mockTlsService.findOneInternal.mockResolvedValue(userRecord);
+      mockAcme.issue.mockRejectedValue(
+        new Error(
+          'Error creating new order :: too many certificates already issued for "example.com"',
+        ),
+      );
+
+      const job = {
+        name: 'tlsCertIssuance',
+        data: { certId: 1 },
+        attemptsMade: 0,
+        opts: { attempts: 3 },
+      } as any;
+
+      const err = await processor.process(job).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect((err as Error).name).toBe('UnrecoverableError');
+      expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
+        1,
+        { crtPem: null, chainPem: null },
+        'failed',
+      );
+      expect(mockEmailService.sendCertFailed).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats invalid CSR as permanent even with retries remaining', async () => {
+      mockTlsService.findOneInternal.mockResolvedValue({
+        ...userRecord,
+        rawCsr: 'invalid-csr-no-pem',
+      });
+
+      const job = {
+        name: 'tlsCertIssuance',
+        data: { certId: 1 },
+        attemptsMade: 0,
+        opts: { attempts: 3 },
+      } as any;
+
+      const err = await processor.process(job).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect((err as Error).name).toBe('UnrecoverableError');
+      expect((err as Error).message).toMatch(/CSR appears to be invalid/);
+      expect(mockEmailService.sendCertFailed).toHaveBeenCalledTimes(1);
     });
   });
 });

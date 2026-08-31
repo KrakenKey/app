@@ -295,6 +295,113 @@ describe('TlsService', () => {
     });
   });
 
+  // ─── create idempotency ───────────────────────────────────────────────
+  describe('create idempotency', () => {
+    const createDto = { csrPem: 'valid-csr-pem' };
+    let mockRedis: { set: jest.Mock; get: jest.Mock; del: jest.Mock };
+
+    beforeEach(() => {
+      mockRedis = {
+        set: jest.fn().mockResolvedValue('OK'),
+        get: jest.fn().mockResolvedValue(null),
+        del: jest.fn().mockResolvedValue(1),
+      };
+      mockQueue.client = Promise.resolve(mockRedis);
+
+      jest.spyOn(csrUtilService, 'validateAndParse').mockResolvedValue({
+        raw: 'pem-data',
+        parsed: {} as ParsedCsr,
+        domains: ['example.com'],
+        publicKeyLength: 2048,
+      });
+      jest
+        .spyOn(domainsService, 'findAllVerified')
+        .mockResolvedValue([
+          { id: 1, hostname: 'example.com', isVerified: true, userId } as any,
+        ]);
+      jest.spyOn(csrUtilService, 'isAuthorized').mockReturnValue(undefined);
+    });
+
+    it('claims the idempotency key and stores the cert id on success', async () => {
+      const result = await service.create(userId, createDto);
+
+      expect(result).toEqual({ id: 1, status: 'pending' });
+      // First set: NX claim with pending marker; second set: cert id.
+      expect(mockRedis.set).toHaveBeenNthCalledWith(
+        1,
+        expect.stringMatching(new RegExp(`^tls:idem:${userId}:[0-9a-f]{64}$`)),
+        '__pending__',
+        'EX',
+        900,
+        'NX',
+      );
+      expect(mockRedis.set).toHaveBeenNthCalledWith(
+        2,
+        expect.stringMatching(new RegExp(`^tls:idem:${userId}:[0-9a-f]{64}$`)),
+        '1',
+        'EX',
+        900,
+      );
+    });
+
+    it('replays the original response for a duplicate request', async () => {
+      mockRedis.set.mockResolvedValue(null); // claim fails
+      mockRedis.get.mockResolvedValue('42');
+      mockRepository.findOneBy.mockResolvedValue({ id: 42, status: 'issuing' });
+
+      const result = await service.create(userId, createDto);
+
+      expect(result).toEqual({ id: 42, status: 'issuing' });
+      expect(mockRepository.save).not.toHaveBeenCalled();
+      expect(mockQueue.add).not.toHaveBeenCalled();
+    });
+
+    it('returns 409 when an identical request is still in flight', async () => {
+      mockRedis.set.mockResolvedValue(null);
+      mockRedis.get.mockResolvedValue('__pending__');
+
+      await expect(service.create(userId, createDto)).rejects.toMatchObject({
+        status: 409,
+      });
+      expect(mockRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('creates a fresh cert when the cached cert failed', async () => {
+      mockRedis.set
+        .mockResolvedValueOnce(null) // initial claim fails
+        .mockResolvedValueOnce('OK') // re-claim after stale key removal
+        .mockResolvedValue('OK'); // stores new cert id
+      mockRedis.get.mockResolvedValue('42');
+      mockRepository.findOneBy.mockResolvedValue({ id: 42, status: 'failed' });
+
+      const result = await service.create(userId, createDto);
+
+      expect(result).toEqual({ id: 1, status: 'pending' });
+      expect(mockRedis.del).toHaveBeenCalled();
+      expect(mockRepository.save).toHaveBeenCalled();
+    });
+
+    it('releases the claim when creation fails', async () => {
+      mockQueue.add.mockRejectedValue(new Error('queue down'));
+
+      await expect(service.create(userId, createDto)).rejects.toThrow(
+        'queue down',
+      );
+      expect(mockRedis.del).toHaveBeenCalledWith(
+        expect.stringMatching(new RegExp(`^tls:idem:${userId}:`)),
+      );
+    });
+
+    it('proceeds without idempotency when Redis is unavailable', async () => {
+      mockRedis.set.mockRejectedValue(new Error('redis down'));
+
+      const result = await service.create(userId, createDto);
+
+      expect(result).toEqual({ id: 1, status: 'pending' });
+      expect(mockRepository.save).toHaveBeenCalled();
+    });
+  });
+
   // ─── findOne ──────────────────────────────────────────────────────────
   describe('findOne', () => {
     it('returns cert when found', async () => {

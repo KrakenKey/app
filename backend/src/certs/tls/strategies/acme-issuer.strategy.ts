@@ -114,6 +114,15 @@ export class AcmeIssuerStrategy implements CertIssuerStrategy {
         // 1. The keyAuthorization is retrieved via getChallengeKeyAuthorization
         const keyAuthorization =
           await client.getChallengeKeyAuthorization(challenge);
+        // For dns-01 this is always a base64url-encoded SHA-256 digest
+        // (43 chars, RFC 8555 §8.4). Refuse to publish anything else to DNS —
+        // defense in depth against a misbehaving ACME directory injecting
+        // arbitrary content into our customers' TXT records.
+        if (!/^[A-Za-z0-9_-]{43}$/.test(keyAuthorization)) {
+          throw new Error(
+            `Unexpected ACME keyAuthorization format for ${domain}; refusing to publish DNS record`,
+          );
+        }
         const recordName = `_acme-challenge.${domain}`;
 
         // 2. Create DNS Record

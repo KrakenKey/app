@@ -1,5 +1,5 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Job } from 'bullmq';
+import { Job, UnrecoverableError } from 'bullmq';
 import { TlsService } from '../tls.service';
 import { TlsCrt } from '../entities/tls-crt.entity';
 import { InternalUpdateTlsCrtDto } from '../dto/update-tls-crt.dto';
@@ -18,12 +18,41 @@ import type { CertEmailContext } from '../../../notifications/email.service';
 import { User } from '../../../users/entities/user.entity';
 
 /**
+ * Error detail patterns that indicate a permanent failure — retrying cannot
+ * succeed (or, for CA rate limits, cannot succeed within the seconds-scale
+ * retry backoff). Anything not matched is treated as transient and retried.
+ *
+ * acme-client surfaces the ACME problem document's `detail` string as the
+ * Error message, so these match detail phrasing, not problem-type URNs.
+ */
+const PERMANENT_FAILURE_PATTERNS: RegExp[] = [
+  // Our own pre-flight validation
+  /CSR appears to be invalid/i,
+  /Unexpected ACME keyAuthorization format/i,
+  /Unable to produce key authorization/i,
+  // ACME policy/authorization rejections (Let's Encrypt detail phrasing)
+  /refuses to issue/i,
+  /Cannot issue for/i,
+  /policy forbids issuing/i,
+  /CAA record/i,
+  /account.+deactivated/i,
+  // CA rate limits last hours-to-days; the 5-20s job backoff cannot outwait
+  // them, so fail fast and let the user retry deliberately later.
+  /too many certificates/i,
+  /rate ?limited/i,
+];
+
+/**
  * Background job processor for certificate issuance and renewal.
  *
  * Handles both 'tlsCertIssuance' (new certificates) and 'tlsCertRenewal' jobs.
  * Processes ACME DNS-01 challenges using the configured DNS provider.
  *
- * Job retries are configured in tls.service.ts (3 attempts, exponential backoff).
+ * Job retries are configured in tls.service.ts (3 attempts, exponential
+ * backoff). Only transient errors (DNS propagation, network, ACME 5xx) are
+ * retried; permanent errors abort retries via UnrecoverableError. The cert
+ * is marked failed and the user emailed once — when no retry will follow —
+ * instead of on every attempt.
  */
 @Processor('tlsCertIssuance')
 export class CertIssuerConsumer extends WorkerHost {
@@ -72,21 +101,16 @@ export class CertIssuerConsumer extends WorkerHost {
       csrRecord.parsedCsr?.extensions?.[0]?.altNames?.[0]?.value ??
       `cert #${certId}`;
 
-    // Validate CSR format before attempting ACME
-    const raw = csrRecord.rawCsr ?? '';
-    this.logger.debug(`Validating CSR format for cert #${certId}`);
-    if (!raw.includes('-----BEGIN') || !raw.includes('-----END')) {
-      await this.tlsService.updateInternal(
-        csrRecord.id,
-        { crtPem: null, chainPem: null },
-        CertStatus.FAILED,
-      );
-      throw new Error(
-        'CSR appears to be invalid or empty (missing PEM delimiters)',
-      );
-    }
-
     try {
+      // Validate CSR format before attempting ACME
+      const raw = csrRecord.rawCsr ?? '';
+      this.logger.debug(`Validating CSR format for cert #${certId}`);
+      if (!raw.includes('-----BEGIN') || !raw.includes('-----END')) {
+        throw new Error(
+          'CSR appears to be invalid or empty (missing PEM delimiters)',
+        );
+      }
+
       const statusDuringProcess = isRenewal
         ? CertStatus.RENEWING
         : CertStatus.ISSUING;
@@ -157,8 +181,28 @@ export class CertIssuerConsumer extends WorkerHost {
 
       return { success: true };
     } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      const permanent = this.isPermanentFailure(message);
+      const attemptsAllowed = job.opts?.attempts ?? 1;
+      // attemptsMade is incremented after the attempt finishes, so during
+      // processing it equals the number of *previous* attempts.
+      const attemptNumber = (job.attemptsMade ?? 0) + 1;
+      const willRetry = !permanent && attemptNumber < attemptsAllowed;
+
+      this.logger.error(
+        `Error ${isRenewal ? 'renewing' : 'issuing'} certificate #${certId} ` +
+          `(attempt ${attemptNumber}/${attemptsAllowed}, ` +
+          `${permanent ? 'permanent' : 'transient'}${willRetry ? ', will retry' : ''}): ${message}`,
+      );
+
+      if (willRetry) {
+        // Keep the in-progress status; BullMQ retries with backoff. Failure
+        // bookkeeping and the owner email happen only on the final attempt.
+        throw err instanceof Error ? err : new Error(message);
+      }
+
+      // No retry will follow: record the failure and notify the owner once.
       this.metricsService.certIssuanceTotal.inc({ status: 'failed' });
-      // Mark as failed and let BullMQ retry the job
       await this.tlsService.updateInternal(
         csrRecord.id,
         { crtPem: null, chainPem: null },
@@ -171,18 +215,19 @@ export class CertIssuerConsumer extends WorkerHost {
           email: csrRecord.user.email,
           certId,
           commonName,
-          errorMessage: err instanceof Error ? err.message : String(err),
+          errorMessage: message,
         });
       }
 
-      if (err instanceof Error) {
-        this.logger.error(
-          `Error ${isRenewal ? 'renewing' : 'issuing'} certificate #${certId}: ${err.message}`,
-        );
-        throw err;
+      if (permanent) {
+        // UnrecoverableError stops BullMQ from consuming remaining attempts.
+        throw new UnrecoverableError(message);
       }
-      this.logger.error(`Unknown error processing certificate #${certId}`, err);
-      throw new Error('Unknown error processing certificate');
+      throw err instanceof Error ? err : new Error(message);
     }
+  }
+
+  private isPermanentFailure(message: string): boolean {
+    return PERMANENT_FAILURE_PATTERNS.some((p) => p.test(message));
   }
 }
