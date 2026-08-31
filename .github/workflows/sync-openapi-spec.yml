@@ -70,20 +70,26 @@ jobs:
           # The ruleset only targets main, so force-pushing the bot branch is fine.
           git push --force origin bot/sync-openapi
 
-          # Reuse the open sync PR if one exists, otherwise create it.
-          pr=$(gh pr list --repo KrakenKey/web --head bot/sync-openapi --state open --json number --jq '.[0].number')
-          if [ -z "${pr}" ]; then
-            gh pr create --repo KrakenKey/web --head bot/sync-openapi --base main \
-              --title "chore: sync OpenAPI spec from app@${GITHUB_SHA::7}" \
-              --body "Automated sync of backend/openapi.json from KrakenKey/app@${GITHUB_SHA}."
+          # Reuse the open sync PR if one exists, otherwise create it. REST
+          # only: fine-grained PATs cannot call the GraphQL API that the
+          # gh pr subcommands use ("Resource not accessible" otherwise).
+          pr=$(gh api "repos/KrakenKey/web/pulls?head=KrakenKey:bot/sync-openapi&state=open" --jq '.[0].number' 2>/dev/null || true)
+          if [ -z "${pr}" ] || [ "${pr}" = "null" ]; then
+            pr=$(gh api repos/KrakenKey/web/pulls \
+              -f title="chore: sync OpenAPI spec from app@${GITHUB_SHA::7}" \
+              -f head=bot/sync-openapi \
+              -f base=main \
+              -f body="Automated sync of backend/openapi.json from KrakenKey/app@${GITHUB_SHA}." \
+              --jq '.number')
           fi
+          echo "Sync PR: https://github.com/KrakenKey/web/pull/${pr}"
 
           # Give GitHub a moment to compute mergeability, then squash-merge.
           # With 0 required approvals and no required checks this lands
           # immediately; if it ever cannot merge, fail loudly with the URL.
           sleep 5
-          if ! gh pr merge --repo KrakenKey/web bot/sync-openapi --squash --delete-branch; then
-            echo "::error::Could not merge the sync PR automatically. Review it here:"
-            gh pr view --repo KrakenKey/web bot/sync-openapi --json url --jq '.url'
+          if ! gh api -X PUT "repos/KrakenKey/web/pulls/${pr}/merge" -f merge_method=squash > /dev/null; then
+            echo "::error::Could not merge the sync PR automatically: https://github.com/KrakenKey/web/pull/${pr}"
             exit 1
           fi
+          gh api -X DELETE repos/KrakenKey/web/git/refs/heads/bot/sync-openapi || true
