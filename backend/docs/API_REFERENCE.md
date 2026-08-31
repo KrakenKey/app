@@ -303,6 +303,39 @@ Get certificate details and status.
 
 Get parsed certificate details (issuer, subject, key type/size, validity, fingerprint). Only available for `issued` certificates.
 
+### GET /certs/tls/:id/chain
+
+Get the full certificate chain: leaf certificate details, parsed intermediate CA entries, and the PEM-concatenated full chain. Only available for `issued` certificates.
+
+**Response:**
+```json
+{
+  "leafCert": {
+    "serialNumber": "...",
+    "issuer": "...",
+    "subject": "...",
+    "validFrom": "2026-05-14T10:00:00.000Z",
+    "validTo": "2026-08-12T10:00:00.000Z",
+    "keyType": "RSA",
+    "keySize": 2048,
+    "fingerprint": "..."
+  },
+  "intermediates": [
+    {
+      "serialNumber": "...",
+      "issuer": "...",
+      "subject": "...",
+      "validFrom": "2026-01-01T00:00:00.000Z",
+      "validTo": "2031-01-01T00:00:00.000Z",
+      "fingerprint": "..."
+    }
+  ],
+  "fullChainPem": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
+}
+```
+
+Returns `400` if the certificate has not yet been issued.
+
 ### PATCH /certs/tls/:id
 
 Update certificate metadata.
