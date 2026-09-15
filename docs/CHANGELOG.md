@@ -10,6 +10,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Dates a
 
 ---
 
+## [2026-09-04] — Dependency Security Upgrades
+
+### Security
+- `react-router` / `react-router-dom` 7.13.1 → 7.18.3 — clears the `turbo-stream` RCE (GHSA-49rj-9fvp-4h2h) plus CSRF-bypass, stored-XSS, open-redirect and DoS advisories. In-range; no route code changes. (PR #103)
+- `nodemailer` 8.0.1 → 9.1.1 (major) — clears the `raw`-option arbitrary file read / SSRF (GHSA-p6gq-j5cr-w38f). `@types/nodemailer` to 8.0.1. The email service uses plain SMTP `createTransport`/`sendMail` and is unaffected by the v9 API changes. (PR #103)
+- `typeorm` 0.3.28 → 0.3.31 — SQL injection (GHSA-9ggv-8w38-r7pm). (PR #102)
+- `axios` → 1.20.0 in both workspaces (GHSA-pf86-5x62-jrwf). (PR #102)
+- `@nestjs/core` + `@nestjs/platform-express` → 11.2.3 — bundled `path-to-regexp` and `multer` advisories. (PR #102)
+- `vite` → 7.3.6 — dev-server arbitrary file read. (PR #102)
+
+Lockfile-only for PR #102; no `package.json` ranges changed. Still outstanding from the dependency audit (#99): `vitest` and the `handlebars`/`ts-jest` dev chain.
+
+### Build
+- Workflow actions bumped to Node24-capable majors ahead of GitHub's removal of the Node20 runtime.
+
+---
+
+## [2026-08-31] — OpenAPI Spec Sync
+
+### Fixed
+- The workflow that publishes `openapi.json` to the `web` repo now opens and squash-merges a pull request instead of pushing to `web@main` directly. Direct pushes had been rejected since `web` gained a ruleset requiring pull requests (GH013), so every sync run failed after 2026-05-14 and the published spec at `krakenkey.io/docs/api` went stale. (PR #100)
+- The sync uses the REST API rather than GraphQL — fine-grained PATs cannot authenticate against GraphQL. (PR #101)
+
+---
+
 ## [2026-05-28] — Certificate Chain
 
 ### Added
