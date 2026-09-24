@@ -30,6 +30,8 @@ const PERMANENT_FAILURE_PATTERNS: RegExp[] = [
   /CSR appears to be invalid/i,
   /Unexpected ACME keyAuthorization format/i,
   /Unable to produce key authorization/i,
+  // Missing or wrong _acme-challenge CNAME; only the customer can fix it
+  /ACME challenge delegation/i,
   // ACME policy/authorization rejections (Let's Encrypt detail phrasing)
   /refuses to issue/i,
   /Cannot issue for/i,

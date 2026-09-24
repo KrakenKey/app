@@ -86,14 +86,18 @@ export class AcmeIssuerStrategy implements CertIssuerStrategy {
 
   async issue(csrPem: string, dnsProvider: DnsProvider): Promise<string> {
     const endTimer = this.metricsService.acmeChallengeDuration.startTimer();
-    // 1. Initialize ACME client
-    const client = await this.createClient();
-
-    // 2. Extract domains from the CSR
+    // 1. Extract domains from the CSR
     const csrData = acme.crypto.readCsrDomains(csrPem);
     const domains = [csrData.commonName, ...(csrData.altNames || [])].filter(
       (v, i, a) => v && a.indexOf(v) === i,
     );
+
+    // 2. Fail fast on a missing or misdirected CNAME, before creating an
+    //    order that would burn CA validation attempts
+    await this.assertChallengeDelegation(domains);
+
+    // 3. Initialize ACME client
+    const client = await this.createClient();
     this.logger.log(`Creating order for: ${domains.join(', ')}`);
 
     // 3. Create the Order
@@ -179,6 +183,87 @@ export class AcmeIssuerStrategy implements CertIssuerStrategy {
     this.logger.log(`Revoking certificate (reason: ${reason ?? 0})...`);
     await client.revokeCertificate(certPem, { reason: reason ?? 0 });
     this.logger.log('Certificate revoked successfully.');
+  }
+
+  /**
+   * Verifies that `_acme-challenge.<domain>` is a CNAME (possibly via a chain)
+   * to the record we publish in our auth zone. Without it the CA can never
+   * see our TXT record and fails with an opaque NXDOMAIN after the retries.
+   *
+   * Only a missing or wrong CNAME fails; other resolver errors (timeouts,
+   * SERVFAIL) are logged and issuance proceeds, so a flaky resolver never
+   * blocks a correctly configured domain.
+   *
+   * Uses the system resolver: KK_ACME_DNS_RESOLVERS targets our own zone and
+   * may not answer recursive queries for customer domains.
+   */
+  private async assertChallengeDelegation(domains: string[]): Promise<void> {
+    const resolver = new dns.Resolver({ timeout: 5000, tries: 2 });
+    const baseDomains = [
+      ...new Set(domains.map((d) => d.replace(/^\*\./, '').toLowerCase())),
+    ];
+
+    for (const domain of baseDomains) {
+      const recordName = `_acme-challenge.${domain}`;
+      const expected =
+        `${domain.replace(/\./g, '-')}.${this.authZoneDomain}`.toLowerCase();
+
+      let target: string | null;
+      try {
+        target = await this.followCname(resolver, recordName, expected);
+      } catch (err) {
+        this.logger.warn(
+          `Skipping delegation check for ${recordName}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        continue;
+      }
+
+      if (target === null) {
+        throw new Error(
+          `ACME challenge delegation missing: no CNAME found at ${recordName}. ` +
+            `Create a CNAME record from ${recordName} to ${expected}, then request the certificate again ` +
+            `(if you just created it, allow a few minutes for DNS to update).`,
+        );
+      }
+      if (target !== expected) {
+        throw new Error(
+          `ACME challenge delegation mismatch: ${recordName} points to ${target}, expected ${expected}. ` +
+            `Update the CNAME record, then request the certificate again.`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Follows a CNAME chain from `name` for up to 5 hops. Returns `expected` as
+   * soon as it is reached, otherwise the last target in the chain, or null
+   * when `name` has no CNAME at all. Throws on resolver errors other than
+   * "no such record".
+   */
+  private async followCname(
+    resolver: InstanceType<typeof dns.Resolver>,
+    name: string,
+    expected: string,
+  ): Promise<string | null> {
+    let current = name;
+    let last: string | null = null;
+
+    for (let hop = 0; hop < 5; hop++) {
+      let answers: string[];
+      try {
+        answers = await resolver.resolveCname(current);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === 'ENODATA' || code === 'ENOTFOUND') return last;
+        throw err;
+      }
+      if (answers.length === 0) return last;
+
+      last = answers[0].replace(/\.$/, '').toLowerCase();
+      if (last === expected) return last;
+      current = last;
+    }
+    return last;
   }
 
   private async waitForDns(recordName: string, expectedValue: string) {
