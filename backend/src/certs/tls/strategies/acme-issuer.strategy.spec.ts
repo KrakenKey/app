@@ -36,16 +36,31 @@ jest.mock('crypto', () => {
   };
 });
 
-// Mock dns.promises.Resolver used by waitForDns
+// Mock dns.promises.Resolver used by waitForDns and the delegation check
 const mockResolveTxt = jest.fn();
+const mockResolveCname = jest.fn();
 jest.mock('dns', () => ({
   promises: {
     Resolver: jest.fn().mockImplementation(() => ({
       setServers: jest.fn(),
       resolveTxt: mockResolveTxt,
+      resolveCname: mockResolveCname,
     })),
   },
 }));
+
+function dnsError(code: string): NodeJS.ErrnoException {
+  const err: NodeJS.ErrnoException = new Error(`query failed: ${code}`);
+  err.code = code;
+  return err;
+}
+
+/** Resolves _acme-challenge.<domain> to the record we publish in the auth zone. */
+function correctlyDelegated(name: string): Promise<string[]> {
+  const match = name.match(/^_acme-challenge\.(.+)$/);
+  if (!match) return Promise.reject(dnsError('ENODATA'));
+  return Promise.resolve([`${match[1].replace(/\./g, '-')}.auth.example.com`]);
+}
 
 // dns-01 keyAuthorization values are 43-char base64url SHA-256 digests
 const KEY_AUTHZ = 'AAAAAAAAAAAAAAAAAAAAb2c3d4e5f6g7h8i9j0K-_23';
@@ -74,6 +89,7 @@ describe('AcmeIssuerStrategy', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    mockResolveCname.mockImplementation(correctlyDelegated);
 
     // Suppress setTimeout delays in waitForDns
     jest.useFakeTimers();
@@ -388,6 +404,94 @@ describe('AcmeIssuerStrategy', () => {
   });
 
   // ─── createClient (via revoke/issue) ──────────────────────────────────────
+  describe('challenge delegation check', () => {
+    beforeEach(() => {
+      jest
+        .spyOn(acme.crypto, 'readCsrDomains')
+        .mockReturnValue({ commonName: '*.example.com', altNames: [] });
+    });
+
+    it('checks the base domain of a wildcard once', async () => {
+      jest.spyOn(acme.crypto, 'readCsrDomains').mockReturnValue({
+        commonName: '*.example.com',
+        altNames: ['example.com'],
+      });
+      mockClient.createOrder.mockRejectedValue(new Error('stop after check'));
+
+      await expect(
+        strategy.issue(FAKE_CSR_PEM, mockDnsProvider),
+      ).rejects.toThrow('stop after check');
+
+      expect(mockResolveCname).toHaveBeenCalledTimes(1);
+      expect(mockResolveCname).toHaveBeenCalledWith(
+        '_acme-challenge.example.com',
+      );
+    });
+
+    it('fails before creating an order when the CNAME points elsewhere', async () => {
+      mockResolveCname.mockImplementation((name: string) =>
+        name === '_acme-challenge.example.com'
+          ? Promise.resolve(['example-com.acme.dev.example.net.'])
+          : Promise.reject(dnsError('ENOTFOUND')),
+      );
+
+      await expect(
+        strategy.issue(FAKE_CSR_PEM, mockDnsProvider),
+      ).rejects.toThrow(
+        'ACME challenge delegation mismatch: _acme-challenge.example.com points to example-com.acme.dev.example.net, expected example-com.auth.example.com.',
+      );
+      expect(mockClient.createAccount).not.toHaveBeenCalled();
+      expect(mockClient.createOrder).not.toHaveBeenCalled();
+      expect(mockDnsProvider.createRecord).not.toHaveBeenCalled();
+    });
+
+    it('fails with setup instructions when no CNAME exists', async () => {
+      mockResolveCname.mockRejectedValue(dnsError('ENOTFOUND'));
+
+      await expect(
+        strategy.issue(FAKE_CSR_PEM, mockDnsProvider),
+      ).rejects.toThrow(
+        'ACME challenge delegation missing: no CNAME found at _acme-challenge.example.com. Create a CNAME record from _acme-challenge.example.com to example-com.auth.example.com',
+      );
+      expect(mockClient.createOrder).not.toHaveBeenCalled();
+    });
+
+    it('treats a name with other record types but no CNAME as missing', async () => {
+      mockResolveCname.mockRejectedValue(dnsError('ENODATA'));
+
+      await expect(
+        strategy.issue(FAKE_CSR_PEM, mockDnsProvider),
+      ).rejects.toThrow(/ACME challenge delegation missing/);
+    });
+
+    it('accepts a CNAME chain that reaches the expected record', async () => {
+      mockResolveCname.mockImplementation((name: string) => {
+        if (name === '_acme-challenge.example.com') {
+          return Promise.resolve(['acme-alias.example.org']);
+        }
+        if (name === 'acme-alias.example.org') {
+          return Promise.resolve(['EXAMPLE-COM.AUTH.EXAMPLE.COM.']);
+        }
+        return Promise.reject(dnsError('ENODATA'));
+      });
+      mockClient.createOrder.mockRejectedValue(new Error('stop after check'));
+
+      await expect(
+        strategy.issue(FAKE_CSR_PEM, mockDnsProvider),
+      ).rejects.toThrow('stop after check');
+    });
+
+    it('proceeds with issuance when the resolver itself fails', async () => {
+      mockResolveCname.mockRejectedValue(dnsError('ETIMEOUT'));
+      mockClient.createOrder.mockRejectedValue(new Error('stop after check'));
+
+      await expect(
+        strategy.issue(FAKE_CSR_PEM, mockDnsProvider),
+      ).rejects.toThrow('stop after check');
+      expect(mockClient.createOrder).toHaveBeenCalled();
+    });
+  });
+
   describe('createClient', () => {
     it('uses staging directory when KK_ACME_STAGING=true', async () => {
       configMap.KK_ACME_DIRECTORY_URL = undefined;

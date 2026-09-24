@@ -298,6 +298,35 @@ describe('CertIssuerConsumer', () => {
       expect(mockEmailService.sendCertFailed).toHaveBeenCalledTimes(1);
     });
 
+    it('treats a missing or wrong challenge CNAME as permanent', async () => {
+      mockTlsService.findOneInternal.mockResolvedValue(userRecord);
+      mockAcme.issue.mockRejectedValue(
+        new Error(
+          'ACME challenge delegation mismatch: _acme-challenge.example.com points to example-com.acme.dev.krakenkey.io, expected example-com.acme.krakenkey.io.',
+        ),
+      );
+
+      const job = {
+        name: 'tlsCertRenewal',
+        data: { certId: 1 },
+        attemptsMade: 0,
+        opts: { attempts: 3 },
+      } as any;
+
+      const err = await processor.process(job).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect((err as Error).name).toBe('UnrecoverableError');
+      expect(mockEmailService.sendCertFailed).toHaveBeenCalledWith(
+        expect.objectContaining({
+          errorMessage: expect.stringContaining(
+            'expected example-com.acme.krakenkey.io',
+          ),
+        }),
+      );
+    });
+
     it('treats invalid CSR as permanent even with retries remaining', async () => {
       mockTlsService.findOneInternal.mockResolvedValue({
         ...userRecord,
