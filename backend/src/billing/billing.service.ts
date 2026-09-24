@@ -9,7 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { InjectQueue } from '@nestjs/bullmq';
-import { Queue } from 'bullmq';
+import { Queue, UnrecoverableError } from 'bullmq';
 import Stripe from 'stripe';
 import { Subscription } from './entities/subscription.entity';
 import { User } from '../users/entities/user.entity';
@@ -28,6 +28,13 @@ const PLAN_ORDER: Record<string, number> = {
 };
 
 const ORG_ELIGIBLE_PLANS = new Set(['team', 'business', 'enterprise']);
+
+const ENDED_STRIPE_STATUSES = new Set(['canceled', 'incomplete_expired']);
+
+/** True when the subscription is backed by a Stripe subscription that has not ended. */
+function isBillingInStripe(sub: Subscription): boolean {
+  return !!sub.stripeSubscriptionId && !ENDED_STRIPE_STATUSES.has(sub.status);
+}
 
 @Injectable()
 export class BillingService {
@@ -447,11 +454,22 @@ export class BillingService {
     // Mark org as dissolving to block further operations
     await this.orgRepository.update(organizationId, { status: 'dissolving' });
 
+    // BullMQ ignores add() for a jobId that already exists, so a failed
+    // earlier attempt would silently block every retry for this org.
+    const jobId = `dissolve-${organizationId}`;
+    const previous = await this.dissolutionQueue.getJob(jobId);
+    if (previous && (await previous.isFailed())) {
+      await previous.remove();
+      this.logger.warn(
+        `Removed failed dissolution job before re-queueing: org=${organizationId} reason=${previous.failedReason}`,
+      );
+    }
+
     await this.dissolutionQueue.add(
       'orgDissolution',
       { organizationId, cancelSubscription },
       {
-        jobId: `dissolve-${organizationId}`,
+        jobId,
         attempts: 3,
         backoff: { type: 'exponential', delay: 5000 },
       },
@@ -516,9 +534,42 @@ export class BillingService {
         .execute();
 
       // Convert org subscription back to owner's personal subscription
-      const sub = await manager.findOne(Subscription, {
+      let sub = await manager.findOne(Subscription, {
         where: { organizationId },
       });
+
+      // A user may hold only one personal subscription
+      // (UQ_subscription_userId_partial), and the owner can already have one,
+      // e.g. a member who kept a personal sub and was later made owner.
+      const personalSub = sub
+        ? await manager.findOne(Subscription, {
+            where: { userId: org.ownerId },
+          })
+        : null;
+
+      if (sub && personalSub) {
+        if (cancelSubscription) {
+          // The org's Stripe subscription is gone; keep the owner's own.
+          await manager.delete(Subscription, sub.id);
+          this.logger.log(
+            `Dropped canceled org subscription: sub=${sub.id} org=${organizationId}, owner keeps sub=${personalSub.id}`,
+          );
+          sub = null;
+        } else if (!isBillingInStripe(personalSub)) {
+          // The owner's own sub is free or canceled; the org's paid sub replaces it.
+          await manager.delete(Subscription, personalSub.id);
+          this.logger.log(
+            `Replaced owner's inactive subscription: sub=${personalSub.id} with org sub=${sub.id}`,
+          );
+        } else {
+          // Both are live in Stripe. Deleting either row would orphan a
+          // subscription that is still billing, so leave it for manual review.
+          throw new UnrecoverableError(
+            `Owner ${org.ownerId} has a billing personal subscription (sub=${personalSub.id}) and org ${organizationId} has a billing subscription (sub=${sub.id}); resolve manually`,
+          );
+        }
+      }
+
       if (sub) {
         sub.userId = org.ownerId;
         sub.organizationId = null;
