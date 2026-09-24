@@ -7,6 +7,7 @@ import { BillingService } from './billing.service';
 import { Subscription } from './entities/subscription.entity';
 import { User } from '../users/entities/user.entity';
 import { Organization } from '../organizations/entities/organization.entity';
+import { UnrecoverableError } from 'bullmq';
 
 // Mock Stripe
 const mockStripe = {
@@ -483,6 +484,188 @@ describe('BillingService', () => {
       expect(mockRepository.save).toHaveBeenCalledWith(
         expect.objectContaining({ plan: 'team' }),
       );
+    });
+  });
+
+  describe('queueDissolution', () => {
+    const orgId = 'org-1';
+    let queue: { add: jest.Mock; getJob: jest.Mock };
+
+    beforeEach(() => {
+      queue = (service as any).dissolutionQueue;
+      queue.getJob = jest.fn();
+    });
+
+    it('should remove a failed job with the same id before re-queueing', async () => {
+      const failed = {
+        isFailed: jest.fn().mockResolvedValue(true),
+        remove: jest.fn(),
+        failedReason: 'boom',
+      };
+      queue.getJob.mockResolvedValue(failed);
+
+      await service.queueDissolution(orgId, true);
+
+      expect(queue.getJob).toHaveBeenCalledWith(`dissolve-${orgId}`);
+      expect(failed.remove).toHaveBeenCalled();
+      expect(queue.add).toHaveBeenCalledWith(
+        'orgDissolution',
+        { organizationId: orgId, cancelSubscription: true },
+        expect.objectContaining({ jobId: `dissolve-${orgId}` }),
+      );
+    });
+
+    it('should leave a job that has not failed in place', async () => {
+      const pending = {
+        isFailed: jest.fn().mockResolvedValue(false),
+        remove: jest.fn(),
+      };
+      queue.getJob.mockResolvedValue(pending);
+
+      await service.queueDissolution(orgId);
+
+      expect(pending.remove).not.toHaveBeenCalled();
+      expect(queue.add).toHaveBeenCalled();
+    });
+  });
+
+  describe('dissolveOrganization', () => {
+    const orgId = 'org-1';
+    const ownerId = 'owner-1';
+    let manager: Record<string, jest.Mock>;
+
+    const orgSub = (): Partial<Subscription> => ({
+      id: 'org-sub',
+      userId: null,
+      organizationId: orgId,
+      stripeSubscriptionId: 'sub_org',
+      plan: 'team',
+      status: 'active',
+    });
+
+    function setup(personalSub: Partial<Subscription> | null) {
+      const subs = { org: orgSub(), personal: personalSub };
+      manager = {
+        findOne: jest.fn((entity: unknown, opts: { where: any }) => {
+          if (entity === Organization) {
+            return Promise.resolve({ id: orgId, ownerId });
+          }
+          if (opts.where.organizationId) return Promise.resolve(subs.org);
+          if (opts.where.userId === ownerId) {
+            return Promise.resolve(subs.personal);
+          }
+          return Promise.resolve(null);
+        }),
+        find: jest.fn().mockResolvedValue([{ id: ownerId, role: 'owner' }]),
+        save: jest.fn(),
+        delete: jest.fn(),
+        createQueryBuilder: jest.fn().mockReturnValue({
+          update: jest.fn().mockReturnThis(),
+          set: jest.fn().mockReturnThis(),
+          where: jest.fn().mockReturnThis(),
+          execute: jest.fn(),
+        }),
+      };
+      const orgRepo = (service as any).orgRepository;
+      orgRepo.manager.transaction.mockImplementation((cb: any) => cb(manager));
+      return subs;
+    }
+
+    it('should convert the org subscription to the owner when they have none', async () => {
+      setup(null);
+
+      await service.dissolveOrganization(orgId);
+
+      expect(manager.save).toHaveBeenCalledWith(
+        Subscription,
+        expect.objectContaining({
+          id: 'org-sub',
+          userId: ownerId,
+          organizationId: null,
+        }),
+      );
+      expect(manager.delete).toHaveBeenCalledWith(Organization, orgId);
+    });
+
+    it('should drop the canceled org subscription and keep the owner paid one', async () => {
+      setup({
+        id: 'personal-sub',
+        userId: ownerId,
+        stripeSubscriptionId: 'sub_personal',
+        plan: 'starter',
+        status: 'active',
+      });
+
+      await service.dissolveOrganization(orgId, true);
+
+      expect(manager.delete).toHaveBeenCalledWith(Subscription, 'org-sub');
+      expect(manager.delete).not.toHaveBeenCalledWith(
+        Subscription,
+        'personal-sub',
+      );
+      expect(manager.save).not.toHaveBeenCalledWith(
+        Subscription,
+        expect.anything(),
+      );
+      expect(manager.delete).toHaveBeenCalledWith(Organization, orgId);
+    });
+
+    it('should replace an inactive owner subscription with the org one', async () => {
+      setup({
+        id: 'personal-sub',
+        userId: ownerId,
+        stripeSubscriptionId: null,
+        plan: 'free',
+        status: 'active',
+      });
+
+      await service.dissolveOrganization(orgId);
+
+      const deleteOrder = manager.delete.mock.invocationCallOrder[0];
+      const saveOrder = manager.save.mock.invocationCallOrder[0];
+      expect(manager.delete).toHaveBeenCalledWith(Subscription, 'personal-sub');
+      expect(deleteOrder).toBeLessThan(saveOrder);
+      expect(manager.save).toHaveBeenCalledWith(
+        Subscription,
+        expect.objectContaining({ id: 'org-sub', userId: ownerId }),
+      );
+    });
+
+    it('should treat a canceled Stripe subscription as inactive', async () => {
+      setup({
+        id: 'personal-sub',
+        userId: ownerId,
+        stripeSubscriptionId: 'sub_old',
+        plan: 'starter',
+        status: 'canceled',
+      });
+
+      await service.dissolveOrganization(orgId);
+
+      expect(manager.delete).toHaveBeenCalledWith(Subscription, 'personal-sub');
+      expect(manager.save).toHaveBeenCalledWith(
+        Subscription,
+        expect.objectContaining({ id: 'org-sub', userId: ownerId }),
+      );
+    });
+
+    it('should fail without retry when both subscriptions are still billing', async () => {
+      setup({
+        id: 'personal-sub',
+        userId: ownerId,
+        stripeSubscriptionId: 'sub_personal',
+        plan: 'starter',
+        status: 'past_due',
+      });
+
+      await expect(service.dissolveOrganization(orgId)).rejects.toBeInstanceOf(
+        UnrecoverableError,
+      );
+      expect(manager.delete).not.toHaveBeenCalledWith(
+        Subscription,
+        expect.anything(),
+      );
+      expect(manager.delete).not.toHaveBeenCalledWith(Organization, orgId);
     });
   });
 });
