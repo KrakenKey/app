@@ -4,7 +4,7 @@ export function createSwaggerConfig() {
   return new DocumentBuilder()
     .setTitle('KrakenKey API')
     .setDescription(
-      'Public API for KrakenKey — TLS certificate management and domain verification',
+      'Public API for KrakenKey: TLS certificate management and domain verification',
     )
     .setVersion(process.env.KK_API_VERSION || '0.1.0')
     .addTag('Health', 'API status and health checks')
