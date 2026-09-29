@@ -19,9 +19,13 @@ This directory contains comprehensive documentation for the KrakenKey backend AP
 8. [Organizations](./ORGANIZATIONS.md) — Teams, roles, resource sharing
 9. [Endpoints](./ENDPOINTS.md) — TLS endpoint monitoring and probes
 
+### Operations
+10. [Observability](./OBSERVABILITY.md) — Prometheus metrics catalogue and the `/metrics` endpoint
+11. [Rate Limiting](../../docs/RATE_LIMITING.md) — Tier-aware request throttling
+
 ### Guides
-10. [Domain Verification](../docs/DOMAIN_VERIFICATION_GUIDE.md) — DNS TXT verification walkthrough
-11. [Error Handling](../docs/ERROR_HANDLING.md) — Frontend and backend error handling patterns
+12. [Domain Verification](../../docs/DOMAIN_VERIFICATION_GUIDE.md) — DNS TXT verification walkthrough
+13. [Error Handling](../../docs/ERROR_HANDLING.md) — Frontend and backend error handling patterns
 
 ## Quick Start
 
@@ -81,7 +85,7 @@ src/
 ├── endpoints/              # TLS endpoint monitoring
 │   └── entities/           # Endpoint, hosted region, probe assignment
 ├── health/                 # Health checks
-├── metrics/                # Prometheus metrics
+├── metrics/                # Prometheus metrics (see OBSERVABILITY.md)
 ├── notifications/          # Email notifications
 ├── feedback/               # User feedback
 ├── probes/                 # Kubernetes readiness/liveness probes

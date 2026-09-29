@@ -172,6 +172,24 @@ Organizations have their own billing relationship:
   3. The subscription reverts to a personal subscription
   4. The organization is deleted
 
+### Dissolution queue
+
+Dissolution runs as an `orgDissolution` BullMQ job, keyed `dissolve-<organizationId>` so a given organization can only have one in flight. BullMQ silently ignores `add()` for a job ID that already exists, which means a *failed* earlier attempt would otherwise block every retry for that organization forever. A failed job under the same ID is therefore removed before re-queueing, and the removal is logged with the previous failure reason.
+
+The job itself retries 3 times with exponential backoff from a 5-second base.
+
+### Owner subscription conflicts
+
+Step 3 above reassigns the organization's subscription row to the owner. A user may hold only one personal subscription (enforced by the `UQ_subscription_userId_partial` index), and the owner can already have one — for example a member who kept a personal subscription and was later promoted to owner. When both rows exist, the outcome depends on which subscriptions are still live in Stripe:
+
+| Situation | Outcome |
+|-----------|---------|
+| Dissolution requested with `cancelSubscription` | The org's Stripe subscription is already cancelled, so its row is deleted and the owner keeps their personal subscription |
+| Owner's personal subscription is not billing (no Stripe subscription, or `canceled` / `incomplete_expired`) | The owner's inactive row is deleted and the org's paid subscription replaces it |
+| Both are billing in Stripe | The job fails with an `UnrecoverableError` and is left for manual review |
+
+The last case is deliberate: deleting either row would orphan a subscription that is still charging the customer. It raises `UnrecoverableError` rather than a plain error so BullMQ does not burn the remaining retries on a conflict that cannot resolve itself. The organization stays in `dissolving` status until an operator resolves the duplicate, and the log line names both subscription IDs and the organization.
+
 ## Subscription Statuses
 
 | Status | Description |

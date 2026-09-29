@@ -10,6 +10,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Dates a
 
 ---
 
+## [2026-09-24] — Challenge Delegation Precheck, Queue Metrics
+
+### Added
+- `bullmq_queue_jobs` Prometheus gauge — BullMQ job counts labelled by `queue` and `state`, covering the `tlsCertIssuance` and `orgDissolution` queues across the `waiting`, `active`, `delayed`, `failed`, `completed` and `paused` states. Counts are read from Redis at scrape time rather than polled in the background; each queue's read is bounded by a 2-second timeout and failures omit that queue's series instead of failing the whole `/metrics` scrape. See [OBSERVABILITY.md](../backend/docs/OBSERVABILITY.md). (PR #106)
+
+### Changed
+- Certificate issuance now verifies `_acme-challenge.<domain>` CNAME delegation **before** creating an ACME order. A missing or misdirected CNAME previously produced an order, a TXT record the CA could not resolve, 15 propagation polls and an opaque CA error — after consuming a validation attempt against Let's Encrypt's rate limits. Failures now return an actionable message naming the exact record to create, and are classified as permanent so the job does not burn its three retries. CNAME chains are followed up to 5 hops; resolver timeouts and `SERVFAIL` are logged and issuance proceeds, so a flaky resolver never blocks a correctly configured domain. See [CERTIFICATE_FLOW.md](../backend/docs/CERTIFICATE_FLOW.md#challenge-delegation-precheck). (PR #108)
+
+### Fixed
+- Organization dissolution no longer fails when the owner already holds a personal subscription. A user may hold only one personal subscription (`UQ_subscription_userId_partial`), so reassigning the organization's subscription to an owner who already had one violated the constraint. Resolution now depends on which subscriptions are live in Stripe: a cancelled org subscription is dropped, an inactive personal subscription is replaced by the org's paid one, and two subscriptions both billing in Stripe raise an `UnrecoverableError` for manual review rather than orphaning a subscription that is still charging. See [BILLING.md](../backend/docs/BILLING.md#owner-subscription-conflicts). (PR #107)
+- A failed `orgDissolution` job no longer blocks all subsequent retries for that organization. The job ID is derived from the organization ID and BullMQ ignores `add()` for an existing ID, so a failed attempt was permanently sticky; failed jobs are now removed before re-queueing, with the previous failure reason logged. (PR #107)
+
+### Documentation
+- New [`backend/docs/OBSERVABILITY.md`](../backend/docs/OBSERVABILITY.md) — the `/metrics` endpoint and full metric catalogue had never been documented.
+
+---
+
 ## [2026-09-04] — Dependency Security Upgrades
 
 ### Security

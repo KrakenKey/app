@@ -177,19 +177,25 @@ The BullMQ job processor handles issuance asynchronously:
 
 ```
 ┌──────────────┐     ┌──────────────┐     ┌──────────────────┐
-│  Create ACME │────▶│  Create DNS  │────▶│  Wait for DNS    │
-│    Order     │     │  TXT Record  │     │  Propagation     │
+│  Check CNAME │────▶│  Create ACME │────▶│  Create DNS      │
+│  Delegation  │     │    Order     │     │  TXT Record      │
 └──────────────┘     └──────────────┘     └────────┬─────────┘
                                                    │
                                           15 attempts × 10s
                                                    │
                                                    ▼
 ┌──────────────┐     ┌──────────────┐     ┌──────────────────┐
-│  Store Cert  │◄────│  Finalize    │◄────│  Complete        │
-│  in DB       │     │  Order       │     │  Challenge       │
-└──────────────┘     └──────────────┘     └──────────────────┘
-        │
-        ▼
+│  Finalize    │◄────│  Complete    │◄────│  Wait for DNS    │
+│    Order     │     │  Challenge   │     │  Propagation     │
+└──────┬───────┘     └──────────────┘     └──────────────────┘
+       │
+       ▼
+┌──────────────┐
+│  Store Cert  │
+│  in DB       │
+└──────┬───────┘
+       │
+       ▼
   Clean up DNS records
   Send success email
   Update metrics
@@ -197,17 +203,45 @@ The BullMQ job processor handles issuance asynchronously:
 
 ### DNS-01 Challenge Process
 
-1. **ACME order created** with Let's Encrypt for all domains in the CSR
-2. **For each domain**, a TXT record is created:
+1. **Challenge delegation checked** for every domain in the CSR, before any order is created (see [Challenge delegation precheck](#challenge-delegation-precheck) below)
+2. **ACME order created** with Let's Encrypt for all domains in the CSR
+3. **For each domain**, a TXT record is created:
    - Record name: `_acme-challenge.{domain}` (dots flattened to dashes in the hostname)
    - Record value: ACME challenge token
    - TTL: 60 seconds
    - Zone: The configured `ACME_AUTH_ZONE_DOMAIN`
-3. **DNS propagation polling**: Up to 15 attempts at 10-second intervals
-4. **Challenge completed** with the ACME server
-5. **Order finalized** with the original CSR
-6. **Certificate PEM** retrieved and stored
-7. **DNS TXT records cleaned up**
+4. **DNS propagation polling**: Up to 15 attempts at 10-second intervals
+5. **Challenge completed** with the ACME server
+6. **Order finalized** with the original CSR
+7. **Certificate PEM** retrieved and stored
+8. **DNS TXT records cleaned up**
+
+### Challenge delegation precheck
+
+KrakenKey answers DNS-01 challenges from its own auth zone (`ACME_AUTH_ZONE_DOMAIN`), so the customer delegates the challenge name to us once with a CNAME:
+
+```
+_acme-challenge.example.com.  CNAME  example-com.acme.krakenkey.io.
+```
+
+Dots in the customer domain are flattened to dashes to build the target, matching the record the DNS strategies write. A wildcard request (`*.example.com`) is checked against the base domain, since both share one `_acme-challenge` name.
+
+Without that CNAME the CA can never see the TXT record we publish. Before this check existed, such a request created an order, published a TXT record nobody could resolve, polled for the full 15 attempts, and then failed with an opaque CA error — after consuming a validation attempt against Let's Encrypt's rate limits. The precheck runs **before** the ACME client is even initialised, so a misconfigured domain costs nothing at the CA.
+
+Resolution behaviour:
+
+- The **system resolver** is used, not `KK_ACME_DNS_RESOLVERS`. Those resolvers are authoritative for our own zone and may not answer recursive queries for customer domains.
+- CNAME chains are followed for up to **5 hops**, and stop early once the expected target is reached.
+- Only a **missing or mismatched** CNAME fails the job. Any other resolver condition — timeout, `SERVFAIL`, refusal — is logged as a warning and issuance proceeds, so a flaky resolver never blocks a correctly configured domain.
+
+Both failure messages are actionable and name the exact record to create:
+
+| Condition | Message |
+|-----------|---------|
+| No CNAME at `_acme-challenge.<domain>` | `ACME challenge delegation missing: no CNAME found at … Create a CNAME record from … to …` |
+| CNAME points elsewhere | `ACME challenge delegation mismatch: … points to …, expected …` |
+
+Both are classified as **permanent** failures by the issuance processor — only the customer can fix them, so the job fails immediately instead of consuming its three retries. See [Retry Policy](#retry-policy).
 
 ### Retry Policy
 
@@ -218,6 +252,8 @@ The BullMQ job processor handles issuance asynchronously:
 | Retry delays | ~5s, ~25s, ~125s |
 
 If all retries fail, the certificate status is set to `failed` and a failure notification email is sent.
+
+Some failures are classified as **permanent** and skip retries entirely — an invalid CSR, a malformed ACME key authorization, a missing or mismatched challenge delegation, or a CA policy refusal. Retrying these would produce the same result three times over while delaying the customer's failure notification, so the job fails on the first attempt. The patterns are listed in `PERMANENT_FAILURE_PATTERNS` in `backend/src/certs/tls/processors/tls-crt-issuer.processor.ts`; add to that list when introducing an error that only the customer can resolve.
 
 ---
 
