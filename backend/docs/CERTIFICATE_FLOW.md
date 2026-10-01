@@ -209,7 +209,7 @@ The BullMQ job processor handles issuance asynchronously:
    - Record name: `_acme-challenge.{domain}` (dots flattened to dashes in the hostname)
    - Record value: ACME challenge token
    - TTL: 60 seconds
-   - Zone: The configured `ACME_AUTH_ZONE_DOMAIN`
+   - Zone: The configured `KK_ACME_AUTH_ZONE_DOMAIN`
 4. **DNS propagation polling**: Up to 15 attempts at 10-second intervals
 5. **Challenge completed** with the ACME server
 6. **Order finalized** with the original CSR
@@ -218,7 +218,7 @@ The BullMQ job processor handles issuance asynchronously:
 
 ### Challenge delegation precheck
 
-KrakenKey answers DNS-01 challenges from its own auth zone (`ACME_AUTH_ZONE_DOMAIN`), so the customer delegates the challenge name to us once with a CNAME:
+KrakenKey answers DNS-01 challenges from its own auth zone (`KK_ACME_AUTH_ZONE_DOMAIN`), so the customer delegates the challenge name to us once with a CNAME:
 
 ```
 _acme-challenge.example.com.  CNAME  example-com.acme.krakenkey.io.
@@ -226,34 +226,34 @@ _acme-challenge.example.com.  CNAME  example-com.acme.krakenkey.io.
 
 Dots in the customer domain are flattened to dashes to build the target, matching the record the DNS strategies write. A wildcard request (`*.example.com`) is checked against the base domain, since both share one `_acme-challenge` name.
 
-Without that CNAME the CA can never see the TXT record we publish. Before this check existed, such a request created an order, published a TXT record nobody could resolve, polled for the full 15 attempts, and then failed with an opaque CA error — after consuming a validation attempt against Let's Encrypt's rate limits. The precheck runs **before** the ACME client is even initialised, so a misconfigured domain costs nothing at the CA.
+Without that CNAME the CA can never see the TXT record we publish. Before this check existed, such a request still looked healthy on our side: the propagation poll queries the record in our own auth zone through `KK_ACME_DNS_RESOLVERS`, so it found the TXT value, waited out the 30-second cooldown and asked the CA to validate. The CA, following `_acme-challenge.<domain>` from the customer's zone, found nothing and failed the challenge with an opaque error, after the order had already counted against Let's Encrypt's rate limits. The precheck runs **before** the ACME client is even initialized, so a misconfigured domain costs nothing at the CA.
 
-Resolution behaviour:
+Resolution behavior:
 
 - The **system resolver** is used, not `KK_ACME_DNS_RESOLVERS`. Those resolvers are authoritative for our own zone and may not answer recursive queries for customer domains.
-- CNAME chains are followed for up to **5 hops**, and stop early once the expected target is reached.
+- CNAME chains are followed for up to **5 hops**, and stop early once the expected target is reached. Each lookup uses a 5-second timeout with 2 tries.
 - Only a **missing or mismatched** CNAME fails the job. Any other resolver condition — timeout, `SERVFAIL`, refusal — is logged as a warning and issuance proceeds, so a flaky resolver never blocks a correctly configured domain.
 
-Both failure messages are actionable and name the exact record to create:
+Both failure messages are actionable and name the exact record to create. Abbreviated here; the full text also tells the customer to request the certificate again once the record is fixed:
 
 | Condition | Message |
 |-----------|---------|
 | No CNAME at `_acme-challenge.<domain>` | `ACME challenge delegation missing: no CNAME found at … Create a CNAME record from … to …` |
 | CNAME points elsewhere | `ACME challenge delegation mismatch: … points to …, expected …` |
 
-Both are classified as **permanent** failures by the issuance processor — only the customer can fix them, so the job fails immediately instead of consuming its three retries. See [Retry Policy](#retry-policy).
+Both are classified as **permanent** failures by the issuance processor. Only the customer can fix them, so the job fails on the first attempt instead of using its retries. See [Retry Policy](#retry-policy).
 
 ### Retry Policy
 
 | Setting | Value |
 |---------|-------|
-| Max retries | 3 |
+| Attempts | 3 (the first try plus 2 retries) |
 | Backoff | Exponential (5-second base delay) |
-| Retry delays | ~5s, ~25s, ~125s |
+| Retry delays | ~5s, then ~10s |
 
-If all retries fail, the certificate status is set to `failed` and a failure notification email is sent.
+If the last attempt fails, the certificate status is set to `failed` and a failure notification email is sent.
 
-Some failures are classified as **permanent** and skip retries entirely — an invalid CSR, a malformed ACME key authorization, a missing or mismatched challenge delegation, or a CA policy refusal. Retrying these would produce the same result three times over while delaying the customer's failure notification, so the job fails on the first attempt. The patterns are listed in `PERMANENT_FAILURE_PATTERNS` in `backend/src/certs/tls/processors/tls-crt-issuer.processor.ts`; add to that list when introducing an error that only the customer can resolve.
+Some failures are classified as **permanent** and skip retries entirely: an invalid CSR, a malformed ACME key authorization, a missing or mismatched challenge delegation, a CA policy refusal (including CAA), a deactivated ACME account, or a CA rate limit. Retrying the first group would produce the same result every time while delaying the customer's failure notification. CA rate limits last hours to days, far longer than the seconds-scale backoff, so they fail fast too and the customer can retry once the limit clears. Any of these fails the job on the first attempt. The patterns are listed in `PERMANENT_FAILURE_PATTERNS` in `backend/src/certs/tls/processors/tls-crt-issuer.processor.ts`; add to that list when introducing an error that only the customer can resolve.
 
 ---
 

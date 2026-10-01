@@ -176,7 +176,7 @@ Organizations have their own billing relationship:
 
 Dissolution runs as an `orgDissolution` BullMQ job, keyed `dissolve-<organizationId>` so a given organization can only have one in flight. BullMQ silently ignores `add()` for a job ID that already exists, which means a *failed* earlier attempt would otherwise block every retry for that organization forever. A failed job under the same ID is therefore removed before re-queueing, and the removal is logged with the previous failure reason.
 
-The job itself retries 3 times with exponential backoff from a 5-second base.
+The job runs up to 3 attempts (the first try plus 2 retries) with exponential backoff from a 5-second base.
 
 ### Owner subscription conflicts
 
@@ -184,11 +184,13 @@ Step 3 above reassigns the organization's subscription row to the owner. A user 
 
 | Situation | Outcome |
 |-----------|---------|
-| Dissolution requested with `cancelSubscription` | The org's Stripe subscription is already cancelled, so its row is deleted and the owner keeps their personal subscription |
+| Dissolution requested with `cancelSubscription` (queued by the `customer.subscription.deleted` webhook) | The org's Stripe subscription is already cancelled, so its row is deleted and the owner keeps their personal subscription |
 | Owner's personal subscription is not billing (no Stripe subscription, or `canceled` / `incomplete_expired`) | The owner's inactive row is deleted and the org's paid subscription replaces it |
 | Both are billing in Stripe | The job fails with an `UnrecoverableError` and is left for manual review |
 
-The last case is deliberate: deleting either row would orphan a subscription that is still charging the customer. It raises `UnrecoverableError` rather than a plain error so BullMQ does not burn the remaining retries on a conflict that cannot resolve itself. The organization stays in `dissolving` status until an operator resolves the duplicate, and the log line names both subscription IDs and the organization.
+The last case is deliberate: deleting either row would orphan a subscription that is still charging the customer. It raises `UnrecoverableError` rather than a plain error so BullMQ does not burn the remaining retries on a conflict that cannot resolve itself. The transaction rolls back and the organization stays in `dissolving` status until an operator resolves the duplicate.
+
+The error message names the owner, both subscription IDs and the organization, but nothing logs it when the job fails: the dissolution processor has no failure handler. It is stored as the job's `failedReason` in BullMQ, and only reaches the application log if the dissolution is queued again (the removal of the failed job logs the reason). To catch these, alert on `bullmq_queue_jobs{queue="orgDissolution",state="failed"} > 0` (see [Observability](./OBSERVABILITY.md#queues)) and read the reason from the failed job.
 
 ## Subscription Statuses
 

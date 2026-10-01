@@ -13,34 +13,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Dates a
 ## [2026-09-24] — Challenge Delegation Precheck, Queue Metrics
 
 ### Added
-- `bullmq_queue_jobs` Prometheus gauge — BullMQ job counts labelled by `queue` and `state`, covering the `tlsCertIssuance` and `orgDissolution` queues across the `waiting`, `active`, `delayed`, `failed`, `completed` and `paused` states. Counts are read from Redis at scrape time rather than polled in the background; each queue's read is bounded by a 2-second timeout and failures omit that queue's series instead of failing the whole `/metrics` scrape. See [OBSERVABILITY.md](../backend/docs/OBSERVABILITY.md). (PR #106)
+- `bullmq_queue_jobs` Prometheus gauge: BullMQ job counts labelled by `queue` and `state`, covering the `tlsCertIssuance` and `orgDissolution` queues across the `waiting`, `active`, `delayed`, `failed`, `completed` and `paused` states. Counts are read from Redis at scrape time rather than polled in the background; each queue's read is bounded by a 2-second timeout and failures omit that queue's series instead of failing the whole `/metrics` scrape. See [OBSERVABILITY.md](../backend/docs/OBSERVABILITY.md). (PR #106)
 
 ### Changed
-- Certificate issuance now verifies `_acme-challenge.<domain>` CNAME delegation **before** creating an ACME order. A missing or misdirected CNAME previously produced an order, a TXT record the CA could not resolve, 15 propagation polls and an opaque CA error — after consuming a validation attempt against Let's Encrypt's rate limits. Failures now return an actionable message naming the exact record to create, and are classified as permanent so the job does not burn its three retries. CNAME chains are followed up to 5 hops; resolver timeouts and `SERVFAIL` are logged and issuance proceeds, so a flaky resolver never blocks a correctly configured domain. See [CERTIFICATE_FLOW.md](../backend/docs/CERTIFICATE_FLOW.md#challenge-delegation-precheck). (PR #108)
+- Certificate issuance now verifies `_acme-challenge.<domain>` CNAME delegation **before** creating an ACME order. A missing or misdirected CNAME previously passed our own propagation check (which queries our auth zone directly), then failed CA validation with an opaque error after the order had counted against Let's Encrypt's rate limits. Failures now return an actionable message naming the exact record to create, and are classified as permanent so the job fails on the first attempt instead of retrying. CNAME chains are followed up to 5 hops; resolver timeouts and `SERVFAIL` are logged and issuance proceeds, so a flaky resolver never blocks a correctly configured domain. See [CERTIFICATE_FLOW.md](../backend/docs/CERTIFICATE_FLOW.md#challenge-delegation-precheck). (PR #108)
 
 ### Fixed
 - Organization dissolution no longer fails when the owner already holds a personal subscription. A user may hold only one personal subscription (`UQ_subscription_userId_partial`), so reassigning the organization's subscription to an owner who already had one violated the constraint. Resolution now depends on which subscriptions are live in Stripe: a cancelled org subscription is dropped, an inactive personal subscription is replaced by the org's paid one, and two subscriptions both billing in Stripe raise an `UnrecoverableError` for manual review rather than orphaning a subscription that is still charging. See [BILLING.md](../backend/docs/BILLING.md#owner-subscription-conflicts). (PR #107)
 - A failed `orgDissolution` job no longer blocks all subsequent retries for that organization. The job ID is derived from the organization ID and BullMQ ignores `add()` for an existing ID, so a failed attempt was permanently sticky; failed jobs are now removed before re-queueing, with the previous failure reason logged. (PR #107)
 
 ### Documentation
-- New [`backend/docs/OBSERVABILITY.md`](../backend/docs/OBSERVABILITY.md) — the `/metrics` endpoint and full metric catalogue had never been documented.
+- New [`backend/docs/OBSERVABILITY.md`](../backend/docs/OBSERVABILITY.md): the `/metrics` endpoint and full metric catalog had never been documented.
 
 ---
 
 ## [2026-09-04] — Dependency Security Upgrades
 
 ### Security
-- `react-router` / `react-router-dom` 7.13.1 → 7.18.3 — clears the `turbo-stream` RCE (GHSA-49rj-9fvp-4h2h) plus CSRF-bypass, stored-XSS, open-redirect and DoS advisories. In-range; no route code changes. (PR #103)
-- `nodemailer` 8.0.1 → 9.1.1 (major) — clears the `raw`-option arbitrary file read / SSRF (GHSA-p6gq-j5cr-w38f). `@types/nodemailer` to 8.0.1. The email service uses plain SMTP `createTransport`/`sendMail` and is unaffected by the v9 API changes. (PR #103)
-- `typeorm` 0.3.28 → 0.3.31 — SQL injection (GHSA-9ggv-8w38-r7pm). (PR #102)
-- `axios` → 1.20.0 in both workspaces (GHSA-pf86-5x62-jrwf). (PR #102)
-- `@nestjs/core` + `@nestjs/platform-express` → 11.2.3 — bundled `path-to-regexp` and `multer` advisories. (PR #102)
-- `vite` → 7.3.6 — dev-server arbitrary file read. (PR #102)
+- `react-router` / `react-router-dom` 7.13.1 → 7.18.3. Clears the `turbo-stream` RCE (GHSA-49rj-9fvp-4h2h) plus CSRF-bypass, stored-XSS, open-redirect and DoS advisories. In-range; no route code changes. (PR #103)
+- `nodemailer` 8.0.1 → 9.1.1 (major). Clears the `raw`-option arbitrary file read / SSRF (GHSA-p6gq-j5cr-w38f). `@types/nodemailer` to 8.0.1. The email service uses plain SMTP `createTransport`/`sendMail` and is unaffected by the v9 API changes. (PR #103)
+- `typeorm` 0.3.28 → 0.3.31: SQL injection (GHSA-9ggv-8w38-r7pm). (PR #102)
+- `axios` → 1.20.0 as a direct dependency in both workspaces (GHSA-pf86-5x62-jrwf). The backend lockfile still resolves axios 1.13.4 through `acme-client`. (PR #102)
+- `@nestjs/core` + `@nestjs/platform-express` → 11.2.3: bundled `path-to-regexp` and `multer` advisories. (PR #102)
 
 Lockfile-only for PR #102; no `package.json` ranges changed. Still outstanding from the dependency audit (#99): `vitest` and the `handlebars`/`ts-jest` dev chain.
-
-### Build
-- Workflow actions bumped to Node24-capable majors ahead of GitHub's removal of the Node20 runtime.
 
 ---
 

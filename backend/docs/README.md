@@ -20,7 +20,7 @@ This directory contains comprehensive documentation for the KrakenKey backend AP
 9. [Endpoints](./ENDPOINTS.md) — TLS endpoint monitoring and probes
 
 ### Operations
-10. [Observability](./OBSERVABILITY.md) — Prometheus metrics catalogue and the `/metrics` endpoint
+10. [Observability](./OBSERVABILITY.md) — Prometheus metrics catalog and the `/metrics` endpoint
 11. [Rate Limiting](../../docs/RATE_LIMITING.md) — Tier-aware request throttling
 
 ### Guides
@@ -88,7 +88,7 @@ src/
 ├── metrics/                # Prometheus metrics (see OBSERVABILITY.md)
 ├── notifications/          # Email notifications
 ├── feedback/               # User feedback
-├── probes/                 # Kubernetes readiness/liveness probes
+├── probes/                 # TLS probe registration, config and result reporting
 ├── throttler/              # Rate limiting
 ├── filters/                # Global exception filter
 └── migrations/             # Database migrations
