@@ -14,25 +14,28 @@ export class AuthentikHealthIndicator {
 
   async isHealthy(key: string): Promise<HealthIndicatorResult> {
     const indicator = this.healthIndicatorService.check(key);
-    const domain = this.config.get<string>('KK_AUTHENTIK_DOMAIN');
+    const issuerUrl = this.config.get<string>('KK_AUTHENTIK_ISSUER_URL');
 
-    if (!domain) {
-      return indicator.down({ message: 'KK_AUTHENTIK_DOMAIN not configured' });
+    if (!issuerUrl) {
+      return indicator.down({
+        message: 'KK_AUTHENTIK_ISSUER_URL not configured',
+      });
     }
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 3000);
       const resp = await fetch(
-        `https://${domain}/application/o/.well-known/openid-configuration`,
+        `${issuerUrl.replace(/\/+$/, '')}/.well-known/openid-configuration`,
         { signal: controller.signal },
       );
-      clearTimeout(timeout);
       return resp.ok
         ? indicator.up()
         : indicator.down({ message: `HTTP ${resp.status}` });
     } catch (err) {
       return indicator.down({ message: (err as Error).message });
+    } finally {
+      clearTimeout(timeout);
     }
   }
 }
