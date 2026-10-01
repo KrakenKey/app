@@ -8,7 +8,9 @@ describe('AuthentikHealthIndicator', () => {
   let mockConfigGet: jest.Mock;
 
   beforeEach(async () => {
-    mockConfigGet = jest.fn().mockReturnValue('auth.example.com');
+    mockConfigGet = jest
+      .fn()
+      .mockReturnValue('https://auth.example.com/application/o/krakenkey/');
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -64,20 +66,50 @@ describe('AuthentikHealthIndicator', () => {
     expect(result['auth'].status).toBe('down');
   });
 
-  it('returns down when KK_AUTHENTIK_DOMAIN is not configured', async () => {
+  it('returns down when KK_AUTHENTIK_ISSUER_URL is not configured', async () => {
     mockConfigGet.mockReturnValue(undefined);
+    global.fetch = jest.fn();
 
     const result = await indicator.isHealthy('auth');
     expect(result['auth'].status).toBe('down');
+    expect((result['auth'] as { message?: string }).message).toContain(
+      'KK_AUTHENTIK_ISSUER_URL',
+    );
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  it('calls the OIDC discovery URL for the configured domain', async () => {
+  it('calls the OIDC discovery URL for the configured issuer', async () => {
     global.fetch = jest.fn().mockResolvedValue({ ok: true });
 
     await indicator.isHealthy('auth');
 
     const [url] = (global.fetch as jest.Mock).mock.calls[0] as [string];
-    expect(url).toContain('auth.example.com');
-    expect(url).toContain('.well-known/openid-configuration');
+    expect(mockConfigGet).toHaveBeenCalledWith('KK_AUTHENTIK_ISSUER_URL');
+    expect(url).toBe(
+      'https://auth.example.com/application/o/krakenkey/.well-known/openid-configuration',
+    );
+  });
+
+  it('handles an issuer URL without a trailing slash', async () => {
+    mockConfigGet.mockReturnValue(
+      'https://auth.example.com/application/o/krakenkey',
+    );
+    global.fetch = jest.fn().mockResolvedValue({ ok: true });
+
+    await indicator.isHealthy('auth');
+
+    const [url] = (global.fetch as jest.Mock).mock.calls[0] as [string];
+    expect(url).toBe(
+      'https://auth.example.com/application/o/krakenkey/.well-known/openid-configuration',
+    );
+  });
+
+  it('clears the abort timeout when fetch throws', async () => {
+    const clearSpy = jest.spyOn(global, 'clearTimeout');
+    global.fetch = jest.fn().mockRejectedValue(new Error('ECONNREFUSED'));
+
+    await indicator.isHealthy('auth');
+
+    expect(clearSpy).toHaveBeenCalled();
   });
 });
