@@ -130,6 +130,8 @@ export class EndpointsService {
     userId: string,
     probeIds: string[],
   ): Promise<EndpointProbeAssignment[]> {
+    await this.findOne(endpointId, userId); // access check
+
     // Validate all probes belong to the user (or their org)
     const memberIds = await this.getOrgMemberIds(userId);
     const validIds = memberIds ?? [userId];
