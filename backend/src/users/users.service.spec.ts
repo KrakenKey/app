@@ -90,6 +90,13 @@ describe('UsersService', () => {
 
       expect(mockRepository.update).toHaveBeenCalledWith('u1', dto);
     });
+
+    it('skips the update when no writable fields are left', async () => {
+      const result = await service.update('u1', {});
+
+      expect(mockRepository.update).not.toHaveBeenCalled();
+      expect(result).toEqual({ generatedMaps: [], raw: [], affected: 0 });
+    });
   });
 
   describe('remove', () => {

@@ -45,6 +45,11 @@ export class UsersService {
    * Updates a user's information.
    */
   update(id: string, updateUserDto: UpdateUserDto) {
+    // Nothing writable left after validation (e.g. only groups was sent).
+    // TypeORM rejects an empty update, so report no change instead of a 500.
+    if (Object.values(updateUserDto).every((v) => v === undefined)) {
+      return Promise.resolve({ generatedMaps: [], raw: [], affected: 0 });
+    }
     return this.usersRepository.update(id, updateUserDto);
   }
 
