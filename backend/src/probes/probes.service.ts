@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
@@ -47,6 +52,7 @@ export class ProbesService {
     const existing = await this.probeRepo.findOne({
       where: { id: dto.probeId },
     });
+    this.assertProbeAccess(dto.mode, user, existing);
 
     const userId = user.isServiceKey ? undefined : user.userId;
 
@@ -88,6 +94,7 @@ export class ProbesService {
     if (!probe) {
       throw new NotFoundException(`Probe ${dto.probeId} not registered`);
     }
+    this.assertProbeAccess(dto.mode, user, probe);
 
     probe.lastSeenAt = new Date();
     await this.probeRepo.save(probe);
@@ -176,6 +183,7 @@ export class ProbesService {
     if (!probe) {
       throw new NotFoundException(`Probe ${probeId} not registered`);
     }
+    this.assertProbeAccess(probe.mode, user, probe);
 
     let endpoints: HostedEndpoint[];
 
@@ -191,6 +199,27 @@ export class ProbesService {
       this.config.get<string>('KK_PROBE_HOSTED_INTERVAL') ?? '60m';
 
     return { endpoints, interval };
+  }
+
+  /**
+   * Hosted mode writes results into every customer's endpoint in a region, so
+   * only service keys may use it. A probe ID can only be used by the account
+   * that registered it (service-key probes have no owner).
+   */
+  private assertProbeAccess(
+    mode: string,
+    user: ProbeAuthUser,
+    probe?: Probe | null,
+  ): void {
+    if (mode === 'hosted' && !user.isServiceKey) {
+      throw new ForbiddenException('Hosted mode requires a service key');
+    }
+    if (!probe) return;
+
+    const caller = user.isServiceKey ? null : (user.userId ?? null);
+    if ((probe.userId ?? null) !== caller) {
+      throw new ForbiddenException('Probe is registered to another account');
+    }
   }
 
   private async getHostedEndpoints(

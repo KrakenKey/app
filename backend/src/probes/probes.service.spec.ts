@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
-import { NotFoundException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { ProbesService } from './probes.service';
 import { Probe } from './entities/probe.entity';
 import { ProbeScanResult } from './entities/probe-scan-result.entity';
@@ -138,6 +138,44 @@ describe('ProbesService', () => {
 
       expect(result.userId).toBeUndefined();
     });
+
+    it('rejects hosted mode from a user key', async () => {
+      probeRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.registerProbe({ ...dto, mode: 'hosted' }, connectedUser),
+      ).rejects.toThrow(ForbiddenException);
+      expect(probeRepo.save).not.toHaveBeenCalled();
+    });
+
+    it("rejects re-registering another user's probe", async () => {
+      probeRepo.findOne.mockResolvedValue({ ...mockProbe, userId: 'user-999' });
+
+      await expect(service.registerProbe(dto, connectedUser)).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(probeRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('rejects a user claiming a hosted probe ID', async () => {
+      probeRepo.findOne.mockResolvedValue({
+        ...mockProbe,
+        mode: 'hosted',
+        userId: null,
+      });
+
+      await expect(service.registerProbe(dto, connectedUser)).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it("rejects a service key taking over a user's probe", async () => {
+      probeRepo.findOne.mockResolvedValue({ ...mockProbe });
+
+      await expect(
+        service.registerProbe({ ...dto, mode: 'hosted' }, serviceKeyUser),
+      ).rejects.toThrow(ForbiddenException);
+    });
   });
 
   describe('submitReport', () => {
@@ -181,6 +219,25 @@ describe('ProbesService', () => {
 
       expect(result.accepted).toBe(0);
     });
+
+    it('rejects hosted-mode reports from a user key', async () => {
+      probeRepo.findOne.mockResolvedValue({ ...mockProbe });
+
+      await expect(
+        service.submitReport({ ...dto, mode: 'hosted' }, connectedUser),
+      ).rejects.toThrow(ForbiddenException);
+      expect(scanResultRepo.save).not.toHaveBeenCalled();
+      expect(endpointRepo.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it("rejects reports for another user's probe", async () => {
+      probeRepo.findOne.mockResolvedValue({ ...mockProbe, userId: 'user-999' });
+
+      await expect(service.submitReport(dto, connectedUser)).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(scanResultRepo.save).not.toHaveBeenCalled();
+    });
   });
 
   describe('getConfig', () => {
@@ -211,12 +268,21 @@ describe('ProbesService', () => {
         ...mockProbe,
         mode: 'hosted',
         region: 'us-east-1',
+        userId: null,
       });
 
       const result = await service.getConfig('probe-1', serviceKeyUser);
 
       expect(result.endpoints).toEqual([]);
       expect(endpointRepo.createQueryBuilder).toHaveBeenCalled();
+    });
+
+    it("rejects fetching config for another user's probe", async () => {
+      probeRepo.findOne.mockResolvedValue({ ...mockProbe, userId: 'user-999' });
+
+      await expect(service.getConfig('probe-1', connectedUser)).rejects.toThrow(
+        ForbiddenException,
+      );
     });
   });
 });
