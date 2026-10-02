@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { DomainsController } from './domains.controller';
 import { DomainsService } from './domains.service';
+import { RoleGuard } from '../auth/guards/role.guard';
 
 describe('DomainsController', () => {
   let controller: DomainsController;
@@ -26,7 +27,10 @@ describe('DomainsController', () => {
           useValue: mockService,
         },
       ],
-    }).compile();
+    })
+      .overrideGuard(RoleGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
 
     controller = module.get<DomainsController>(DomainsController);
   });

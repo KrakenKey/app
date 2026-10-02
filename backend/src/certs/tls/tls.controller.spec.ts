@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { TlsController } from './tls.controller';
 import { TlsService } from './tls.service';
+import { RoleGuard } from '../../auth/guards/role.guard';
 
 describe('TlsController', () => {
   let controller: TlsController;
@@ -31,7 +32,10 @@ describe('TlsController', () => {
           useValue: mockService,
         },
       ],
-    }).compile();
+    })
+      .overrideGuard(RoleGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
 
     controller = module.get<TlsController>(TlsController);
   });

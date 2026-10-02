@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { EndpointsController } from './endpoints.controller';
 import { EndpointsService } from './endpoints.service';
+import { RoleGuard } from '../auth/guards/role.guard';
 import { MetricsService } from '../metrics/metrics.service';
 import type { RequestWithUser } from '../auth/interfaces/request-with-user.interface';
 
@@ -36,7 +37,10 @@ describe('EndpointsController', () => {
           useValue: { authTotal: { inc: jest.fn() } },
         },
       ],
-    }).compile();
+    })
+      .overrideGuard(RoleGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
 
     controller = module.get<EndpointsController>(EndpointsController);
   });

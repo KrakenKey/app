@@ -26,6 +26,7 @@ import { UpdateEndpointDto } from './dto/update-endpoint.dto';
 import { AddHostedRegionDto } from './dto/add-hosted-region.dto';
 import { AssignProbesDto } from './dto/assign-probes.dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-or-api-key.guard';
+import { RoleGuard } from '../auth/guards/role.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import type { RequestWithUser } from '../auth/interfaces/request-with-user.interface';
 import { RateLimitCategoryDecorator } from '../throttler/decorators/rate-limit-category.decorator';
@@ -34,7 +35,7 @@ import { RateLimitCategory } from '../throttler/interfaces/rate-limit-category.e
 @Controller('endpoints')
 @ApiTags('Endpoints')
 @ApiBearerAuth()
-@UseGuards(JwtOrApiKeyGuard)
+@UseGuards(JwtOrApiKeyGuard, RoleGuard)
 export class EndpointsController {
   constructor(private readonly endpointsService: EndpointsService) {}
 

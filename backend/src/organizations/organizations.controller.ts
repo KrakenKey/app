@@ -25,6 +25,7 @@ import { UpdateOrgDto } from './dto/update-org.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import { TransferOwnershipDto } from './dto/transfer-ownership.dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-or-api-key.guard';
+import { RoleGuard } from '../auth/guards/role.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import type { RequestWithUser } from '../auth/interfaces/request-with-user.interface';
 import { RateLimitCategoryDecorator } from '../throttler/decorators/rate-limit-category.decorator';
@@ -33,7 +34,7 @@ import { RateLimitCategory } from '../throttler/interfaces/rate-limit-category.e
 @Controller('organizations')
 @ApiTags('Organizations')
 @ApiBearerAuth()
-@UseGuards(JwtOrApiKeyGuard)
+@UseGuards(JwtOrApiKeyGuard, RoleGuard)
 export class OrganizationsController {
   constructor(private readonly orgsService: OrganizationsService) {}
 

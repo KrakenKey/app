@@ -21,6 +21,7 @@ import { CreateTlsCrtDto } from './dto/create-tls-crt.dto';
 import { UpdateTlsCrtDto } from './dto/update-tls-crt.dto';
 import { RevokeTlsCrtDto } from './dto/revoke-tls-crt.dto';
 import { JwtOrApiKeyGuard } from '../../auth/guards/jwt-or-api-key.guard';
+import { RoleGuard } from '../../auth/guards/role.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
 import type { RequestWithUser } from '../../auth/interfaces/request-with-user.interface';
 import { RateLimitCategoryDecorator } from '../../throttler/decorators/rate-limit-category.decorator';
@@ -29,7 +30,7 @@ import { RateLimitCategory } from '../../throttler/interfaces/rate-limit-categor
 @Controller('certs/tls')
 @ApiTags('TLS Certificates')
 @ApiBearerAuth()
-@UseGuards(JwtOrApiKeyGuard)
+@UseGuards(JwtOrApiKeyGuard, RoleGuard)
 export class TlsController {
   constructor(private readonly tlsService: TlsService) {}
 

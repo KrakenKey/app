@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { OrganizationsController } from './organizations.controller';
 import { OrganizationsService } from './organizations.service';
+import { RoleGuard } from '../auth/guards/role.guard';
 
 describe('OrganizationsController', () => {
   let controller: OrganizationsController;
@@ -25,7 +26,10 @@ describe('OrganizationsController', () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [OrganizationsController],
       providers: [{ provide: OrganizationsService, useValue: mockOrgsService }],
-    }).compile();
+    })
+      .overrideGuard(RoleGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
 
     controller = module.get<OrganizationsController>(OrganizationsController);
   });
