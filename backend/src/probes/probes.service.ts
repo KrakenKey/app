@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
@@ -47,6 +52,7 @@ export class ProbesService {
     const existing = await this.probeRepo.findOne({
       where: { id: dto.probeId },
     });
+    this.assertProbeAccess(dto.mode, user, existing);
 
     const userId = user.isServiceKey ? undefined : user.userId;
 
@@ -59,7 +65,7 @@ export class ProbesService {
       existing.arch = dto.arch;
       existing.status = 'active';
       existing.lastSeenAt = new Date();
-      if (userId) existing.userId = userId;
+      existing.userId = userId ?? null;
       return this.probeRepo.save(existing);
     }
 
@@ -88,6 +94,7 @@ export class ProbesService {
     if (!probe) {
       throw new NotFoundException(`Probe ${dto.probeId} not registered`);
     }
+    this.assertProbeAccess(dto.mode, user, probe);
 
     probe.lastSeenAt = new Date();
     await this.probeRepo.save(probe);
@@ -176,6 +183,7 @@ export class ProbesService {
     if (!probe) {
       throw new NotFoundException(`Probe ${probeId} not registered`);
     }
+    this.assertProbeAccess(probe.mode, user, probe);
 
     let endpoints: HostedEndpoint[];
 
@@ -191,6 +199,27 @@ export class ProbesService {
       this.config.get<string>('KK_PROBE_HOSTED_INTERVAL') ?? '60m';
 
     return { endpoints, interval };
+  }
+
+  /**
+   * Hosted mode writes results into every customer's endpoint in a region, so
+   * only service keys may use it. A user can only use a probe ID registered to
+   * their own account. Service keys are our own infrastructure and may act on
+   * any probe; registering with one turns the probe back into an unowned
+   * hosted probe.
+   */
+  private assertProbeAccess(
+    mode: string,
+    user: ProbeAuthUser,
+    probe?: Probe | null,
+  ): void {
+    if (user.isServiceKey) return;
+    if (mode === 'hosted') {
+      throw new ForbiddenException('Hosted mode requires a service key');
+    }
+    if (probe && (probe.userId ?? null) !== (user.userId ?? null)) {
+      throw new ForbiddenException('Probe is registered to another account');
+    }
   }
 
   private async getHostedEndpoints(

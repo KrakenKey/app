@@ -223,6 +223,20 @@ describe('EndpointsService', () => {
     });
   });
 
+  describe('assignProbes', () => {
+    it("rejects assigning probes to an endpoint the caller can't access", async () => {
+      endpointRepo.findOne.mockResolvedValue(null);
+      const probeRepo = service['probeRepo'] as unknown as {
+        find: jest.Mock;
+      };
+
+      await expect(
+        service.assignProbes('someone-elses-ep', userId, ['probe-1']),
+      ).rejects.toThrow(NotFoundException);
+      expect(probeRepo.find).not.toHaveBeenCalled();
+    });
+  });
+
   describe('update', () => {
     it('should update an endpoint', async () => {
       endpointRepo.findOne.mockResolvedValue({ ...mockEndpoint });

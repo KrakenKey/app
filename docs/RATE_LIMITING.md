@@ -20,6 +20,8 @@ Source of truth: `backend/src/throttler/config/rate-limit-tiers.config.ts`. Upda
 
 Each limit applies **per route**, not across the API. See [Tracking key](#tracking-key).
 
+`PUBLIC` routes are always limited per IP at the `free` row, because the caller's tier can only come from an unverified token there. The higher Public values for paid tiers are currently unused.
+
 ---
 
 ## Categories
@@ -66,7 +68,8 @@ If the billing lookup throws, `SubscriptionTierResolver` logs a warning and retu
 
 | Caller | Tracker |
 |--------|---------|
-| Bearer JWT | `user:<sub>` |
+| Bearer JWT, non-`PUBLIC` route | `user:<sub>` |
+| Bearer JWT, `PUBLIC` route | client IP |
 | API key (`Bearer kk_...`) | client IP |
 | Unauthenticated | client IP |
 
@@ -75,7 +78,7 @@ The guard does not override `generateKey()`, so the library default applies: the
 Details that matter when changing this code:
 
 - **The guard runs as `APP_GUARD`, before the auth guards.** To key by user it decodes the JWT payload without verifying the signature, so the `sub` it uses is unauthenticated and must never be treated as identity.
-- **That makes the per-IP limit bypassable on routes without an auth guard.** On authenticated routes `JwtOrApiKeyGuard` rejects a forged token after the throttler has counted it. On `PUBLIC` routes such as `POST /public-scan` and `/auth/login`, nothing rejects it: a caller who sends a token with a different `sub` on every request gets a fresh bucket every time and is never limited by IP. Each such request also triggers a tier lookup against the database. Treat this as a known gap, not a property to rely on.
+- **`PUBLIC` routes ignore the token entirely** and always key by IP at the default tier. Nothing on those routes rejects a forged token, so trusting its `sub` would let a caller send a different one per request and get a fresh bucket each time. On authenticated routes this is safe because `JwtOrApiKeyGuard` rejects a forged token after the throttler has counted it.
 - **API key requests key by IP**, because resolving the owning user from a `kk_` token needs a database lookup the guard does not perform. Several API keys behind one NAT therefore share a bucket. This is the main reason a customer may report limits stricter than their tier's table row.
 - `req.ip` is used, never `req.ips[0]`. `req.ip` resolves the client through the trusted proxy chain (`backend/src/config/trusted-proxies.ts`); the leftmost `X-Forwarded-For` entry is client-controlled and forgeable, so keying on it would let a caller mint unlimited buckets.
 

@@ -104,6 +104,58 @@ describe('TierAwareThrottlerGuard', () => {
     });
   });
 
+  describe('public routes', () => {
+    const forged = Buffer.from(JSON.stringify({ sub: 'forged-123' })).toString(
+      'base64',
+    );
+    const req = {
+      method: 'POST',
+      headers: { authorization: `Bearer x.${forged}.y` },
+      ip: '1.2.3.4',
+    };
+    const context = {
+      switchToHttp: () => ({
+        getRequest: () => req,
+        getResponse: () => ({}),
+      }),
+      getHandler: () => () => {},
+      getClass: () => class {},
+    } as any;
+
+    beforeEach(() => {
+      jest
+        .spyOn(mockReflector, 'getAllAndOverride')
+        .mockReturnValue(RateLimitCategory.PUBLIC);
+    });
+
+    it('keys on IP even when a bearer token is sent', async () => {
+      const tracker = await (guard as any).getTracker(req, context);
+
+      expect(tracker).toBe('1.2.3.4');
+    });
+
+    it('does not resolve a tier from an unverified token', async () => {
+      await (guard as any).handleRequest({ context });
+
+      expect(mockTierResolver.resolve).not.toHaveBeenCalled();
+      const expectedLimits =
+        RATE_LIMIT_TIERS[DEFAULT_TIER][RateLimitCategory.PUBLIC];
+      expect(parentHandleRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: expectedLimits.limit }),
+      );
+    });
+
+    it('still keys authenticated routes by user', async () => {
+      jest
+        .spyOn(mockReflector, 'getAllAndOverride')
+        .mockReturnValue(RateLimitCategory.AUTHENTICATED_WRITE);
+
+      const tracker = await (guard as any).getTracker(req, context);
+
+      expect(tracker).toBe('user:forged-123');
+    });
+  });
+
   describe('handleRequest', () => {
     function createContext(method = 'GET') {
       return {

@@ -88,6 +88,21 @@ export class OrganizationsService {
   }
 
   /**
+   * Returns the organization only if the actor is one of its members.
+   * Non-members get the same 404 as a missing org so IDs can't be probed.
+   */
+  async findForMember(orgId: string, actorId: string): Promise<Organization> {
+    const actor = await this.userRepo.findOne({
+      where: { id: actorId },
+      select: { id: true, organizationId: true },
+    });
+    if (!actor || actor.organizationId !== orgId) {
+      throw new NotFoundException(`Organization ${orgId} not found`);
+    }
+    return this.findById(orgId);
+  }
+
+  /**
    * Invites a user into the organization by directly assigning their role.
    * Only owners and admins may invite. The target user must exist in the system.
    * Cannot invite someone already in a different organization.

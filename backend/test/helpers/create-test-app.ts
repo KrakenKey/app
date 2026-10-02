@@ -6,6 +6,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import cookieParser from 'cookie-parser';
+import { DataSource } from 'typeorm';
 import { JwtOrApiKeyGuard } from '../../src/auth/guards/jwt-or-api-key.guard';
 import { HttpExceptionFilter } from '../../src/filters/http-exception.filter';
 import { MOCK_USER } from './mock-data';
@@ -25,6 +26,11 @@ export interface CreateTestAppOptions {
   extraGuards?: Type<any>[];
   /** User object injected by the mocked guard (only used in passthrough mode) */
   mockUser?: Record<string, any>;
+  /**
+   * Org role RoleGuard reads for the mocked user. null (default) is a solo
+   * user, which passes every @Roles() check.
+   */
+  orgRole?: string | null;
 }
 
 const PASS_THROUGH_GUARD = (user: Record<string, any>) => ({
@@ -48,12 +54,24 @@ export async function createTestApp(options: CreateTestAppOptions) {
     guardMode = 'passthrough',
     extraGuards = [],
     mockUser = MOCK_USER,
+    orgRole = null,
   } = options;
+
+  // RoleGuard looks up the caller's org role through the DataSource; serve it
+  // from the mocked user so @Roles() is enforced for real in e2e tests.
+  const roleLookup = {
+    provide: DataSource,
+    useValue: {
+      getRepository: () => ({
+        findOne: () => Promise.resolve({ id: mockUser.userId, role: orgRole }),
+      }),
+    },
+  };
 
   let builder: TestingModuleBuilder = Test.createTestingModule({
     imports,
     controllers,
-    providers,
+    providers: [roleLookup, ...providers],
   });
 
   if (guardMode === 'passthrough') {

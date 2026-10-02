@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { PassportModule } from '@nestjs/passport';
-import { AuthentikProxyStrategy } from './strategies/authentik-proxy.strategy';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { ApiKeyStrategy } from './strategies/api-key.strategy';
 import { ServiceKeyStrategy } from './strategies/service-key.strategy';
@@ -25,7 +24,6 @@ import { BillingModule } from '../billing/billing.module';
   providers: [
     AuthService,
     ApiKeySecurityService,
-    AuthentikProxyStrategy,
     JwtStrategy,
     ApiKeyStrategy,
     ServiceKeyStrategy,

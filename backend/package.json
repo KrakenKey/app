@@ -119,8 +119,7 @@
       "!**/strategies/acme-issuer.strategy.ts",
       "!**/strategies/cloudflare-dns.strategy.ts",
       "!**/strategies/route53-dns.strategy.ts",
-      "!**/strategies/authentik.strategy.ts",
-      "!**/strategies/authentik-proxy.strategy.ts"
+      "!**/strategies/authentik.strategy.ts"
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"

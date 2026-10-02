@@ -3,6 +3,7 @@ import { ExecutionContext, INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
+import { DataSource } from 'typeorm';
 import { TierAwareThrottlerGuard } from '../src/throttler/guards/tier-aware-throttler.guard';
 import { TIER_RESOLVER } from '../src/throttler/interfaces/tier-resolver.interface';
 import { TlsController } from '../src/certs/tls/tls.controller';
@@ -31,6 +32,16 @@ describe('Rate Limiting (e2e)', () => {
         {
           provide: TIER_RESOLVER,
           useValue: { resolve: async () => 'free' },
+        },
+        {
+          // RoleGuard's org role lookup; a solo user passes @Roles()
+          provide: DataSource,
+          useValue: {
+            getRepository: () => ({
+              findOne: () =>
+                Promise.resolve({ id: 'test-user-123', role: null }),
+            }),
+          },
         },
         {
           provide: TlsService,

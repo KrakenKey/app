@@ -18,6 +18,7 @@ import {
 import { DomainsService } from './domains.service';
 import { CreateDomainDto } from './dto/create-domain.dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-or-api-key.guard';
+import { RoleGuard } from '../auth/guards/role.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import type { RequestWithUser } from '../auth/interfaces/request-with-user.interface';
 import { RateLimitCategoryDecorator } from '../throttler/decorators/rate-limit-category.decorator';
@@ -26,7 +27,7 @@ import { RateLimitCategory } from '../throttler/interfaces/rate-limit-category.e
 @Controller('domains')
 @ApiTags('Domains')
 @ApiBearerAuth()
-@UseGuards(JwtOrApiKeyGuard)
+@UseGuards(JwtOrApiKeyGuard, RoleGuard)
 export class DomainsController {
   constructor(private readonly domainsService: DomainsService) {}
 
