@@ -36,11 +36,19 @@ export class TierAwareThrottlerGuard extends ThrottlerGuard {
    * Determines the tracking key.
    * Authenticated requests are tracked by user ID; public requests by IP.
    */
-  protected async getTracker(req: Record<string, any>): Promise<string> {
+  protected async getTracker(
+    req: Record<string, any>,
+    context?: ExecutionContext,
+  ): Promise<string> {
     // Try to extract user ID from an already-populated req.user (unlikely
     // since this guard runs as APP_GUARD before auth guards) or by peeking
-    // at the JWT in the Authorization header.
-    const userId = this.tryExtractUserId(req);
+    // at the JWT in the Authorization header. Public routes never look at
+    // the token: it is unverified and nothing rejects it later, so a caller
+    // could mint a new bucket per request.
+    const userId =
+      context && this.resolveCategory(context) === RateLimitCategory.PUBLIC
+        ? null
+        : this.tryExtractUserId(req);
     if (userId) {
       return `user:${userId}`;
     }
@@ -65,8 +73,10 @@ export class TierAwareThrottlerGuard extends ThrottlerGuard {
     // 1. Determine rate limit category from decorator metadata
     const category = this.resolveCategory(context);
 
-    // 2. Determine user's subscription tier
-    const userId = this.tryExtractUserId(req);
+    // 2. Determine user's subscription tier (public routes always use the
+    //    default tier; see getTracker)
+    const userId =
+      category === RateLimitCategory.PUBLIC ? null : this.tryExtractUserId(req);
     let tier = DEFAULT_TIER;
     if (userId) {
       try {
@@ -119,9 +129,9 @@ export class TierAwareThrottlerGuard extends ThrottlerGuard {
    * Attempts to extract a user ID without requiring full authentication.
    *
    * Checks req.user first (in case auth already ran), then peeks at the
-   * JWT payload in the Authorization header. This is safe for rate limiting:
-   * a forged JWT only isolates the attacker into their own bucket, and real
-   * auth validation still happens in JwtOrApiKeyGuard afterward.
+   * JWT payload in the Authorization header. The payload is not verified, so
+   * only call this for routes behind JwtOrApiKeyGuard, which rejects a forged
+   * token after this guard runs. Never use it on PUBLIC routes.
    *
    * API key requests (Bearer kk_...) fall back to IP tracking since we
    * can't resolve the user without a DB lookup.
