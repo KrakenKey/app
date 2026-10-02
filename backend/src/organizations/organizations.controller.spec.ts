@@ -15,6 +15,7 @@ describe('OrganizationsController', () => {
     mockOrgsService = {
       create: jest.fn(),
       findById: jest.fn(),
+      findForMember: jest.fn(),
       inviteMember: jest.fn(),
       removeMember: jest.fn(),
       update: jest.fn(),
@@ -53,11 +54,11 @@ describe('OrganizationsController', () => {
   describe('findOne', () => {
     it('should return organization details', async () => {
       const org = { id: orgId, name: 'Acme', members: [] };
-      mockOrgsService.findById.mockResolvedValue(org);
+      mockOrgsService.findForMember.mockResolvedValue(org);
 
-      const result = await controller.findOne(orgId);
+      const result = await controller.findOne(orgId, mockReq);
 
-      expect(mockOrgsService.findById).toHaveBeenCalledWith(orgId);
+      expect(mockOrgsService.findForMember).toHaveBeenCalledWith(orgId, userId);
       expect(result).toEqual(org);
     });
   });

@@ -62,8 +62,8 @@ export class OrganizationsController {
   @ApiResponse({ status: 404, description: 'Organization not found' })
   @Roles('owner', 'admin', 'member', 'viewer')
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
-  findOne(@Param('id') id: string) {
-    return this.orgsService.findById(id);
+  findOne(@Param('id') id: string, @Request() req: RequestWithUser) {
+    return this.orgsService.findForMember(id, req.user.userId);
   }
 
   /**

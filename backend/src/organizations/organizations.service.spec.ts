@@ -124,6 +124,44 @@ describe('OrganizationsService', () => {
     });
   });
 
+  describe('findForMember', () => {
+    it('returns the org to a member', async () => {
+      const org = { id: orgId, name: 'Acme', members: [] };
+      mockUserRepo.findOne.mockResolvedValue({
+        id: 'user-1',
+        organizationId: orgId,
+      });
+      mockOrgRepo.findOne.mockResolvedValue(org);
+
+      await expect(service.findForMember(orgId, 'user-1')).resolves.toEqual(
+        org,
+      );
+    });
+
+    it('404s for a user in another org without loading the org', async () => {
+      mockUserRepo.findOne.mockResolvedValue({
+        id: 'user-2',
+        organizationId: 'org-other',
+      });
+
+      await expect(service.findForMember(orgId, 'user-2')).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(mockOrgRepo.findOne).not.toHaveBeenCalled();
+    });
+
+    it('404s for a solo user with no org', async () => {
+      mockUserRepo.findOne.mockResolvedValue({
+        id: 'user-3',
+        organizationId: null,
+      });
+
+      await expect(service.findForMember(orgId, 'user-3')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+
   describe('inviteMember', () => {
     beforeEach(() => {
       // assertOrgAdmin passes
