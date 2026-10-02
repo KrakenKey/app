@@ -65,7 +65,7 @@ export class ProbesService {
       existing.arch = dto.arch;
       existing.status = 'active';
       existing.lastSeenAt = new Date();
-      if (userId) existing.userId = userId;
+      existing.userId = userId ?? null;
       return this.probeRepo.save(existing);
     }
 
@@ -203,21 +203,21 @@ export class ProbesService {
 
   /**
    * Hosted mode writes results into every customer's endpoint in a region, so
-   * only service keys may use it. A probe ID can only be used by the account
-   * that registered it (service-key probes have no owner).
+   * only service keys may use it. A user can only use a probe ID registered to
+   * their own account. Service keys are our own infrastructure and may act on
+   * any probe; registering with one turns the probe back into an unowned
+   * hosted probe.
    */
   private assertProbeAccess(
     mode: string,
     user: ProbeAuthUser,
     probe?: Probe | null,
   ): void {
-    if (mode === 'hosted' && !user.isServiceKey) {
+    if (user.isServiceKey) return;
+    if (mode === 'hosted') {
       throw new ForbiddenException('Hosted mode requires a service key');
     }
-    if (!probe) return;
-
-    const caller = user.isServiceKey ? null : (user.userId ?? null);
-    if ((probe.userId ?? null) !== caller) {
+    if (probe && (probe.userId ?? null) !== (user.userId ?? null)) {
       throw new ForbiddenException('Probe is registered to another account');
     }
   }

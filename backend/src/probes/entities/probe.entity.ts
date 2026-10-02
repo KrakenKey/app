@@ -40,7 +40,7 @@ export class Probe {
 
   /** Null for hosted probes (shared infra), set for connected probes via API key auth */
   @Column({ type: 'text', nullable: true })
-  userId?: string;
+  userId?: string | null;
 
   @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'userId' })

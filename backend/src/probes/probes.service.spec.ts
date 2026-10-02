@@ -169,12 +169,16 @@ describe('ProbesService', () => {
       );
     });
 
-    it("rejects a service key taking over a user's probe", async () => {
-      probeRepo.findOne.mockResolvedValue({ ...mockProbe });
+    it('lets a service key reclaim a probe row and clears its owner', async () => {
+      probeRepo.findOne.mockResolvedValue({ ...mockProbe, mode: 'hosted' });
 
-      await expect(
-        service.registerProbe({ ...dto, mode: 'hosted' }, serviceKeyUser),
-      ).rejects.toThrow(ForbiddenException);
+      const result = await service.registerProbe(
+        { ...dto, mode: 'hosted' },
+        serviceKeyUser,
+      );
+
+      expect(result.userId).toBeNull();
+      expect(result.mode).toBe('hosted');
     });
   });
 
@@ -228,6 +232,14 @@ describe('ProbesService', () => {
       ).rejects.toThrow(ForbiddenException);
       expect(scanResultRepo.save).not.toHaveBeenCalled();
       expect(endpointRepo.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it('accepts hosted reports from a service key even if the row has a stale owner', async () => {
+      probeRepo.findOne.mockResolvedValue({ ...mockProbe, mode: 'hosted' });
+
+      await expect(
+        service.submitReport({ ...dto, mode: 'hosted' }, serviceKeyUser),
+      ).resolves.toEqual({ accepted: 0 });
     });
 
     it("rejects reports for another user's probe", async () => {
