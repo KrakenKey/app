@@ -12,6 +12,7 @@ import {
 describe('Domains (e2e)', () => {
   let app: INestApplication;
   let unauthApp: INestApplication;
+  let viewerApp: INestApplication;
   let mockDomainsService: Record<string, jest.Mock>;
 
   beforeAll(async () => {
@@ -33,11 +34,35 @@ describe('Domains (e2e)', () => {
       providers: [{ provide: DomainsService, useValue: mockDomainsService }],
       guardMode: 'reject',
     }));
+
+    ({ app: viewerApp } = await createTestApp({
+      controllers: [DomainsController],
+      providers: [{ provide: DomainsService, useValue: mockDomainsService }],
+      orgRole: 'viewer',
+    }));
   });
 
   afterAll(async () => {
     await app.close();
     await unauthApp.close();
+    await viewerApp.close();
+  });
+
+  // ─── Org roles ────────────────────────────────────────────────────────────
+  describe('Org roles', () => {
+    it('POST /domains returns 403 for an org viewer', () =>
+      request(viewerApp.getHttpServer())
+        .post('/domains')
+        .send({ hostname: 'example.com' })
+        .expect(403));
+
+    it('DELETE /domains/:id returns 403 for an org viewer', () =>
+      request(viewerApp.getHttpServer())
+        .delete('/domains/domain-uuid-1')
+        .expect(403));
+
+    it('GET /domains is still allowed for an org viewer', () =>
+      request(viewerApp.getHttpServer()).get('/domains').expect(200));
   });
 
   // ─── Authentication ───────────────────────────────────────────────────────
