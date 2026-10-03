@@ -1,8 +1,10 @@
 import {
   ExecutionContext,
+  ForbiddenException,
   Logger,
   UnauthorizedException,
 } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { JwtOrApiKeyGuard } from './jwt-or-api-key.guard';
 import { MetricsService } from '../../metrics/metrics.service';
 
@@ -28,8 +30,8 @@ describe('JwtOrApiKeyGuard', () => {
   } as unknown as ExecutionContext;
 
   beforeEach(() => {
-    guard = new JwtOrApiKeyGuard(mockMetricsService);
     jest.restoreAllMocks();
+    guard = new JwtOrApiKeyGuard(mockMetricsService, new Reflector());
   });
 
   // ─── canActivate ──────────────────────────────────────────────────────────
@@ -64,6 +66,64 @@ describe('JwtOrApiKeyGuard', () => {
 
       await expect(guard.canActivate(mockContext)).rejects.toThrow();
       expect(logSpy).toHaveBeenCalledWith('Authentication guard failed', error);
+    });
+  });
+
+  // ─── @SessionOnly ─────────────────────────────────────────────────────────
+  describe('session-only routes', () => {
+    const contextFor = (user: object, sessionOnly: boolean) => {
+      const handler = () => undefined;
+      if (sessionOnly) Reflect.defineMetadata('sessionOnly', true, handler);
+      return {
+        ...mockContext,
+        switchToHttp: () => ({
+          getRequest: () => ({
+            url: '/auth/api-keys',
+            method: 'POST',
+            headers: {},
+            user,
+          }),
+          getResponse: () => ({}),
+        }),
+        getHandler: () => handler,
+        getClass: () => class {},
+      } as unknown as ExecutionContext;
+    };
+
+    beforeEach(() => {
+      jest
+        .spyOn(Object.getPrototypeOf(JwtOrApiKeyGuard.prototype), 'canActivate')
+        .mockResolvedValue(true);
+      jest.spyOn(Logger, 'warn').mockImplementation();
+      (mockMetricsService.authTotal.inc as jest.Mock).mockClear();
+    });
+
+    it('rejects an API key with 403', async () => {
+      await expect(
+        guard.canActivate(contextFor({ userId: 'u1', apiKeyId: 'k1' }, true)),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('allows a dashboard session', async () => {
+      await expect(
+        guard.canActivate(contextFor({ userId: 'u1' }, true)),
+      ).resolves.toBe(true);
+    });
+
+    it('allows an API key on routes without the decorator', async () => {
+      await expect(
+        guard.canActivate(contextFor({ userId: 'u1', apiKeyId: 'k1' }, false)),
+      ).resolves.toBe(true);
+    });
+
+    it('records the auth method from the authenticated user', async () => {
+      await guard.canActivate(
+        contextFor({ userId: 'u1', apiKeyId: 'k1' }, false),
+      );
+      expect(mockMetricsService.authTotal.inc).toHaveBeenCalledWith({
+        method: 'api-key',
+        status: 'success',
+      });
     });
   });
 

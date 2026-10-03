@@ -10,6 +10,8 @@ import {
   Body,
   Delete,
   Param,
+  ForbiddenException,
+  HttpCode,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -25,8 +27,15 @@ import type { RequestWithUser } from './interfaces/request-with-user.interface';
 import { JwtOrApiKeyGuard } from './guards/jwt-or-api-key.guard';
 import { CreateApiKeyDto } from './dto/create-api-key.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import {
+  CreateDeviceCodeDto,
+  DeviceTokenDto,
+  DeviceUserCodeDto,
+} from './dto/device-auth.dto';
+import { DeviceAuthService } from './services/device-auth.service';
 import { RateLimitCategoryDecorator } from '../throttler/decorators/rate-limit-category.decorator';
 import { RateLimitCategory } from '../throttler/interfaces/rate-limit-category.enum';
+import { SessionOnly } from './decorators/session-only.decorator';
 
 const OAUTH_STATE_COOKIE = 'oauth_state';
 const OAUTH_STATE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
@@ -35,7 +44,10 @@ const OAUTH_STATE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
 @ApiTags('Authentication')
 @RateLimitCategoryDecorator(RateLimitCategory.PUBLIC)
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly deviceAuthService: DeviceAuthService,
+  ) {}
 
   @Get('register')
   @ApiOperation({ summary: 'Redirect to registration' })
@@ -129,6 +141,7 @@ export class AuthController {
   }
 
   @Post('api-keys')
+  @SessionOnly()
   @UseGuards(JwtOrApiKeyGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create an API key' })
@@ -163,6 +176,7 @@ export class AuthController {
   }
 
   @Delete('api-keys/:id')
+  @SessionOnly()
   @UseGuards(JwtOrApiKeyGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Delete an API key' })
@@ -174,5 +188,103 @@ export class AuthController {
   async deleteApiKey(@Req() req: RequestWithUser, @Param('id') id: string) {
     await this.authService.deleteApiKey(req.user.userId, id);
     return { message: 'API key deleted' };
+  }
+
+  // ── CLI device login (krakenkey auth login --web) ──────────────────────
+
+  @Post('device/code')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Start a CLI browser login',
+    description:
+      'Returns a device code for the CLI to poll with and a user code for the user to approve in the dashboard.',
+  })
+  @ApiResponse({ status: 200, description: 'Device and user codes issued' })
+  async createDeviceCode(
+    @Req() req: Request,
+    @Body() dto: CreateDeviceCodeDto,
+  ) {
+    return this.deviceAuthService.createDeviceCode(
+      dto.clientName,
+      req.ip ?? '',
+    );
+  }
+
+  @Post('device/token')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Poll a CLI browser login',
+    description:
+      'Returns status pending, slow_down, denied or expired, or approved with a new API key. The key is returned once.',
+  })
+  @ApiResponse({ status: 200, description: 'Current login status' })
+  async pollDeviceToken(@Body() dto: DeviceTokenDto) {
+    return this.deviceAuthService.pollToken(dto.deviceCode);
+  }
+
+  @Get('device/:userCode')
+  @UseGuards(JwtOrApiKeyGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Show a pending CLI login before approving it' })
+  @ApiParam({ name: 'userCode', description: 'User code shown by the CLI' })
+  @ApiResponse({ status: 403, description: 'Called with an API key' })
+  @ApiResponse({ status: 404, description: 'Not found or expired' })
+  @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
+  async getDeviceRequest(
+    @Req() req: RequestWithUser,
+    @Param('userCode') userCode: string,
+  ) {
+    assertBrowserSession(req);
+    return this.deviceAuthService.getRequest(userCode);
+  }
+
+  @Post('device/approve')
+  @HttpCode(200)
+  @UseGuards(JwtOrApiKeyGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Approve a CLI login',
+    description:
+      'Creates an API key for the signed-in user and hands it to the waiting CLI. Requires a dashboard session; API keys cannot approve logins.',
+  })
+  @ApiResponse({ status: 402, description: 'API key limit reached' })
+  @ApiResponse({ status: 403, description: 'Called with an API key' })
+  @ApiResponse({ status: 404, description: 'Not found or expired' })
+  @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
+  async approveDevice(
+    @Req() req: RequestWithUser,
+    @Body() dto: DeviceUserCodeDto,
+  ) {
+    assertBrowserSession(req);
+    return this.deviceAuthService.approve(dto.userCode, req.user.userId);
+  }
+
+  @Post('device/deny')
+  @HttpCode(200)
+  @UseGuards(JwtOrApiKeyGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Deny a CLI login' })
+  @ApiResponse({ status: 403, description: 'Called with an API key' })
+  @ApiResponse({ status: 404, description: 'Not found or expired' })
+  @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
+  async denyDevice(
+    @Req() req: RequestWithUser,
+    @Body() dto: DeviceUserCodeDto,
+  ) {
+    assertBrowserSession(req);
+    await this.deviceAuthService.deny(dto.userCode);
+    return { message: 'Login request denied' };
+  }
+}
+
+/**
+ * Device logins must be approved by a person in the dashboard. An API key
+ * approving one would let any key mint further keys without a human.
+ */
+function assertBrowserSession(req: RequestWithUser): void {
+  if ((req.user as { apiKeyId?: string }).apiKeyId) {
+    throw new ForbiddenException(
+      'CLI logins must be approved from the dashboard',
+    );
   }
 }

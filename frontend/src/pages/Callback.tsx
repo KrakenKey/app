@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { Loader2 } from 'lucide-react';
+import { PENDING_DEVICE_CODE_KEY } from '../services/deviceAuthService';
 
 const Callback: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -23,6 +24,17 @@ const Callback: React.FC = () => {
       console.log('Starting callback processing...');
       handleCallback(code, state)
         .then(() => {
+          let deviceCode: string | null = null;
+          try {
+            deviceCode = sessionStorage.getItem(PENDING_DEVICE_CODE_KEY);
+            sessionStorage.removeItem(PENDING_DEVICE_CODE_KEY);
+          } catch {
+            // storage unavailable: fall through to the dashboard
+          }
+          if (deviceCode) {
+            navigate(`/device?code=${encodeURIComponent(deviceCode)}`);
+            return;
+          }
           console.log('Callback successful, navigating to dashboard');
           navigate('/dashboard');
         })
