@@ -46,7 +46,7 @@ test.describe('Billing — free plan user', () => {
 
     // Wait for the checkout API call
     await page.waitForTimeout(1000);
-    expect(checkoutCalled).toBe(true);
+    await expect.poll(() => checkoutCalled).toBe(true);
   });
 });
 
@@ -102,7 +102,7 @@ test.describe('Billing — starter plan user', () => {
     await page.getByRole('button', { name: /upgrade to team/i }).click();
     await page.getByRole('button', { name: /confirm/i }).click();
 
-    expect(upgradeCalled).toBe(true);
+    await expect.poll(() => upgradeCalled).toBe(true);
   });
 });
 

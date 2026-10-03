@@ -54,6 +54,6 @@ test.describe('Billing — org owner (full controls)', () => {
     await page.goto('/dashboard/billing');
     await page.getByRole('button', { name: /manage subscription/i }).click();
 
-    expect(portalCalled).toBe(true);
+    await expect.poll(() => portalCalled).toBe(true);
   });
 });
