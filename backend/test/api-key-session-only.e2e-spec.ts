@@ -5,6 +5,7 @@ import request from 'supertest';
 import { AuthController } from '../src/auth/auth.controller';
 import { AuthService } from '../src/auth/auth.service';
 import { ApiKeySecurityService } from '../src/auth/services/api-key-security.service';
+import { DeviceAuthService } from '../src/auth/services/device-auth.service';
 import { ApiKeyStrategy } from '../src/auth/strategies/api-key.strategy';
 import { JwtStrategy } from '../src/auth/strategies/jwt.strategy';
 import { ADMIN_GROUP } from '../src/auth/guards/admin.guard';
@@ -38,6 +39,7 @@ describe('API keys on session-only routes (e2e)', () => {
     update: jest.fn(),
   };
   const accountDeletion = { deleteAccount: jest.fn() };
+  const deviceAuth = { approve: jest.fn(), deny: jest.fn() };
 
   beforeAll(async () => {
     ({ app } = await createTestApp({
@@ -65,6 +67,7 @@ describe('API keys on session-only routes (e2e)', () => {
         },
         { provide: UsersService, useValue: usersService },
         { provide: AccountDeletionService, useValue: accountDeletion },
+        { provide: DeviceAuthService, useValue: deviceAuth },
       ],
     }));
   });
@@ -93,6 +96,17 @@ describe('API keys on session-only routes (e2e)', () => {
       .send({ name: 'replacement' })
       .expect(403);
     expect(authService.createApiKey).not.toHaveBeenCalled();
+  });
+
+  // Device login mints a key on approval, so a key approving one would be
+  // the same escalation by another route.
+  it('refuses to approve a CLI device login', async () => {
+    await request(app.getHttpServer())
+      .post('/auth/device/approve')
+      .set('Authorization', KEY)
+      .send({ userCode: 'BCDF-GHJK' })
+      .expect(403);
+    expect(deviceAuth.approve).not.toHaveBeenCalled();
   });
 
   it('refuses to delete a key', async () => {
