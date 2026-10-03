@@ -69,7 +69,7 @@ test.describe('Certificate management', () => {
     const renewBtn = page.getByRole('button', { name: /renew/i }).first();
     if (await renewBtn.isVisible()) {
       await renewBtn.click();
-      expect(renewCalled).toBe(true);
+      await expect.poll(() => renewCalled).toBe(true);
     }
   });
 
@@ -93,7 +93,7 @@ test.describe('Certificate management', () => {
     const revokeBtn = page.getByRole('button', { name: /revoke/i }).first();
     if (await revokeBtn.isVisible()) {
       await revokeBtn.click();
-      expect(revokeCalled).toBe(true);
+      await expect.poll(() => revokeCalled).toBe(true);
     }
   });
 
@@ -114,7 +114,7 @@ test.describe('Certificate management', () => {
     const deleteBtn = page.getByRole('button', { name: /delete/i }).first();
     if (await deleteBtn.isVisible()) {
       await deleteBtn.click();
-      expect(deleteCalled).toBe(true);
+      await expect.poll(() => deleteCalled).toBe(true);
     }
   });
 
@@ -132,7 +132,7 @@ test.describe('Certificate management', () => {
     const retryBtn = page.getByRole('button', { name: /retry/i }).first();
     if (await retryBtn.isVisible()) {
       await retryBtn.click();
-      expect(retryCalled).toBe(true);
+      await expect.poll(() => retryCalled).toBe(true);
     }
   });
 });

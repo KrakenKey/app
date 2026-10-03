@@ -47,7 +47,7 @@ test.describe('Settings', () => {
     await nameInput.fill('New Name');
     await page.getByRole('button', { name: /save/i }).first().click();
 
-    expect(patchCalled).toBe(true);
+    await expect.poll(() => patchCalled).toBe(true);
     expect(patchBody.displayName).toBe('New Name');
   });
 
@@ -76,7 +76,7 @@ test.describe('Settings', () => {
     const toggle = page.getByRole('switch').first();
     await toggle.click();
 
-    expect(patchCalled).toBe(true);
+    await expect.poll(() => patchCalled).toBe(true);
   });
 
   test('account deletion requires username confirmation', async ({ page }) => {

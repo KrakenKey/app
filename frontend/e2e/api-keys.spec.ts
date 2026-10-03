@@ -96,6 +96,6 @@ test.describe('API key management', () => {
       .first()
       .click();
 
-    expect(deleteCalled).toBe(true);
+    await expect.poll(() => deleteCalled).toBe(true);
   });
 });

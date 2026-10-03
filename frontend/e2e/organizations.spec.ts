@@ -68,7 +68,7 @@ test.describe('Organizations — eligible plan, no org yet', () => {
     await page.getByPlaceholder(/name/i).fill('My New Org');
     await page.getByRole('button', { name: /create/i }).click();
 
-    expect(createCalled).toBe(true);
+    await expect.poll(() => createCalled).toBe(true);
   });
 });
 
@@ -128,7 +128,7 @@ test.describe('Organizations — owner managing org', () => {
       .last()
       .click();
 
-    expect(inviteCalled).toBe(true);
+    await expect.poll(() => inviteCalled).toBe(true);
     expect(inviteBody.email).toBe('newuser@example.com');
   });
 
@@ -152,7 +152,7 @@ test.describe('Organizations — owner managing org', () => {
       .getByRole('button', { name: /remove/i })
       .click();
 
-    expect(removeCalled).toBe(true);
+    await expect.poll(() => removeCalled).toBe(true);
   });
 
   test('can rename the organization', async ({ page }) => {
@@ -176,7 +176,7 @@ test.describe('Organizations — owner managing org', () => {
     await nameInput.fill('Acme Inc');
     await page.getByRole('button', { name: /save/i }).click();
 
-    expect(renameCalled).toBe(true);
+    await expect.poll(() => renameCalled).toBe(true);
   });
 
   test('can transfer ownership', async ({ page }) => {
@@ -195,7 +195,7 @@ test.describe('Organizations — owner managing org', () => {
       .last()
       .click();
 
-    expect(transferCalled).toBe(true);
+    await expect.poll(() => transferCalled).toBe(true);
   });
 
   test('can delete the organization with confirmation', async ({ page }) => {
@@ -222,7 +222,7 @@ test.describe('Organizations — owner managing org', () => {
       .last()
       .click();
 
-    expect(deleteCalled).toBe(true);
+    await expect.poll(() => deleteCalled).toBe(true);
   });
 });
 
@@ -296,7 +296,7 @@ test.describe('Organizations — invite rejection', () => {
 
     // The API interceptor shows the error as a toast.
     // We verify the endpoint was called and returned 409.
-    expect(inviteStatus).toBe(409);
+    await expect.poll(() => inviteStatus).toBe(409);
   });
 });
 
