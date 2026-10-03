@@ -19,13 +19,7 @@ import { ModelPropertiesAccessor } from '@nestjs/swagger/dist/services/model-pro
 import { ApplicationConfig } from '@nestjs/core';
 import { createSwaggerConfig } from '../src/config/swagger.config';
 
-// ── Controllers ────────────────────────────────────────────────────
-import { AppController } from '../src/app.controller';
-import { AuthController } from '../src/auth/auth.controller';
-import { TlsController } from '../src/certs/tls/tls.controller';
-import { DomainsController } from '../src/domains/domains.controller';
-import { UsersController } from '../src/users/users.controller';
-// CertsController uses @ApiExcludeController, so skip it
+import { OPENAPI_CONTROLLERS } from '../src/config/openapi-controllers';
 
 const log = (msg: string) => process.stderr.write(msg + '\n');
 
@@ -43,13 +37,7 @@ function main() {
   log('Generating OpenAPI spec from controller metadata...');
 
   const config = createSwaggerConfig();
-  const controllers = [
-    AppController,
-    AuthController,
-    TlsController,
-    DomainsController,
-    UsersController,
-  ];
+  const controllers = OPENAPI_CONTROLLERS;
 
   const modelPropertiesAccessor = new ModelPropertiesAccessor();
   const swaggerTypesMapper = new SwaggerTypesMapper();
