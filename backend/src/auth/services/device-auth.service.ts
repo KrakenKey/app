@@ -4,6 +4,7 @@ import {
   Logger,
   NotFoundException,
   OnModuleDestroy,
+  OnModuleInit,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -48,7 +49,7 @@ interface DeviceRecord {
  * Unlike API key lockout, this fails closed: without Redis no login can start.
  */
 @Injectable()
-export class DeviceAuthService implements OnModuleDestroy {
+export class DeviceAuthService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(DeviceAuthService.name);
   private readonly redis: Redis;
   private readonly ttlSeconds: number;
@@ -83,6 +84,20 @@ export class DeviceAuthService implements OnModuleDestroy {
         );
       }
     });
+  }
+
+  /**
+   * Connect up front: with lazyConnect and no offline queue, the first
+   * command would otherwise fail before the connection is ready.
+   */
+  async onModuleInit() {
+    try {
+      await this.redis.connect();
+    } catch (err) {
+      this.logger.warn(
+        `Redis connect failed for device authorization: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   onModuleDestroy() {

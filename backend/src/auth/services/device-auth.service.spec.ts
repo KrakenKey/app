@@ -249,6 +249,22 @@ describe('DeviceAuthService', () => {
     });
   });
 
+  describe('onModuleInit', () => {
+    it('connects eagerly so the first request does not fail', async () => {
+      const connect = jest.fn().mockResolvedValue(undefined);
+      (service as any).redis = { connect };
+      await service.onModuleInit();
+      expect(connect).toHaveBeenCalled();
+    });
+
+    it('does not throw when Redis is down at startup', async () => {
+      (service as any).redis = {
+        connect: jest.fn().mockRejectedValue(new Error('down')),
+      };
+      await expect(service.onModuleInit()).resolves.toBeUndefined();
+    });
+  });
+
   describe('user codes', () => {
     it('generates 8 characters from the RFC 8628 alphabet', () => {
       for (let i = 0; i < 50; i++) {
