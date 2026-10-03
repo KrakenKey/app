@@ -8,6 +8,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Dates a
 
 ## [Unreleased]
 
+### Added
+- Certificates now carry a `failureReason`: the error message from the last failed issuance or renewal attempt, such as a missing `_acme-challenge` CNAME or a CAA refusal. It is returned by `GET /certs/tls` and `GET /certs/tls/:id`, shown on failed certificates in the dashboard, and cleared when the next attempt starts. Until now the reason only reached the owner by email, so API and CLI users saw a bare `failed`. Migration `AddCertFailureReason1778000000000` adds the nullable column.
+
 ### Fixed
 - The OpenAPI spec synced to krakenkey.io (`yarn openapi:export`) only scanned 5 controllers, so the published API reference was missing endpoint monitoring, probes, organizations, billing, feedback, health and public scan: 20 of 48 paths. The controller list now lives in `src/config/openapi-controllers.ts` and covers all 12 non-excluded controllers, matching the live `/swagger-json` operation for operation, and a unit test fails when a new controller is neither listed nor marked `@ApiExcludeController`.
 

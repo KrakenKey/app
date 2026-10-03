@@ -25,6 +25,8 @@ export interface TlsCert {
   renewalCount: number;
   lastRenewalAttemptAt: string | null;
   revocationReason: number | null;
+  /** Why the last issuance or renewal attempt failed; null otherwise. */
+  failureReason: string | null;
   revokedAt: string | null;
   createdAt: string;
   userId: string;
