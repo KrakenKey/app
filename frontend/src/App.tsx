@@ -6,6 +6,7 @@ import { DomainsProvider } from './context/DomainsContext';
 import { DashboardLayout } from './layouts/DashboardLayout';
 import Home from './pages/Home';
 import Callback from './pages/Callback';
+import Device from './pages/Device';
 import Overview from './pages/Overview';
 import Settings from './pages/Settings';
 import DomainManagement from './components/DomainManagement';
@@ -39,6 +40,7 @@ function AppRoutes() {
     <Routes>
       <Route path="/" element={<Home />} />
       <Route path="/auth/callback" element={<Callback />} />
+      <Route path="/device" element={<Device />} />
       <Route
         path="/dashboard"
         element={

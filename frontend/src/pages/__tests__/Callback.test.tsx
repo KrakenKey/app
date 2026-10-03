@@ -66,6 +66,17 @@ describe('Callback', () => {
     });
   });
 
+  it('returns to a pending CLI login after sign-in', async () => {
+    sessionStorage.setItem('kk_pending_device_code', 'BCDF-GHJK');
+    mockHandleCallback.mockResolvedValue(undefined);
+    render(<Callback />);
+
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith('/device?code=BCDF-GHJK');
+    });
+    expect(sessionStorage.getItem('kk_pending_device_code')).toBeNull();
+  });
+
   it('navigates to home on callback error', async () => {
     mockHandleCallback.mockRejectedValue(new Error('Auth failed'));
     render(<Callback />);

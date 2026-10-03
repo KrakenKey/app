@@ -3,6 +3,7 @@ import request from 'supertest';
 import { AuthGuard } from '@nestjs/passport/dist/auth.guard';
 import { AuthController } from '../src/auth/auth.controller';
 import { AuthService } from '../src/auth/auth.service';
+import { DeviceAuthService } from '../src/auth/services/device-auth.service';
 import { createTestApp } from './helpers/create-test-app';
 import { MOCK_USER } from './helpers/mock-data';
 
@@ -10,6 +11,7 @@ describe('Auth (e2e)', () => {
   let app: INestApplication;
   let unauthApp: INestApplication;
   let mockAuthService: Record<string, jest.Mock>;
+  let mockDeviceAuth: Record<string, jest.Mock>;
 
   beforeAll(async () => {
     mockAuthService = {
@@ -46,17 +48,39 @@ describe('Auth (e2e)', () => {
       updateProfile: jest.fn(),
     };
 
+    mockDeviceAuth = {
+      createDeviceCode: jest.fn().mockResolvedValue({
+        deviceCode: 'dc_mock',
+        userCode: 'BCDF-GHJK',
+        verificationUri: 'https://app.example.com/device',
+        verificationUriComplete:
+          'https://app.example.com/device?code=BCDF-GHJK',
+        expiresIn: 600,
+        interval: 5,
+      }),
+      pollToken: jest.fn().mockResolvedValue({ status: 'pending' }),
+      getRequest: jest.fn(),
+      approve: jest.fn().mockResolvedValue({ name: 'CLI login: build-01' }),
+      deny: jest.fn(),
+    };
+
     // Authenticated app — guards overridden
     ({ app } = await createTestApp({
       controllers: [AuthController],
-      providers: [{ provide: AuthService, useValue: mockAuthService }],
+      providers: [
+        { provide: AuthService, useValue: mockAuthService },
+        { provide: DeviceAuthService, useValue: mockDeviceAuth },
+      ],
       extraGuards: [AuthGuard('jwt')],
     }));
 
     // Unauthenticated app — guards always reject with 401
     ({ app: unauthApp } = await createTestApp({
       controllers: [AuthController],
-      providers: [{ provide: AuthService, useValue: mockAuthService }],
+      providers: [
+        { provide: AuthService, useValue: mockAuthService },
+        { provide: DeviceAuthService, useValue: mockDeviceAuth },
+      ],
       guardMode: 'reject',
       extraGuards: [AuthGuard('jwt')],
     }));
@@ -187,6 +211,60 @@ describe('Auth (e2e)', () => {
       request(unauthApp.getHttpServer())
         .post('/auth/api-keys')
         .send({ name: 'test' })
+        .expect(401));
+  });
+
+  // ─── CLI device login ────────────────────────────────────────────────────
+  describe('POST /auth/device/code', () => {
+    it('returns 200 with device and user codes without auth', () =>
+      request(unauthApp.getHttpServer())
+        .post('/auth/device/code')
+        .send({ clientName: 'build-01' })
+        .expect(200)
+        .expect((res) => {
+          expect(res.body.userCode).toBe('BCDF-GHJK');
+          expect(res.body.interval).toBe(5);
+        }));
+
+    it('rejects a client name with unexpected characters', () =>
+      request(unauthApp.getHttpServer())
+        .post('/auth/device/code')
+        .send({ clientName: '<script>' })
+        .expect(400));
+  });
+
+  describe('POST /auth/device/token', () => {
+    it('returns the login status without auth', () =>
+      request(unauthApp.getHttpServer())
+        .post('/auth/device/token')
+        .send({ deviceCode: 'dc_mock' })
+        .expect(200)
+        .expect({ status: 'pending' }));
+
+    it('requires a device code', () =>
+      request(unauthApp.getHttpServer())
+        .post('/auth/device/token')
+        .send({})
+        .expect(400));
+  });
+
+  describe('POST /auth/device/approve', () => {
+    it('approves for the signed-in user', () =>
+      request(app.getHttpServer())
+        .post('/auth/device/approve')
+        .send({ userCode: 'BCDF-GHJK' })
+        .expect(200)
+        .expect(() => {
+          expect(mockDeviceAuth.approve).toHaveBeenCalledWith(
+            'BCDF-GHJK',
+            MOCK_USER.userId,
+          );
+        }));
+
+    it('returns 401 when no auth token provided', () =>
+      request(unauthApp.getHttpServer())
+        .post('/auth/device/approve')
+        .send({ userCode: 'BCDF-GHJK' })
         .expect(401));
   });
 });

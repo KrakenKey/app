@@ -9,6 +9,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Dates a
 ## [Unreleased]
 
 ### Added
+- CLI browser login, modelled on the OAuth device authorization grant (RFC 8628). `POST /auth/device/code` starts a login and returns a user code and a `https://<app>/device?code=...` link. The user approves it on the new dashboard `/device` page, which shows the requesting client, IP and age, and that creates a regular `kk_` API key (`CLI login: <client>`, plan limits apply). The CLI polls `POST /auth/device/token` and receives the key once. Approval needs a dashboard session; API keys get 403. Requests live in Redis for 10 minutes, device codes are stored hashed, and signing in from the link returns to the approval page. See [ARCHITECTURE.md](../backend/docs/ARCHITECTURE.md#auth-module).
 - Certificates now carry a `failureReason`: the error message from the last failed issuance or renewal attempt, such as a missing `_acme-challenge` CNAME or a CAA refusal. It is returned by `GET /certs/tls` and `GET /certs/tls/:id`, shown on failed certificates in the dashboard, and cleared when the next attempt starts. Until now the reason only reached the owner by email, so API and CLI users saw a bare `failed`. Migration `AddCertFailureReason1778000000000` adds the nullable column.
 
 ### Fixed

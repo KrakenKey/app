@@ -29,6 +29,14 @@ export const API_ROUTES = {
     BASE: '/auth/api-keys',
     BY_ID: (id: string) => `/auth/api-keys/${id}`,
   },
+  DEVICE_AUTH: {
+    CODE: '/auth/device/code',
+    TOKEN: '/auth/device/token',
+    REQUEST: (userCode: string) =>
+      `/auth/device/${encodeURIComponent(userCode)}`,
+    APPROVE: '/auth/device/approve',
+    DENY: '/auth/device/deny',
+  },
   ENDPOINTS: {
     BASE: '/endpoints',
     BY_ID: (id: string) => `/endpoints/${id}`,
