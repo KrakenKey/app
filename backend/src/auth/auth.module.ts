@@ -6,6 +6,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { ApiKeyStrategy } from './strategies/api-key.strategy';
 import { ServiceKeyStrategy } from './strategies/service-key.strategy';
 import { ApiKeySecurityService } from './services/api-key-security.service';
+import { DeviceAuthService } from './services/device-auth.service';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { UserApiKey } from './entities/user-api-key.entity';
 import { ServiceApiKey } from './entities/service-api-key.entity';
@@ -24,6 +25,7 @@ import { BillingModule } from '../billing/billing.module';
   providers: [
     AuthService,
     ApiKeySecurityService,
+    DeviceAuthService,
     JwtStrategy,
     ApiKeyStrategy,
     ServiceKeyStrategy,

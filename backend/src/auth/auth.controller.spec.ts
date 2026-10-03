@@ -1,6 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AuthController } from './auth.controller';
+import { ForbiddenException } from '@nestjs/common';
 import { AuthService } from './auth.service';
+import { DeviceAuthService } from './services/device-auth.service';
 
 function mockRes(): Record<string, jest.Mock> {
   return {
@@ -13,6 +15,7 @@ function mockRes(): Record<string, jest.Mock> {
 describe('AuthController', () => {
   let controller: AuthController;
   let mockAuthService: Record<string, jest.Mock>;
+  let mockDeviceAuth: Record<string, jest.Mock>;
 
   const userId = 'user-123';
   const mockReq = { user: { userId } } as any;
@@ -29,12 +32,24 @@ describe('AuthController', () => {
       updateProfile: jest.fn(),
     };
 
+    mockDeviceAuth = {
+      createDeviceCode: jest.fn(),
+      pollToken: jest.fn(),
+      getRequest: jest.fn(),
+      approve: jest.fn(),
+      deny: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AuthController],
       providers: [
         {
           provide: AuthService,
           useValue: mockAuthService,
+        },
+        {
+          provide: DeviceAuthService,
+          useValue: mockDeviceAuth,
         },
       ],
     }).compile();
@@ -181,6 +196,58 @@ describe('AuthController', () => {
         'key-uuid',
       );
       expect(result).toEqual({ message: 'API key deleted' });
+    });
+  });
+
+  describe('device login', () => {
+    const apiKeyReq = { user: { userId, apiKeyId: 'key-1' } } as any;
+
+    it('starts a login with the client name and caller IP', async () => {
+      mockDeviceAuth.createDeviceCode.mockResolvedValue({
+        userCode: 'BCDF-GHJK',
+      });
+      await controller.createDeviceCode({ ip: '203.0.113.7' } as any, {
+        clientName: 'build-01',
+      });
+      expect(mockDeviceAuth.createDeviceCode).toHaveBeenCalledWith(
+        'build-01',
+        '203.0.113.7',
+      );
+    });
+
+    it('polls with the device code', async () => {
+      mockDeviceAuth.pollToken.mockResolvedValue({ status: 'pending' });
+      await expect(
+        controller.pollDeviceToken({ deviceCode: 'dc' }),
+      ).resolves.toEqual({ status: 'pending' });
+    });
+
+    it('approves for the signed-in user', async () => {
+      mockDeviceAuth.approve.mockResolvedValue({ name: 'CLI login: x' });
+      await controller.approveDevice(mockReq, { userCode: 'BCDF-GHJK' });
+      expect(mockDeviceAuth.approve).toHaveBeenCalledWith('BCDF-GHJK', userId);
+    });
+
+    it.each([
+      [
+        'approve',
+        (c: AuthController) =>
+          c.approveDevice(apiKeyReq, { userCode: 'BCDF-GHJK' }),
+      ],
+      [
+        'deny',
+        (c: AuthController) =>
+          c.denyDevice(apiKeyReq, { userCode: 'BCDF-GHJK' }),
+      ],
+      [
+        'view',
+        (c: AuthController) => c.getDeviceRequest(apiKeyReq, 'BCDF-GHJK'),
+      ],
+    ])('refuses to %s with an API key', async (_, call) => {
+      await expect(call(controller)).rejects.toThrow(ForbiddenException);
+      expect(mockDeviceAuth.approve).not.toHaveBeenCalled();
+      expect(mockDeviceAuth.deny).not.toHaveBeenCalled();
+      expect(mockDeviceAuth.getRequest).not.toHaveBeenCalled();
     });
   });
 });
