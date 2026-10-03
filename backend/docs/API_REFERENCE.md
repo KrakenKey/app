@@ -20,9 +20,18 @@ Authorization: Bearer <jwt_or_api_key>
 
 **JWT tokens** — Short-lived, obtained via Authentik OIDC login flow.
 
-**API keys** — Long-lived, prefixed with `kk_`. Created via the API or dashboard. The raw key is shown only once at creation time.
+**API keys** — Long-lived, prefixed with `kk_`. Created from a dashboard session. The raw key is shown only once at creation time.
 
 Both methods use the same header format. The backend tries JWT validation first, then falls back to API key validation.
+
+API keys work for domains, certificates and endpoints, but some routes only accept a dashboard session and return `403` for a key, so a leaked key can't mint a replacement or take the account over:
+
+- `POST /auth/api-keys`, `DELETE /auth/api-keys/:id`
+- `PATCH /users/:id`, `DELETE /users/:id`
+- `POST /organizations` and every organization change: members, roles, settings, deletion, ownership transfer
+- `POST /billing/checkout`, `POST /billing/portal`, `POST /billing/upgrade`
+
+Admin rights also need a session; an admin's API key acts as a regular user. The routes are marked with `@SessionOnly()` and enforced by `JwtOrApiKeyGuard`.
 
 ## Error Response Format
 

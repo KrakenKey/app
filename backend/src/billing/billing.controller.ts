@@ -24,6 +24,7 @@ import { JwtOrApiKeyGuard } from '../auth/guards/jwt-or-api-key.guard';
 import type { RequestWithUser } from '../auth/interfaces/request-with-user.interface';
 import { RateLimitCategoryDecorator } from '../throttler/decorators/rate-limit-category.decorator';
 import { RateLimitCategory } from '../throttler/interfaces/rate-limit-category.enum';
+import { SessionOnly } from '../auth/decorators/session-only.decorator';
 
 @Controller('billing')
 @ApiTags('Billing')
@@ -31,6 +32,7 @@ export class BillingController {
   constructor(private readonly billingService: BillingService) {}
 
   @Post('checkout')
+  @SessionOnly()
   @UseGuards(JwtOrApiKeyGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create a Stripe Checkout session' })
@@ -80,6 +82,7 @@ export class BillingController {
   }
 
   @Post('portal')
+  @SessionOnly()
   @UseGuards(JwtOrApiKeyGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create a Stripe Customer Portal session' })
@@ -111,6 +114,7 @@ export class BillingController {
   }
 
   @Post('upgrade')
+  @SessionOnly()
   @UseGuards(JwtOrApiKeyGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Upgrade subscription with proration' })

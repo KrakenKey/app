@@ -13,7 +13,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Dates a
 - Certificates now carry a `failureReason`: the error message from the last failed issuance or renewal attempt, such as a missing `_acme-challenge` CNAME or a CAA refusal. It is returned by `GET /certs/tls` and `GET /certs/tls/:id`, shown on failed certificates in the dashboard, and cleared when the next attempt starts. Until now the reason only reached the owner by email, so API and CLI users saw a bare `failed`. Migration `AddCertFailureReason1778000000000` adds the nullable column.
 
 ### Fixed
+- The `auth_total` metric counted every successful request as `jwt`: it looked for an `x-api-key` header that no client sends. It now reads the authenticated user, and failed attempts are classified by the `Bearer kk_` prefix.
 - The OpenAPI spec synced to krakenkey.io (`yarn openapi:export`) only scanned 5 controllers, so the published API reference was missing endpoint monitoring, probes, organizations, billing, feedback, health and public scan: 20 of 48 paths. The controller list now lives in `src/config/openapi-controllers.ts` and covers all 12 non-excluded controllers, matching the live `/swagger-json` operation for operation, and a unit test fails when a new controller is neither listed nor marked `@ApiExcludeController`.
+
+### Security
+- User API keys can no longer escalate. A key could create new keys (so a leaked key could mint a replacement and outlive its own revocation), delete keys, change the account email, delete the account, change organization ownership and membership, and start billing changes. Those routes now require a dashboard session and return `403` for an API key. Admin rights also need a session: an admin's key acts as a regular user. Keys keep working for domains, certificates, endpoints and the read-only account routes. See [API_REFERENCE.md](../backend/docs/API_REFERENCE.md#authentication).
 
 ---
 

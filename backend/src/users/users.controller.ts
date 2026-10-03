@@ -24,6 +24,7 @@ import { AdminGuard, isAdmin } from '../auth/guards/admin.guard';
 import type { RequestWithUser } from '../auth/interfaces/request-with-user.interface';
 import { RateLimitCategoryDecorator } from '../throttler/decorators/rate-limit-category.decorator';
 import { RateLimitCategory } from '../throttler/interfaces/rate-limit-category.enum';
+import { SessionOnly } from '../auth/decorators/session-only.decorator';
 
 @Controller('users')
 @ApiTags('Users')
@@ -60,6 +61,7 @@ export class UsersController {
   }
 
   @Patch(':id')
+  @SessionOnly()
   @ApiOperation({ summary: 'Update a user (own record or admin)' })
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({ status: 200, description: 'User updated' })
@@ -78,6 +80,7 @@ export class UsersController {
   }
 
   @Delete(':id')
+  @SessionOnly()
   @ApiOperation({
     summary: 'Delete a user account with cascade (own record or admin)',
   })

@@ -35,6 +35,7 @@ import {
 import { DeviceAuthService } from './services/device-auth.service';
 import { RateLimitCategoryDecorator } from '../throttler/decorators/rate-limit-category.decorator';
 import { RateLimitCategory } from '../throttler/interfaces/rate-limit-category.enum';
+import { SessionOnly } from './decorators/session-only.decorator';
 
 const OAUTH_STATE_COOKIE = 'oauth_state';
 const OAUTH_STATE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
@@ -140,6 +141,7 @@ export class AuthController {
   }
 
   @Post('api-keys')
+  @SessionOnly()
   @UseGuards(JwtOrApiKeyGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create an API key' })
@@ -174,6 +176,7 @@ export class AuthController {
   }
 
   @Delete('api-keys/:id')
+  @SessionOnly()
   @UseGuards(JwtOrApiKeyGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Delete an API key' })
