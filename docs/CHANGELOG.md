@@ -8,6 +8,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Dates a
 
 ## [Unreleased]
 
+### Fixed
+- The OpenAPI spec synced to krakenkey.io (`yarn openapi:export`) only scanned 5 controllers, so the published API reference was missing endpoint monitoring, probes, organizations, billing, feedback, health and public scan: 20 of 48 paths. The controller list now lives in `src/config/openapi-controllers.ts` and covers all 12 non-excluded controllers, matching the live `/swagger-json` operation for operation, and a unit test fails when a new controller is neither listed nor marked `@ApiExcludeController`.
+
 ---
 
 ## [2026-09-24] — Challenge Delegation Precheck, Queue Metrics
