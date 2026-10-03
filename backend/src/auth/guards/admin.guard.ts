@@ -2,7 +2,13 @@ import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
 
 export const ADMIN_GROUP = 'authentik Admins';
 
-export function isAdmin(user: { groups?: string[] }): boolean {
+// Admin is a dashboard-session privilege. An admin's API key acts as a
+// regular user, so a leaked key can't reach other accounts.
+export function isAdmin(user: {
+  groups?: string[];
+  apiKeyId?: string;
+}): boolean {
+  if (user?.apiKeyId) return false;
   return user?.groups?.includes(ADMIN_GROUP) ?? false;
 }
 

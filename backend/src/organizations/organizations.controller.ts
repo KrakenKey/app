@@ -30,6 +30,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import type { RequestWithUser } from '../auth/interfaces/request-with-user.interface';
 import { RateLimitCategoryDecorator } from '../throttler/decorators/rate-limit-category.decorator';
 import { RateLimitCategory } from '../throttler/interfaces/rate-limit-category.enum';
+import { SessionOnly } from '../auth/decorators/session-only.decorator';
 
 @Controller('organizations')
 @ApiTags('Organizations')
@@ -43,6 +44,7 @@ export class OrganizationsController {
    * Any authenticated user without an existing org may call this.
    */
   @Post()
+  @SessionOnly()
   @ApiOperation({ summary: 'Create a new organization' })
   @ApiResponse({ status: 201, description: 'Organization created' })
   @ApiResponse({ status: 409, description: 'User already belongs to an org' })
@@ -71,6 +73,7 @@ export class OrganizationsController {
    * Caller must be an owner or admin of the target org.
    */
   @Post(':id/members')
+  @SessionOnly()
   @ApiOperation({ summary: 'Invite a user to the organization' })
   @ApiParam({ name: 'id', description: 'Organization UUID' })
   @ApiResponse({ status: 201, description: 'Member invited' })
@@ -96,6 +99,7 @@ export class OrganizationsController {
    * Caller must be an owner or admin, or the member removing themselves.
    */
   @Delete(':id/members/:userId')
+  @SessionOnly()
   @ApiOperation({ summary: 'Remove a member from the organization' })
   @ApiParam({ name: 'id', description: 'Organization UUID' })
   @ApiParam({ name: 'userId', description: 'User ID to remove' })
@@ -118,6 +122,7 @@ export class OrganizationsController {
    * Caller must be owner or admin.
    */
   @Patch(':id')
+  @SessionOnly()
   @ApiOperation({ summary: 'Update organization' })
   @ApiParam({ name: 'id', description: 'Organization UUID' })
   @ApiResponse({ status: 200, description: 'Organization updated' })
@@ -135,6 +140,7 @@ export class OrganizationsController {
    * Delete the organization. Only the owner may do this.
    */
   @Delete(':id')
+  @SessionOnly()
   @ApiOperation({ summary: 'Delete organization' })
   @ApiParam({ name: 'id', description: 'Organization UUID' })
   @ApiResponse({ status: 204, description: 'Organization deleted' })
@@ -150,6 +156,7 @@ export class OrganizationsController {
    * Only the current owner may call this.
    */
   @Post(':id/transfer-ownership')
+  @SessionOnly()
   @ApiOperation({ summary: 'Transfer organization ownership' })
   @ApiParam({ name: 'id', description: 'Organization UUID' })
   @ApiResponse({ status: 201, description: 'Ownership transferred' })
@@ -172,6 +179,7 @@ export class OrganizationsController {
    * Caller must be owner or admin.
    */
   @Patch(':id/members/:userId')
+  @SessionOnly()
   @ApiOperation({ summary: "Update a member's role" })
   @ApiParam({ name: 'id', description: 'Organization UUID' })
   @ApiParam({ name: 'userId', description: 'User ID' })
