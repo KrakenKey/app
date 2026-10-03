@@ -1,0 +1,259 @@
+---
+# Dev deploys from PRs, the app side of infra-int's deploy flow:
+#
+#   PR opened / pushed  ─▶ set `deploy/dev-deployed` on the head commit: pending
+#                          if the PR changes an image, success if it doesn't
+#   label `deploy:dev`  ─▶ wait for this commit's image builds, have infra-int
+#                          deploy them to dev pinned to sha-<head>, wait for
+#                          that deploy, set `deploy/dev-deployed`, remove the label
+#   merge to main       ─▶ the image workflows only deploy prd if the merged
+#                          PR's head has `deploy/dev-deployed` = success
+#
+# Branch protection on main should require `deploy/dev-deployed`.
+# INFRA_DEPLOY_PAT needs Contents: write (to dispatch) and Actions: read (to
+# find and wait for the deploy run) on KrakenKey/infra-int.
+# PRs from forks get no secrets and a read-only token, so they can't deploy.
+name: Dev deploy
+
+"on":
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: read
+
+env:
+  DEV_DEPLOYED_CONTEXT: deploy/dev-deployed
+
+jobs:
+  changes:
+    name: Detect image changes
+    if: github.event.action != 'labeled' || github.event.label.name == 'deploy:dev'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
+    outputs:
+      backend: ${{ steps.diff.outputs.backend }}
+      frontend: ${{ steps.diff.outputs.frontend }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Diff against base
+        id: diff
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Keep in sync with the paths filters of the two image workflows.
+          changed=$(git diff --name-only "${BASE_SHA}...${HEAD_SHA}")
+          backend=false
+          frontend=false
+          if grep -qE '^(backend|shared)/|^\.github/workflows/backend-docker-publish\.yml$' <<<"$changed"; then
+            backend=true
+          fi
+          if grep -qE '^(frontend|shared)/|^\.github/workflows/frontend-docker-publish\.yml$' <<<"$changed"; then
+            frontend=true
+          fi
+          echo "backend=${backend}" >> "$GITHUB_OUTPUT"
+          echo "frontend=${frontend}" >> "$GITHUB_OUTPUT"
+          echo "Image changes: backend=${backend} frontend=${frontend}"
+
+      # A new head commit needs its own dev deploy; PRs that build no image
+      # pass straight away so the required status never blocks them.
+      - name: Reset dev-deployed status for this commit
+        if: >-
+          contains(fromJSON('["opened","synchronize","reopened"]'), github.event.action) &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BACKEND: ${{ steps.diff.outputs.backend }}
+          FRONTEND: ${{ steps.diff.outputs.frontend }}
+        run: |
+          if [[ $BACKEND == true || $FRONTEND == true ]]; then
+            state=pending
+            description="Add the deploy:dev label to deploy this commit to dev"
+          else
+            state=success
+            description="No app image changes"
+          fi
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" \
+            -f state="$state" -f context="$DEV_DEPLOYED_CONTEXT" -f description="$description" \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" >/dev/null
+
+  deploy:
+    name: Deploy to dev
+    needs: changes
+    if: >-
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'deploy:dev' &&
+      (needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true')
+    runs-on: ubuntu-latest
+    # One app PR on dev at a time; infra-int also queues per environment.
+    concurrency:
+      group: app-dev-deploy
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Wait for this commit's image builds
+        id: images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BACKEND: ${{ needs.changes.outputs.backend }}
+          FRONTEND: ${{ needs.changes.outputs.frontend }}
+        run: |
+          # The image workflows tag PR builds sha-<head commit>.
+          tag="sha-${HEAD_SHA:0:7}"
+          wait_build() {
+            local file=$1 run status conclusion url i
+            for ((i = 0; i < 120; i++)); do
+              run=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${file}/runs?head_sha=${HEAD_SHA}&event=pull_request&per_page=1" \
+                --jq '.workflow_runs[0] // empty | [.status, (.conclusion // "-"), .html_url] | @tsv')
+              if [[ -n $run ]]; then
+                IFS=$'\t' read -r status conclusion url <<<"$run"
+                if [[ $status == completed ]]; then
+                  if [[ $conclusion == success ]]; then
+                    echo "${file}: built ${tag} (${url})"
+                    return 0
+                  fi
+                  echo "::error::${file} ${conclusion} for ${HEAD_SHA:0:7}: ${url}"
+                  return 1
+                fi
+              fi
+              sleep 15
+            done
+            echo "::error::${file} didn't finish for ${HEAD_SHA:0:7} within 30 minutes"
+            return 1
+          }
+          if [[ $BACKEND == true ]]; then
+            wait_build backend-docker-publish.yml
+            echo "backend_tag=${tag}" >> "$GITHUB_OUTPUT"
+          fi
+          if [[ $FRONTEND == true ]]; then
+            wait_build frontend-docker-publish.yml
+            echo "frontend_tag=${tag}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # infra-int names the run "Deploy <run_key>", which is how the next
+      # step finds it: a dispatch doesn't return a run id.
+      - name: Ask infra-int to deploy to dev
+        id: dispatch
+        env:
+          GH_TOKEN: ${{ secrets.INFRA_DEPLOY_PAT }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BACKEND_TAG: ${{ steps.images.outputs.backend_tag }}
+          FRONTEND_TAG: ${{ steps.images.outputs.frontend_tag }}
+        run: |
+          key="app#${PR_NUMBER} ${HEAD_SHA:0:7} r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          jq -n --arg key "$key" --arg sha "$HEAD_SHA" --arg ref "$HEAD_REF" \
+            --arg backend "$BACKEND_TAG" --arg frontend "$FRONTEND_TAG" '{
+              event_type: "image-published",
+              client_payload: ({
+                image: "ghcr.io/krakenkey/app", sha: $sha, ref: $ref,
+                environment: "dev", run_key: $key
+              }
+              + (if $backend != "" then {backend_tag: $backend} else {} end)
+              + (if $frontend != "" then {frontend_tag: $frontend} else {} end))
+            }' | gh api -X POST repos/KrakenKey/infra-int/dispatches --input -
+          echo "title=Deploy ${key}" >> "$GITHUB_OUTPUT"
+          echo "Dispatched: Deploy ${key}"
+
+      - name: Wait for the dev deploy
+        env:
+          GH_TOKEN: ${{ secrets.INFRA_DEPLOY_PAT }}
+          TITLE: ${{ steps.dispatch.outputs.title }}
+        run: |
+          # Prints "id status conclusion" for the run, or nothing if it doesn't
+          # exist yet. On an API error, prints the error and fails.
+          runs() {
+            local out
+            if ! out=$(gh api "repos/KrakenKey/infra-int/actions/runs?event=repository_dispatch&per_page=30" \
+                --jq '.workflow_runs[] | select(.display_title == env.TITLE) | [.id, .status, (.conclusion // "-")] | @tsv' 2>&1); then
+              if grep -qE 'HTTP (403|404)' <<<"$out"; then
+                echo "::error::INFRA_DEPLOY_PAT can't read infra-int's Actions runs. Give it Actions: read on KrakenKey/infra-int."
+              else
+                echo "::error::Listing infra-int runs failed: ${out}"
+              fi
+              return 1
+            fi
+            head -1 <<<"$out"
+          }
+          # GitHub can take a little while to create the run.
+          run=""
+          for ((i = 0; i < 24; i++)); do
+            if ! run=$(runs); then echo "$run"; exit 1; fi
+            [[ -n $run ]] && break
+            sleep 5
+          done
+          if [[ -z $run ]]; then
+            echo "::error::No infra-int run named '${TITLE}' after 2 minutes"
+            exit 1
+          fi
+          IFS=$'\t' read -r id status conclusion <<<"$run"
+          echo "infra-int run ${id}: ${GITHUB_SERVER_URL}/KrakenKey/infra-int/actions/runs/${id}"
+          # Deploys queue per environment in infra-int, so allow for a wait.
+          for ((i = 0; i < 160; i++)); do
+            [[ $status == completed ]] && break
+            sleep 15
+            if ! run=$(runs); then echo "$run"; exit 1; fi
+            IFS=$'\t' read -r id status conclusion <<<"$run"
+          done
+          if [[ $status != completed ]]; then
+            echo "::error::infra-int run ${id} still ${status} after 40 minutes"
+            exit 1
+          fi
+          if [[ $conclusion != success ]]; then
+            echo "::error::infra-int dev deploy ${conclusion} (run ${id})"
+            exit 1
+          fi
+          echo "Deployed to dev."
+
+  record:
+    name: Record dev deploy
+    needs: [changes, deploy]
+    if: >-
+      always() &&
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'deploy:dev'
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Set dev-deployed status and remove the label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          CHANGES: ${{ needs.changes.result }}
+          BACKEND: ${{ needs.changes.outputs.backend }}
+          FRONTEND: ${{ needs.changes.outputs.frontend }}
+          RESULT: ${{ needs.deploy.result }}
+        run: |
+          if [[ $CHANGES != success ]]; then
+            state=failure; description="Change detection ${CHANGES}; re-add deploy:dev"
+          elif [[ $BACKEND != true && $FRONTEND != true ]]; then
+            state=success; description="No app image changes"
+          elif [[ $RESULT == success ]]; then
+            state=success; description="Deployed to dev at ${HEAD_SHA:0:7}"
+          else
+            state=failure; description="Dev deploy ${RESULT}; fix it and re-add deploy:dev"
+          fi
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" \
+            -f state="$state" -f context="$DEV_DEPLOYED_CONTEXT" -f description="$description" \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" >/dev/null
+          # Removing the label lets it be re-added to deploy again. Label changes
+          # made with GITHUB_TOKEN don't trigger workflows, so this can't loop.
+          gh pr edit "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --remove-label "deploy:dev"
+          echo "$state: $description"
