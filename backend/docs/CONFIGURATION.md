@@ -41,6 +41,8 @@ Complete reference for all environment variables used by the KrakenKey backend a
 | `KK_BULLMQ_HOST` | Yes | — | Redis hostname (e.g. `krakenkey-redis-dev` in Docker) |
 | `KK_BULLMQ_PORT` | No | `6379` | Redis port |
 | `KK_BULLMQ_PASSWORD` | No | — | Redis password (leave empty if no auth) |
+| `KK_DEVICE_AUTH_TTL_SEC` | No | `600` | Lifetime of a CLI browser login request (`krakenkey auth login --web`) |
+| `KK_DEVICE_AUTH_INTERVAL_SEC` | No | `5` | Minimum seconds between CLI polls for a browser login |
 
 ### DNS Provider
 
