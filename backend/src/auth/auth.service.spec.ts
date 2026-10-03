@@ -3,7 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { scryptSync } from 'crypto';
 import { NotFoundException, UnauthorizedException } from '@nestjs/common';
-import { AuthService } from './auth.service';
+import { AuthService, REVOKED_KEY_RETENTION_DAYS } from './auth.service';
+import { IsNull } from 'typeorm';
 import { UserApiKey } from './entities/user-api-key.entity';
 import { ServiceApiKey } from './entities/service-api-key.entity';
 import { User } from '../users/entities/user.entity';
@@ -36,6 +37,7 @@ describe('AuthService', () => {
     findOne: jest.Mock;
     find: jest.Mock;
     delete: jest.Mock;
+    update: jest.Mock;
     count: jest.Mock;
   };
   let mockUserRepo: { findOne: jest.Mock; create: jest.Mock; save: jest.Mock };
@@ -52,6 +54,7 @@ describe('AuthService', () => {
       findOne: jest.fn(),
       find: jest.fn(),
       delete: jest.fn(),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
       count: jest.fn().mockResolvedValue(0),
     };
     mockUserRepo = {
@@ -406,6 +409,77 @@ describe('AuthService', () => {
       expect(await service.validateApiKey('kk_raw')).toBe(record);
     });
 
+    it('returns null for a revoked key without recording use', async () => {
+      mockUserApiKeyRepo.findOne.mockResolvedValue({
+        id: 'key-1',
+        hash: 'h',
+        revokedAt: new Date(Date.now() - 1000),
+        user: { id: 'user-1' },
+      });
+
+      expect(
+        await service.validateApiKey('kk_revoked', { ip: '10.0.0.1' }),
+      ).toBeNull();
+      expect(mockUserApiKeyRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('records lastUsedAt and lastUsedIp on success', async () => {
+      mockUserApiKeyRepo.findOne.mockResolvedValue({
+        id: 'key-1',
+        hash: 'h',
+        lastUsedAt: null,
+        user: { id: 'user-1' },
+      });
+
+      await service.validateApiKey('kk_raw', { ip: '10.0.0.1' });
+
+      expect(mockUserApiKeyRepo.update).toHaveBeenCalledWith('key-1', {
+        lastUsedAt: expect.any(Date),
+        lastUsedIp: '10.0.0.1',
+      });
+    });
+
+    it('skips the write for a repeat use from the same IP within a minute', async () => {
+      mockUserApiKeyRepo.findOne.mockResolvedValue({
+        id: 'key-1',
+        hash: 'h',
+        lastUsedAt: new Date(Date.now() - 10_000),
+        lastUsedIp: '10.0.0.1',
+        user: { id: 'user-1' },
+      });
+
+      await service.validateApiKey('kk_raw', { ip: '10.0.0.1' });
+
+      expect(mockUserApiKeyRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('writes again within a minute when the IP changes', async () => {
+      mockUserApiKeyRepo.findOne.mockResolvedValue({
+        id: 'key-1',
+        hash: 'h',
+        lastUsedAt: new Date(Date.now() - 10_000),
+        lastUsedIp: '10.0.0.1',
+        user: { id: 'user-1' },
+      });
+
+      await service.validateApiKey('kk_raw', { ip: '10.0.0.2' });
+
+      expect(mockUserApiKeyRepo.update).toHaveBeenCalledWith('key-1', {
+        lastUsedAt: expect.any(Date),
+        lastUsedIp: '10.0.0.2',
+      });
+    });
+
+    it('still authenticates when recording use fails', async () => {
+      const record = { id: 'key-1', hash: 'h', user: { id: 'user-1' } };
+      mockUserApiKeyRepo.findOne.mockResolvedValue(record);
+      mockUserApiKeyRepo.update.mockRejectedValue(new Error('db down'));
+
+      expect(await service.validateApiKey('kk_raw', { ip: '10.0.0.1' })).toBe(
+        record,
+      );
+    });
+
     it('returns null when no matching key is found', async () => {
       mockUserApiKeyRepo.findOne.mockResolvedValue(null);
 
@@ -502,19 +576,35 @@ describe('AuthService', () => {
   // listApiKeys
   // ---------------------------------------------------------------------------
   describe('listApiKeys', () => {
-    it('returns keys for the specified user with ISO string dates', async () => {
+    const select = [
+      'id',
+      'name',
+      'createdAt',
+      'expiresAt',
+      'revokedAt',
+      'lastUsedAt',
+      'lastUsedIp',
+    ];
+
+    it('returns active keys for the user with ISO string dates', async () => {
       const keys = [
         {
           id: 'k1',
           name: 'key1',
           createdAt: new Date('2026-01-01'),
           expiresAt: null,
+          revokedAt: null,
+          lastUsedAt: new Date('2026-03-01'),
+          lastUsedIp: '10.0.0.1',
         },
         {
           id: 'k2',
           name: 'key2',
           createdAt: new Date('2026-02-01'),
           expiresAt: new Date('2027-01-01'),
+          revokedAt: null,
+          lastUsedAt: null,
+          lastUsedIp: null,
         },
       ];
       mockUserApiKeyRepo.find.mockResolvedValue(keys);
@@ -522,9 +612,9 @@ describe('AuthService', () => {
       const result = await service.listApiKeys('user-1');
 
       expect(mockUserApiKeyRepo.find).toHaveBeenCalledWith({
-        where: { userId: 'user-1' },
+        where: { userId: 'user-1', revokedAt: IsNull() },
         order: { createdAt: 'DESC' },
-        select: ['id', 'name', 'createdAt', 'expiresAt'],
+        select,
       });
       expect(result).toEqual([
         {
@@ -532,14 +622,48 @@ describe('AuthService', () => {
           name: 'key1',
           createdAt: '2026-01-01T00:00:00.000Z',
           expiresAt: null,
+          revokedAt: null,
+          lastUsedAt: '2026-03-01T00:00:00.000Z',
+          lastUsedIp: '10.0.0.1',
         },
         {
           id: 'k2',
           name: 'key2',
           createdAt: '2026-02-01T00:00:00.000Z',
           expiresAt: '2027-01-01T00:00:00.000Z',
+          revokedAt: null,
+          lastUsedAt: null,
+          lastUsedIp: null,
         },
       ]);
+    });
+
+    it('adds recently revoked keys with includeRevoked', async () => {
+      mockUserApiKeyRepo.find.mockResolvedValue([
+        {
+          id: 'k1',
+          name: 'key1',
+          createdAt: new Date('2026-01-01'),
+          expiresAt: null,
+          revokedAt: new Date('2026-02-01'),
+          lastUsedAt: null,
+          lastUsedIp: null,
+        },
+      ]);
+
+      const result = await service.listApiKeys('user-1', {
+        includeRevoked: true,
+      });
+
+      const { where } = mockUserApiKeyRepo.find.mock.calls[0][0];
+      expect(where).toEqual([
+        { userId: 'user-1', revokedAt: IsNull() },
+        { userId: 'user-1', revokedAt: expect.anything() },
+      ]);
+      const cutoff = (where[1].revokedAt as { value: Date }).value;
+      const days = (Date.now() - cutoff.getTime()) / 86_400_000;
+      expect(Math.round(days)).toBe(REVOKED_KEY_RETENTION_DAYS);
+      expect(result[0].revokedAt).toBe('2026-02-01T00:00:00.000Z');
     });
 
     it('returns empty array when user has no keys', async () => {
@@ -550,32 +674,49 @@ describe('AuthService', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // deleteApiKey
+  // revokeApiKey
   // ---------------------------------------------------------------------------
-  describe('deleteApiKey', () => {
-    it('deletes the key when it exists and belongs to the user', async () => {
-      mockUserApiKeyRepo.delete.mockResolvedValue({ affected: 1 });
+  describe('revokeApiKey', () => {
+    it('sets revokedAt on an active key owned by the user', async () => {
+      mockUserApiKeyRepo.update.mockResolvedValue({ affected: 1 });
       await expect(
-        service.deleteApiKey('user-1', 'key-1'),
+        service.revokeApiKey('user-1', 'key-1'),
       ).resolves.toBeUndefined();
-      expect(mockUserApiKeyRepo.delete).toHaveBeenCalledWith({
-        id: 'key-1',
-        userId: 'user-1',
-      });
+      expect(mockUserApiKeyRepo.update).toHaveBeenCalledWith(
+        { id: 'key-1', userId: 'user-1', revokedAt: IsNull() },
+        { revokedAt: expect.any(Date) },
+      );
+      expect(mockUserApiKeyRepo.delete).not.toHaveBeenCalled();
     });
 
     it('throws NotFoundException when key does not exist', async () => {
-      mockUserApiKeyRepo.delete.mockResolvedValue({ affected: 0 });
+      mockUserApiKeyRepo.update.mockResolvedValue({ affected: 0 });
       await expect(
-        service.deleteApiKey('user-1', 'nonexistent'),
+        service.revokeApiKey('user-1', 'nonexistent'),
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('throws NotFoundException when key belongs to another user', async () => {
-      mockUserApiKeyRepo.delete.mockResolvedValue({ affected: 0 });
+    it('throws NotFoundException when key belongs to another user or is already revoked', async () => {
+      mockUserApiKeyRepo.update.mockResolvedValue({ affected: 0 });
       await expect(
-        service.deleteApiKey('user-2', 'key-of-user-1'),
+        service.revokeApiKey('user-2', 'key-of-user-1'),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // purgeRevokedApiKeys
+  // ---------------------------------------------------------------------------
+  describe('purgeRevokedApiKeys', () => {
+    it('deletes keys revoked before the retention cutoff', async () => {
+      mockUserApiKeyRepo.delete.mockResolvedValue({ affected: 2 });
+
+      await service.purgeRevokedApiKeys();
+
+      const arg = mockUserApiKeyRepo.delete.mock.calls[0][0];
+      const cutoff = (arg.revokedAt as { value: Date }).value;
+      const days = (Date.now() - cutoff.getTime()) / 86_400_000;
+      expect(Math.round(days)).toBe(REVOKED_KEY_RETENTION_DAYS);
     });
   });
 });

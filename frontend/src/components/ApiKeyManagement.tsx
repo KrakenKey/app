@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Key, Plus, Trash2, Copy, AlertTriangle } from 'lucide-react';
+import { Key, Plus, Ban, Copy, AlertTriangle } from 'lucide-react';
 import { toast } from '../utils/toast';
 import type { ApiKey } from '@krakenkey/shared';
 import { getExpirationBadge } from '../utils/expiration';
@@ -18,7 +18,7 @@ export default function ApiKeyManagement() {
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
-  const deletingIds = useActionSet<string>();
+  const revokingIds = useActionSet<string>();
   const [newKeyName, setNewKeyName] = useState('');
   const [newKeyExpiry, setNewKeyExpiry] = useState('');
   const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
@@ -65,26 +65,31 @@ export default function ApiKeyManagement() {
     }
   };
 
-  const handleDelete = async (key: ApiKey) => {
+  const handleRevoke = async (key: ApiKey) => {
     if (
       !confirm(
-        `Are you sure you want to delete API key "${key.name}"? This cannot be undone.`,
+        `Revoke API key "${key.name}"? Anything using it stops working immediately. This cannot be undone.`,
       )
     ) {
       return;
     }
 
     try {
-      deletingIds.add(key.id);
-      await apiKeyService.deleteApiKey(key.id);
-      toast.success(`API key "${key.name}" deleted.`);
-      setKeys((prev) => prev.filter((k) => k.id !== key.id));
+      revokingIds.add(key.id);
+      await apiKeyService.revokeApiKey(key.id);
+      toast.success(`API key "${key.name}" revoked.`);
+      const revokedAt = new Date().toISOString();
+      setKeys((prev) =>
+        prev.map((k) => (k.id === key.id ? { ...k, revokedAt } : k)),
+      );
     } catch (error) {
-      console.error('Failed to delete API key:', error);
+      console.error('Failed to revoke API key:', error);
     } finally {
-      deletingIds.remove(key.id);
+      revokingIds.remove(key.id);
     }
   };
+
+  const activeCount = keys.filter((k) => k.revokedAt === null).length;
 
   const handleCopyKey = () => {
     if (newlyCreatedKey) {
@@ -181,7 +186,7 @@ export default function ApiKeyManagement() {
       {/* Keys List */}
       <Card>
         <h3 className="text-sm font-medium text-zinc-400 mb-4">
-          Your API Keys ({keys.length})
+          Your API Keys ({activeCount})
         </h3>
 
         {keys.length === 0 ? (
@@ -195,14 +200,19 @@ export default function ApiKeyManagement() {
             <TableHeader>
               <TableHead>Name</TableHead>
               <TableHead>Created</TableHead>
+              <TableHead>Last used</TableHead>
               <TableHead>Expires</TableHead>
               <TableHead>Actions</TableHead>
             </TableHeader>
             <tbody>
               {keys.map((key) => {
                 const expBadge = getExpirationBadge(key.expiresAt);
+                const revoked = key.revokedAt !== null;
                 return (
-                  <TableRow key={key.id}>
+                  <TableRow
+                    key={key.id}
+                    className={revoked ? 'opacity-60' : undefined}
+                  >
                     <TableCell className="font-medium text-zinc-200">
                       {key.name}
                     </TableCell>
@@ -210,24 +220,54 @@ export default function ApiKeyManagement() {
                       {new Date(key.createdAt).toLocaleDateString()}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={expBadge.variant}>{expBadge.label}</Badge>
+                      {key.lastUsedAt ? (
+                        <span title={new Date(key.lastUsedAt).toLocaleString()}>
+                          {new Date(key.lastUsedAt).toLocaleDateString()}
+                          {key.lastUsedIp && (
+                            <span className="block text-xs text-zinc-500 font-mono">
+                              {key.lastUsedIp}
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="text-zinc-500">Never</span>
+                      )}
                     </TableCell>
                     <TableCell>
-                      <Button
-                        size="sm"
-                        variant="danger"
-                        icon={<Trash2 className="w-3.5 h-3.5" />}
-                        onClick={() => handleDelete(key)}
-                        disabled={deletingIds.has(key.id)}
-                      >
-                        {deletingIds.has(key.id) ? 'Deleting...' : 'Delete'}
-                      </Button>
+                      {revoked ? (
+                        <Badge variant="danger">
+                          Revoked{' '}
+                          {new Date(key.revokedAt!).toLocaleDateString()}
+                        </Badge>
+                      ) : (
+                        <Badge variant={expBadge.variant}>
+                          {expBadge.label}
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {!revoked && (
+                        <Button
+                          size="sm"
+                          variant="danger"
+                          icon={<Ban className="w-3.5 h-3.5" />}
+                          onClick={() => handleRevoke(key)}
+                          disabled={revokingIds.has(key.id)}
+                        >
+                          {revokingIds.has(key.id) ? 'Revoking...' : 'Revoke'}
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 );
               })}
             </tbody>
           </Table>
+        )}
+        {keys.length > activeCount && (
+          <p className="text-xs text-zinc-500 mt-3">
+            Revoked keys stay listed for 30 days.
+          </p>
         )}
       </Card>
     </div>

@@ -76,6 +76,7 @@ Handles authentication via Authentik OIDC, JWT validation, and API key managemen
 **Key behaviors**:
 - JIT user provisioning on first OIDC callback
 - API keys hashed with scrypt using `KK_HMAC_SECRET` as salt
+- Deleting a user API key revokes it (`revokedAt`); revoked rows are purged daily after 30 days. Successful key auth records `lastUsedAt`/`lastUsedIp`, written at most once a minute per key unless the IP changes
 - Service key auto-seeded from `KK_PROBE_API_KEY` env var on startup
 
 **CLI browser login (device flow)**, modelled on RFC 8628:
