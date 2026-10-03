@@ -59,7 +59,7 @@ class FakeRedis {
 describe('DeviceAuthService', () => {
   let service: DeviceAuthService;
   let redis: FakeRedis;
-  let authService: { createApiKey: jest.Mock; deleteApiKey: jest.Mock };
+  let authService: { createApiKey: jest.Mock; assertApiKeyLimit: jest.Mock };
 
   const config = {
     get: jest.fn((key: string, def?: string) =>
@@ -72,7 +72,7 @@ describe('DeviceAuthService', () => {
       createApiKey: jest
         .fn()
         .mockResolvedValue({ apiKey: 'kk_secret', id: 'key-1', name: 'n' }),
-      deleteApiKey: jest.fn().mockResolvedValue(undefined),
+      assertApiKeyLimit: jest.fn().mockResolvedValue(undefined),
     };
     service = new DeviceAuthService(
       config,
@@ -120,7 +120,7 @@ describe('DeviceAuthService', () => {
   });
 
   describe('full flow', () => {
-    it('delivers the API key once after approval', async () => {
+    it('creates the key when the CLI collects it and delivers it once', async () => {
       const { deviceCode, userCode } = await start();
 
       expect(await service.pollToken(deviceCode)).toEqual({
@@ -135,10 +135,10 @@ describe('DeviceAuthService', () => {
       });
 
       await service.approve(userCode, 'user-1');
-      expect(authService.createApiKey).toHaveBeenCalledWith(
-        'user-1',
-        'CLI login: build-01',
-      );
+      expect(authService.assertApiKeyLimit).toHaveBeenCalledWith('user-1');
+      // Approval stores who approved, never a key.
+      expect(authService.createApiKey).not.toHaveBeenCalled();
+      expect(JSON.stringify([...redis.store.values()])).not.toContain('kk_');
 
       advance(5);
       expect(await service.pollToken(deviceCode)).toEqual({
@@ -147,14 +147,18 @@ describe('DeviceAuthService', () => {
         id: 'key-1',
         name: 'n',
       });
+      expect(authService.createApiKey).toHaveBeenCalledTimes(1);
+      expect(authService.createApiKey).toHaveBeenCalledWith(
+        'user-1',
+        'CLI login: build-01',
+      );
 
       advance(5);
       expect(await service.pollToken(deviceCode)).toEqual({
         status: 'expired',
       });
-      expect(JSON.stringify([...redis.store.values()])).not.toContain(
-        'kk_secret',
-      );
+      expect(authService.createApiKey).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify([...redis.store.values()])).not.toContain('kk_');
     });
 
     it('reports denied once and then expired', async () => {
@@ -193,6 +197,21 @@ describe('DeviceAuthService', () => {
       );
     });
 
+    it('surfaces a plan limit hit after approval to the CLI', async () => {
+      const { deviceCode, userCode } = await start();
+      await service.approve(userCode, 'user-1');
+      authService.createApiKey.mockRejectedValueOnce(
+        new HttpException('API key limit reached', 402),
+      );
+      await expect(service.pollToken(deviceCode)).rejects.toThrow(
+        'API key limit reached',
+      );
+      advance(5);
+      expect(await service.pollToken(deviceCode)).toEqual({
+        status: 'expired',
+      });
+    });
+
     it('returns expired for an unknown device code', async () => {
       expect(await service.pollToken('nope')).toEqual({ status: 'expired' });
     });
@@ -205,17 +224,16 @@ describe('DeviceAuthService', () => {
       await expect(service.approve(userCode, 'user-1')).rejects.toThrow(
         NotFoundException,
       );
-      expect(authService.createApiKey).toHaveBeenCalledTimes(1);
+      expect(authService.assertApiKeyLimit).toHaveBeenCalledTimes(1);
     });
 
     it('blocks a concurrent second approval', async () => {
       const { userCode } = await start();
       let release!: () => void;
-      authService.createApiKey.mockImplementationOnce(
+      authService.assertApiKeyLimit.mockImplementationOnce(
         () =>
-          new Promise((resolve) => {
-            release = () =>
-              resolve({ apiKey: 'kk_secret', id: 'key-1', name: 'n' });
+          new Promise<void>((resolve) => {
+            release = () => resolve();
           }),
       );
       const first = service.approve(userCode, 'user-1');
@@ -225,12 +243,12 @@ describe('DeviceAuthService', () => {
       );
       release();
       await first;
-      expect(authService.createApiKey).toHaveBeenCalledTimes(1);
+      expect(authService.assertApiKeyLimit).toHaveBeenCalledTimes(1);
     });
 
-    it('lets the user retry after a plan limit error', async () => {
+    it('shows a plan limit on the approval page and allows a retry', async () => {
       const { userCode } = await start();
-      authService.createApiKey.mockRejectedValueOnce(
+      authService.assertApiKeyLimit.mockRejectedValueOnce(
         new HttpException('API key limit reached', 402),
       );
       await expect(service.approve(userCode, 'user-1')).rejects.toThrow(

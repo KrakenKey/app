@@ -248,7 +248,33 @@ export class AuthService implements OnModuleInit {
    * The raw key is returned only once - it cannot be retrieved later.
    */
   async createApiKey(userId: string, name: string, expiresAt?: string) {
-    // Plan-based API key limit check (pooled across org members)
+    await this.assertApiKeyLimit(userId);
+
+    const rawKey = `kk_${randomBytes(24).toString('hex')}`;
+    const hash = this.hashKey(rawKey);
+
+    const apiKey = this.userApiKeyRepo.create({
+      name,
+      hash,
+      user: { id: userId },
+      ...(expiresAt ? { expiresAt: new Date(expiresAt) } : {}),
+    });
+    await this.userApiKeyRepo.save(apiKey);
+
+    const response: CreateApiKeyResponse = {
+      apiKey: rawKey,
+      id: apiKey.id,
+      name: apiKey.name,
+    };
+    return response;
+  }
+
+  /**
+   * Throws 402 when the user's plan has no API key slots left (pooled across
+   * org members). Device login calls this at approval so the dashboard can
+   * show the error, before the key is created.
+   */
+  async assertApiKeyLimit(userId: string): Promise<void> {
     const plan = (await this.billingService.resolveUserTier(
       userId,
     )) as SubscriptionPlan;
@@ -271,24 +297,6 @@ export class AuthService implements OnModuleInit {
         );
       }
     }
-
-    const rawKey = `kk_${randomBytes(24).toString('hex')}`;
-    const hash = this.hashKey(rawKey);
-
-    const apiKey = this.userApiKeyRepo.create({
-      name,
-      hash,
-      user: { id: userId },
-      ...(expiresAt ? { expiresAt: new Date(expiresAt) } : {}),
-    });
-    await this.userApiKeyRepo.save(apiKey);
-
-    const response: CreateApiKeyResponse = {
-      apiKey: rawKey,
-      id: apiKey.id,
-      name: apiKey.name,
-    };
-    return response;
   }
 
   /**

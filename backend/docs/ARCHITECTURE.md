@@ -82,10 +82,10 @@ Handles authentication via Authentik OIDC, JWT validation, and API key managemen
 
 1. The CLI calls `POST /auth/device/code` (no auth) and gets a 256-bit device code plus an 8-character user code such as `BCDF-GHJK`, and a link to `https://<KK_APP_DOMAIN>/device?code=...`.
 2. The user opens the link while signed in to the dashboard. The page shows the user code, client name, requesting IP and age (`GET /auth/device/:userCode`), and the user approves or denies.
-3. Approval (`POST /auth/device/approve`) creates a normal `kk_` API key named `CLI login: <client>` through `AuthService.createApiKey`, so plan key limits apply and the key shows up under API Keys.
-4. The CLI polls `POST /auth/device/token` every `interval` seconds and receives the key once; later polls return `expired`.
+3. Approval (`POST /auth/device/approve`) checks the plan's API key limit, so a full plan shows a 402 on the page, and records who approved. It does not create a key.
+4. The CLI polls `POST /auth/device/token` every `interval` seconds. The poll that finds the request approved removes it with `GETDEL` and creates a normal `kk_` API key named `CLI login: <client>` for the approving user through `AuthService.createApiKey`, then returns it. Later polls return `expired`.
 
-Approve, deny and lookup require a dashboard (JWT) session; an API key gets 403, so a key can't mint further keys without a person. State lives in Redis under `device-auth:` with a 10-minute TTL. Device codes are stored as SHA-256 hashes, and the raw API key sits in Redis only between approval and the CLI's next poll. Unlike API key lockout, the flow fails closed when Redis is unavailable.
+Approve, deny and lookup require a dashboard (JWT) session; an API key gets 403, so a key can't mint further keys without a person. State lives in Redis under `device-auth:` with a 10-minute TTL. Device codes are stored as SHA-256 hashes, and no API key is ever written to Redis: the raw key exists only in the poll response, as with `POST /auth/api-keys`. Unlike API key lockout, the flow fails closed when Redis is unavailable.
 
 ---
 

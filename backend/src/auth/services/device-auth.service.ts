@@ -29,9 +29,8 @@ interface DeviceRecord {
   ip: string;
   createdAt: string;
   status: DeviceStatus;
-  apiKey?: string;
-  apiKeyId?: string;
-  apiKeyName?: string;
+  /** Set on approval; the key is created for this user when the CLI collects it. */
+  approvedBy?: string;
 }
 
 /**
@@ -39,12 +38,13 @@ interface DeviceRecord {
  *
  * The CLI requests a device code and shows the user a short user code and a
  * dashboard URL. The user approves it while signed in to the dashboard, which
- * creates an API key for them. The CLI polls with its device code and receives
- * that key exactly once.
+ * marks it approved. The CLI polls with its device code, and the poll that
+ * finds it approved creates an API key for that user and returns it, once.
  *
- * State lives in Redis for the lifetime of the request (10 minutes by default).
- * Device codes are stored hashed. The raw API key sits in Redis only between
- * approval and the CLI's next poll, and is deleted on delivery.
+ * State lives in Redis for the lifetime of the request (10 minutes by default)
+ * and device codes are stored hashed. No API key is ever stored: approval only
+ * records who approved, and the key is created inside the CLI's next poll, so
+ * the raw key exists only in that response, as with POST /auth/api-keys.
  *
  * Unlike API key lockout, this fails closed: without Redis no login can start.
  */
@@ -181,16 +181,26 @@ export class DeviceAuthService implements OnModuleInit, OnModuleDestroy {
       return { status: 'denied' };
     }
 
-    // Approved: take the record atomically so the key is delivered once.
+    // Approved: take the record atomically so only one poll creates a key.
     const taken = await this.run(() => this.redis.getdel(key));
     if (!taken) return { status: 'expired' };
-    const delivered = JSON.parse(taken) as DeviceRecord;
-    if (!delivered.apiKey || !delivered.apiKeyId) return { status: 'expired' };
+    const approved = JSON.parse(taken) as DeviceRecord;
+    if (approved.status !== 'approved' || !approved.approvedBy) {
+      return { status: 'expired' };
+    }
+    // A plan limit hit since approval surfaces here as a 402 to the CLI.
+    const created = await this.authService.createApiKey(
+      approved.approvedBy,
+      keyName(approved.clientName),
+    );
+    this.logger.log(
+      `Device login completed for user ${approved.approvedBy} (key ${created.id})`,
+    );
     return {
       status: 'approved',
-      apiKey: delivered.apiKey,
-      id: delivered.apiKeyId,
-      name: delivered.apiKeyName ?? '',
+      apiKey: created.apiKey,
+      id: created.id,
+      name: created.name,
     };
   }
 
@@ -205,11 +215,11 @@ export class DeviceAuthService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  /** Approves a pending request for the signed-in user and mints its API key. */
+  /** Approves a pending request for the signed-in user. */
   async approve(userCode: string, userId: string): Promise<{ name: string }> {
     const { key, record } = await this.findPending(userCode);
 
-    // Guard against a double-submit creating two keys.
+    // Guard against concurrent approvals of the same request.
     const locked = await this.run(() =>
       this.redis.set(`lock:${key}`, '1', 'EX', this.ttlSeconds, 'NX'),
     );
@@ -217,31 +227,25 @@ export class DeviceAuthService implements OnModuleInit, OnModuleDestroy {
       throw new ForbiddenException('This login request is already approved');
     }
 
-    const name = `CLI login: ${record.clientName}`.slice(0, 100);
-    let created: Awaited<ReturnType<AuthService['createApiKey']>>;
     try {
-      created = await this.authService.createApiKey(userId, name);
+      // Fail here, on the approval page, rather than in the CLI later.
+      await this.authService.assertApiKeyLimit(userId);
     } catch (err) {
-      // e.g. the plan's API key limit: let the user free a slot and retry.
       await this.run(() => this.redis.del(`lock:${key}`));
       throw err;
     }
-    record.status = 'approved';
-    record.apiKey = created.apiKey;
-    record.apiKeyId = created.id;
-    record.apiKeyName = created.name;
 
+    record.status = 'approved';
+    record.approvedBy = userId;
     const stored = await this.run(() =>
       this.redis.set(key, JSON.stringify(record), 'KEEPTTL', 'XX'),
     );
     if (stored !== 'OK') {
-      // Expired between lookup and approval: don't leave an orphaned key.
-      await this.authService.deleteApiKey(userId, created.id);
       throw new NotFoundException('Login request expired');
     }
     await this.run(() => this.redis.del(`user:${record.userCode}`));
     this.logger.log(`Device login approved for user ${userId}`);
-    return { name };
+    return { name: keyName(record.clientName) };
   }
 
   async deny(userCode: string): Promise<void> {
@@ -281,6 +285,10 @@ export class DeviceAuthService implements OnModuleInit, OnModuleDestroy {
       );
     }
   }
+}
+
+function keyName(clientName: string): string {
+  return `CLI login: ${clientName}`.slice(0, 100);
 }
 
 function hashCode(deviceCode: string): string {
