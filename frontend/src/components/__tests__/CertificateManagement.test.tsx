@@ -141,6 +141,29 @@ describe('CertificateManagement', () => {
     expect(screen.getAllByText('Issued').length).toBeGreaterThanOrEqual(1);
   });
 
+  it('shows the failure reason for failed certificates', async () => {
+    const reason =
+      'ACME challenge delegation missing: no CNAME found at _acme-challenge.example.com.';
+    server.use(
+      http.get(`${API_URL}/certs/tls`, () => {
+        return HttpResponse.json([
+          {
+            ...mockCerts[0],
+            status: 'failed',
+            crtPem: null,
+            failureReason: reason,
+          },
+        ]);
+      }),
+    );
+
+    render(<CertificateManagement />);
+
+    await waitFor(() => {
+      expect(screen.getByText(reason)).toBeInTheDocument();
+    });
+  });
+
   it('displays domains from parsed CSR', async () => {
     render(<CertificateManagement />);
 

@@ -82,7 +82,7 @@ describe('CertIssuerConsumer', () => {
       });
       expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
         1,
-        { crtPem: null, chainPem: null },
+        { crtPem: null, chainPem: null, failureReason: null },
         'issuing',
       );
       expect(mockAcme.issue).toHaveBeenCalled();
@@ -175,7 +175,11 @@ describe('CertIssuerConsumer', () => {
       );
       expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
         1,
-        { crtPem: null, chainPem: null },
+        expect.objectContaining({
+          crtPem: null,
+          chainPem: null,
+          failureReason: expect.any(String),
+        }),
         'failed',
       );
     });
@@ -191,9 +195,46 @@ describe('CertIssuerConsumer', () => {
       await expect(processor.process(job)).rejects.toThrow('ACME timeout');
       expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
         1,
-        { crtPem: null, chainPem: null },
+        expect.objectContaining({
+          crtPem: null,
+          chainPem: null,
+          failureReason: expect.any(String),
+        }),
         'failed',
       );
+    });
+
+    it('records the failure reason so the API can return it', async () => {
+      const reason =
+        'ACME challenge delegation missing: no CNAME found at _acme-challenge.example.com.';
+      mockAcme.issue.mockRejectedValue(new Error(reason));
+
+      const job = {
+        name: 'tlsCertIssuance',
+        data: { certId: 1 },
+      } as any;
+
+      await expect(processor.process(job)).rejects.toThrow(reason);
+      expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
+        1,
+        { crtPem: null, chainPem: null, failureReason: reason },
+        'failed',
+      );
+    });
+
+    it('truncates very long failure reasons', async () => {
+      mockAcme.issue.mockRejectedValue(new Error('x'.repeat(5000)));
+
+      const job = {
+        name: 'tlsCertIssuance',
+        data: { certId: 1 },
+      } as any;
+
+      await expect(processor.process(job)).rejects.toThrow();
+      const failedCall = mockTlsService.updateInternal.mock.calls.find(
+        (c: unknown[]) => c[2] === 'failed',
+      );
+      expect(failedCall[1].failureReason).toHaveLength(2000);
     });
 
     it('handles non-Error ACME failures', async () => {
@@ -207,7 +248,11 @@ describe('CertIssuerConsumer', () => {
       await expect(processor.process(job)).rejects.toThrow('string error');
       expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
         1,
-        { crtPem: null, chainPem: null },
+        expect.objectContaining({
+          crtPem: null,
+          chainPem: null,
+          failureReason: expect.any(String),
+        }),
         'failed',
       );
     });
@@ -264,7 +309,11 @@ describe('CertIssuerConsumer', () => {
       expect((err as Error).name).not.toBe('UnrecoverableError');
       expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
         1,
-        { crtPem: null, chainPem: null },
+        expect.objectContaining({
+          crtPem: null,
+          chainPem: null,
+          failureReason: expect.any(String),
+        }),
         'failed',
       );
       expect(mockEmailService.sendCertFailed).toHaveBeenCalledTimes(1);
@@ -292,7 +341,11 @@ describe('CertIssuerConsumer', () => {
       expect((err as Error).name).toBe('UnrecoverableError');
       expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
         1,
-        { crtPem: null, chainPem: null },
+        expect.objectContaining({
+          crtPem: null,
+          chainPem: null,
+          failureReason: expect.any(String),
+        }),
         'failed',
       );
       expect(mockEmailService.sendCertFailed).toHaveBeenCalledTimes(1);
