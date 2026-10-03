@@ -16,11 +16,24 @@ describe('ApiKeySecurityService', () => {
       incr: jest.fn().mockResolvedValue(1),
       expire: jest.fn().mockResolvedValue(1),
       set: jest.fn().mockResolvedValue('OK'),
+      connect: jest.fn().mockResolvedValue(undefined),
       disconnect: jest.fn(),
     };
     // Replace the lazy-connecting real client with a mock.
     (service as any).redis.disconnect();
     (service as any).redis = mockRedis;
+  });
+
+  describe('onModuleInit', () => {
+    it('connects to Redis up front', async () => {
+      await service.onModuleInit();
+      expect(mockRedis.connect).toHaveBeenCalled();
+    });
+
+    it('does not throw when Redis is unreachable', async () => {
+      mockRedis.connect.mockRejectedValue(new Error('ECONNREFUSED'));
+      await expect(service.onModuleInit()).resolves.toBeUndefined();
+    });
   });
 
   describe('isLockedOut', () => {

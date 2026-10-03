@@ -27,7 +27,7 @@ describe('AuthController', () => {
       handleCallback: jest.fn(),
       createApiKey: jest.fn(),
       listApiKeys: jest.fn(),
-      deleteApiKey: jest.fn(),
+      revokeApiKey: jest.fn(),
       getFullProfile: jest.fn(),
       updateProfile: jest.fn(),
     };
@@ -163,8 +163,24 @@ describe('AuthController', () => {
 
       const result = await controller.listApiKeys(mockReq);
 
-      expect(mockAuthService.listApiKeys).toHaveBeenCalledWith(userId);
+      expect(mockAuthService.listApiKeys).toHaveBeenCalledWith(userId, {
+        includeRevoked: false,
+      });
       expect(result).toEqual(keys);
+    });
+
+    it('passes includeRevoked only for the literal "true"', async () => {
+      mockAuthService.listApiKeys.mockResolvedValue([]);
+
+      await controller.listApiKeys(mockReq, 'true');
+      await controller.listApiKeys(mockReq, '1');
+
+      expect(mockAuthService.listApiKeys).toHaveBeenNthCalledWith(1, userId, {
+        includeRevoked: true,
+      });
+      expect(mockAuthService.listApiKeys).toHaveBeenNthCalledWith(2, userId, {
+        includeRevoked: false,
+      });
     });
   });
 
@@ -186,16 +202,16 @@ describe('AuthController', () => {
   });
 
   describe('deleteApiKey', () => {
-    it('passes userId, id to authService.deleteApiKey()', async () => {
-      mockAuthService.deleteApiKey.mockResolvedValue(undefined);
+    it('passes userId, id to authService.revokeApiKey()', async () => {
+      mockAuthService.revokeApiKey.mockResolvedValue(undefined);
 
       const result = await controller.deleteApiKey(mockReq, 'key-uuid');
 
-      expect(mockAuthService.deleteApiKey).toHaveBeenCalledWith(
+      expect(mockAuthService.revokeApiKey).toHaveBeenCalledWith(
         userId,
         'key-uuid',
       );
-      expect(result).toEqual({ message: 'API key deleted' });
+      expect(result).toEqual({ message: 'API key revoked' });
     });
   });
 

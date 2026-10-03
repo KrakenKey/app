@@ -26,6 +26,17 @@ export class UserApiKey {
   @Column({ nullable: true })
   expiresAt?: Date;
 
+  /** Set when the key is revoked; revoked keys never authenticate. */
+  @Column({ type: 'timestamp', nullable: true })
+  revokedAt?: Date | null;
+
+  /** Updated on successful auth, at most once a minute unless the IP changes. */
+  @Column({ type: 'timestamp', nullable: true })
+  lastUsedAt?: Date | null;
+
+  @Column({ type: 'text', nullable: true })
+  lastUsedIp?: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 
