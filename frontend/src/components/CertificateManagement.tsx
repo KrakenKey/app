@@ -583,6 +583,14 @@ function CertCard({
             <span className="text-zinc-300">{domains.join(', ')}</span>
           </div>
         )}
+        {cert.status === CertStatus.FAILED && cert.failureReason && (
+          <div className="flex gap-2">
+            <span className="text-zinc-500">Reason:</span>
+            <span className="text-red-400 break-words min-w-0">
+              {cert.failureReason}
+            </span>
+          </div>
+        )}
         {expirationInfo && (
           <div className="flex gap-2">
             <span className="text-zinc-500">Expiration:</span>

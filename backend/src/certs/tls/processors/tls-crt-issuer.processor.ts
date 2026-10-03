@@ -17,6 +17,8 @@ import { EmailService } from '../../../notifications/email.service';
 import type { CertEmailContext } from '../../../notifications/email.service';
 import { User } from '../../../users/entities/user.entity';
 
+const MAX_FAILURE_REASON_LENGTH = 2000;
+
 /**
  * Error detail patterns that indicate a permanent failure — retrying cannot
  * succeed (or, for CA rate limits, cannot succeed within the seconds-scale
@@ -122,7 +124,7 @@ export class CertIssuerConsumer extends WorkerHost {
 
       await this.tlsService.updateInternal(
         csrRecord.id,
-        { crtPem: null, chainPem: null },
+        { crtPem: null, chainPem: null, failureReason: null },
         statusDuringProcess,
       );
 
@@ -207,7 +209,11 @@ export class CertIssuerConsumer extends WorkerHost {
       this.metricsService.certIssuanceTotal.inc({ status: 'failed' });
       await this.tlsService.updateInternal(
         csrRecord.id,
-        { crtPem: null, chainPem: null },
+        {
+          crtPem: null,
+          chainPem: null,
+          failureReason: message.slice(0, MAX_FAILURE_REASON_LENGTH),
+        },
         CertStatus.FAILED,
       );
       if (csrRecord.user) {

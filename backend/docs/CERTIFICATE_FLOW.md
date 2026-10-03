@@ -251,7 +251,7 @@ Both are classified as **permanent** failures by the issuance processor. Only th
 | Backoff | Exponential (5-second base delay) |
 | Retry delays | ~5s, then ~10s |
 
-If the last attempt fails, the certificate status is set to `failed` and a failure notification email is sent.
+If the last attempt fails, the certificate status is set to `failed`, the error message is stored in `failureReason` (truncated to 2,000 characters) and a failure notification email is sent. `failureReason` is returned by `GET /certs/tls` and `GET /certs/tls/:id`, shown on the dashboard, and cleared when the next attempt starts.
 
 Some failures are classified as **permanent** and skip retries entirely: an invalid CSR, a malformed ACME key authorization, a missing or mismatched challenge delegation, a CA policy refusal (including CAA), a deactivated ACME account, or a CA rate limit. Retrying the first group would produce the same result every time while delaying the customer's failure notification. CA rate limits last hours to days, far longer than the seconds-scale backoff, so they fail fast too and the customer can retry once the limit clears. Any of these fails the job on the first attempt. The patterns are listed in `PERMANENT_FAILURE_PATTERNS` in `backend/src/certs/tls/processors/tls-crt-issuer.processor.ts`; add to that list when introducing an error that only the customer can resolve.
 

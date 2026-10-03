@@ -8,6 +8,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Dates a
 
 ## [Unreleased]
 
+### Added
+- Certificates now carry a `failureReason`: the error message from the last failed issuance or renewal attempt, such as a missing `_acme-challenge` CNAME or a CAA refusal. It is returned by `GET /certs/tls` and `GET /certs/tls/:id`, shown on failed certificates in the dashboard, and cleared when the next attempt starts. Until now the reason only reached the owner by email, so API and CLI users saw a bare `failed`. Migration `AddCertFailureReason1778000000000` adds the nullable column.
+
 ---
 
 ## [2026-09-24] — Challenge Delegation Precheck, Queue Metrics

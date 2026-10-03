@@ -23,4 +23,5 @@ export class UpdateTlsCrtDto extends PartialType(CreateTlsCrtDto) {
 export class InternalUpdateTlsCrtDto extends UpdateTlsCrtDto {
   crtPem?: string | null;
   chainPem?: string | null;
+  failureReason?: string | null;
 }

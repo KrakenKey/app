@@ -56,6 +56,10 @@ export class TlsCrt {
   @Column({ type: 'int', nullable: true })
   revocationReason: number | null;
 
+  /** Why the last issuance or renewal attempt failed; cleared on the next attempt. */
+  @Column({ type: 'text', nullable: true })
+  failureReason: string | null;
+
   @Column({ type: 'timestamp', nullable: true })
   revokedAt: Date | null;
 
