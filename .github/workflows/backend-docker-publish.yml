@@ -87,6 +87,10 @@ jobs:
       - name: Extract metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v6
+        env:
+          # On a PR, tag sha-<head commit> rather than GitHub's merge commit, so
+          # deploy-dev.yml can find the image from the PR head alone.
+          DOCKER_METADATA_PR_HEAD_SHA: "true"
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -105,16 +109,58 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # On a push to main, prd only deploys if the merged PR was deployed to dev
+  # (deploy/dev-deployed = success on its head commit, set by deploy-dev.yml).
+  # A manual run on main is the deliberate override for a blocked prd.
+  prd-gate:
+    name: Check merged PR was deployed to dev
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: read
+    outputs:
+      allowed: ${{ steps.gate.outputs.allowed }}
+      reason: ${{ steps.gate.outputs.reason }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Check dev-deployed status
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/dev-status-gate.sh deploy/dev-deployed
+
+  prd-blocked:
+    name: prd blocked (not deployed to dev)
+    needs: [build-and-push-backend, prd-gate]
+    if: needs.prd-gate.result == 'success' && needs.prd-gate.outputs.allowed != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain
+        env:
+          REASON: ${{ needs.prd-gate.outputs.reason }}
+        run: |
+          echo "::error::prd was not deployed: ${REASON}."
+          echo "Dev was deployed from main. Once dev looks right, run this workflow manually on main to deploy prd."
+          exit 1
+
   deploy:
     name: Deploy to ${{ matrix.environment }}
-    needs: build-and-push-backend
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: [build-and-push-backend, prd-gate]
+    if: >-
+      !cancelled() &&
+      needs.build-and-push-backend.result == 'success' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     strategy:
       matrix:
         environment: >-
           ${{
-            github.ref == 'refs/heads/main'
+            github.ref == 'refs/heads/main' &&
+              (github.event_name == 'workflow_dispatch' || needs.prd-gate.outputs.allowed == 'true')
               && fromJSON('["dev","prd"]')
             || fromJSON('["dev"]')
           }}
