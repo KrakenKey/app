@@ -27,6 +27,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Dates a
 - The OpenAPI spec synced to krakenkey.io (`yarn openapi:export`) only scanned 5 controllers, so the published API reference was missing endpoint monitoring, probes, organizations, billing, feedback, health and public scan: 20 of 48 paths. The controller list now lives in `src/config/openapi-controllers.ts` and covers all 12 non-excluded controllers, matching the live `/swagger-json` operation for operation, and a unit test fails when a new controller is neither listed nor marked `@ApiExcludeController`.
 
 ### Security
+- Frontend dev tooling from the 2026-09-07 audit (#104), no effect on the built app:
+  - `vitest` and `@vitest/ui` 4.0.18 → 4.1.11: arbitrary file read and execution through the Vitest UI server (GHSA-5xrq-8626-4rwp) and the `@vitest/mocker` redirect path traversal (GHSA-82fw-gwwq-j7x9).
+  - `vite` 7.3.1 → 7.3.6: dev server file read and `server.fs.deny` bypasses (GHSA-p9ff-h696-f583, GHSA-v2wj-q39q-566r, GHSA-fx2h-pf6j-xcff, GHSA-4w7w-66w2-5vf9, GHSA-v6wh-96g9-6wx3).
+  - These bumps were blocked by a yarn 1 linker error (`could not find a copy of vite to link`, see #99). vitest 4.1 lists `vite` as both a dependency and a peer dependency, and yarn 1 fails when the dependency range resolves to a different vite than the project's own. A `resolutions` entry pins vite to `^7.3.6`, so the whole tree shares one copy.
+  - `form-data` 4.0.5 → 4.0.6 via `jsdom` (GHSA-hmw2-7cc7-3qxx), plus an in-range lockfile refresh of `postcss`, `nanoid`, `ws`, `fflate`, `js-yaml` and the eslint tooling (`brace-expansion`, `minimatch`, `picomatch`, `flatted`, `ajv`, `browserslist`).
+  - Still open: `esbuild` 0.27.7 (GHSA-g7r4-m6w7-qqqr, low, Windows dev server only) needs 0.28.1, outside the range vite 7 accepts.
 - User API keys can no longer escalate. A key could create new keys (so a leaked key could mint a replacement and outlive its own revocation), delete keys, change the account email, delete the account, change organization ownership and membership, and start billing changes. Those routes now require a dashboard session and return `403` for an API key. Admin rights also need a session: an admin's key acts as a regular user. Keys keep working for domains, certificates, endpoints and the read-only account routes. See [API_REFERENCE.md](../backend/docs/API_REFERENCE.md#authentication).
 
 ---
