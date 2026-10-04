@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
+import { STATUS_CODES } from 'http';
 import { Request, Response } from 'express';
 import type { ApiErrorResponse } from '@krakenkey/shared';
 
@@ -30,7 +31,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     // Extract error message
     let message: string | string[] = 'Internal server error';
-    let error = 'Internal Server Error';
+    // Standard reason phrase for the status, e.g. "Too Many Requests" for 429,
+    // so exceptions built from a plain string still get the right label.
+    let error = STATUS_CODES[status] ?? 'Internal Server Error';
 
     if (exception instanceof HttpException) {
       const exceptionResponse = exception.getResponse();
