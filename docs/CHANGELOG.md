@@ -28,6 +28,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Dates a
 
 ### Security
 - User API keys can no longer escalate. A key could create new keys (so a leaked key could mint a replacement and outlive its own revocation), delete keys, change the account email, delete the account, change organization ownership and membership, and start billing changes. Those routes now require a dashboard session and return `403` for an API key. Admin rights also need a session: an admin's key acts as a regular user. Keys keep working for domains, certificates, endpoints and the read-only account routes. See [API_REFERENCE.md](../backend/docs/API_REFERENCE.md#authentication).
+- Backend dependency advisories from the 2026-09-07 audit (#104):
+  - `node-forge` 1.3.3 → 1.4.0 through a `resolutions` entry. `acme-client` 5.4.0 is the latest release and still allows 1.3.x. Clears Ed25519 and RSA-PKCS signature forgery, the basicConstraints chain bypass and the `modInverse` DoS (GHSA-q67f-28xg-22rw, GHSA-ppp5-5v6c-4jwp, GHSA-2328-f5f3-gj25, GHSA-5m6q-g25r-mvwx).
+  - `axios`: a `resolutions` entry removes the stale 1.13.4 copy that `acme-client` pulled in next to the direct 1.20.0, along with the axios advisories it still carried.
+  - `nodemailer` 9.1.1 → 10.0.14 (major): addressparser DoS (GHSA-prgh-xp8r-p3m5, GHSA-v53p-9fqp-m79j) and later fixes. 10.0 requires Node.js 20 (we run 24) and ships its own type declarations, so `@types/nodemailer` is removed. The email service only uses SMTP `createTransport`/`sendMail` and needed no changes.
+  - `@nestjs/swagger` 11.2.6 → 11.4.7: drops the exact `path-to-regexp` 8.3.0 pin (ReDoS, GHSA-j3q9-mxjg-w52f, GHSA-27v5-c462-wpq7). Since 11.4.3 the package only exports its root, so `scripts/export-openapi.ts` now loads the explorer classes by file path; the generated spec has the same 53 paths and 29 schemas.
+  - `@nestjs/common`, `core`, `platform-express` and `testing` 11.2.3 → 11.2.7: `multer` 2.2.0 → 2.4.0.
+  - `@aws-sdk/client-route-53` 3.1000.0 → 3.1146.0: the newer `@aws-sdk/xml-builder` no longer depends on `fast-xml-parser` (5.3.6 had four advisories).
+  - `@nestjs/config` 4.0.3 → 4.0.4 and the swagger bump move `lodash` to 4.18.1 (GHSA-r5fr-rjxr-66jc, GHSA-f23m-r3pf-42rh). `js-yaml` refreshed to 4.3.2 and 3.15.2; the copy `@nestjs/swagger` pins is lifted to 5.4.2 with a scoped resolution (GHSA-r3ph-w7gj-g6xm).
+  - Lockfile refresh inside existing ranges: `handlebars` 4.7.9 (dev, GHSA-2w6w-674q-4c4q), `form-data` 4.0.6, `fast-uri`, `follow-redirects`, and the eslint/jest tooling (`brace-expansion`, `minimatch`, `picomatch`, `flatted`, `ajv`, `browserslist`).
+  - Still open: `node-forge` GHSA-86w9-cpqp-85rv has no fixed release; `acme-client` only uses node-forge in its legacy `forge` helpers, which the backend does not call. `uuid` 11.1.0 (GHSA-w5hq-g745-h8pq) is pinned by `bullmq` 5.70.1 and only affects v3/v5/v6 with a caller-supplied buffer; bullmq uses v4.
 
 ---
 
