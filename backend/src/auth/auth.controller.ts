@@ -129,15 +129,27 @@ export class AuthController {
   @Get('api-keys')
   @UseGuards(JwtOrApiKeyGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'List all API keys for the current user' })
+  @ApiOperation({ summary: 'List API keys for the current user' })
+  @ApiQuery({
+    name: 'includeRevoked',
+    required: false,
+    description:
+      'true to also list keys revoked in the last 30 days (with revokedAt set)',
+  })
   @ApiResponse({
     status: 200,
-    description: 'List of API keys (metadata only, no secrets)',
+    description:
+      'List of API keys (metadata only, no secrets), with lastUsedAt and lastUsedIp',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
-  async listApiKeys(@Req() req: RequestWithUser) {
-    return this.authService.listApiKeys(req.user.userId);
+  async listApiKeys(
+    @Req() req: RequestWithUser,
+    @Query('includeRevoked') includeRevoked?: string,
+  ) {
+    return this.authService.listApiKeys(req.user.userId, {
+      includeRevoked: includeRevoked === 'true',
+    });
   }
 
   @Post('api-keys')
@@ -179,15 +191,22 @@ export class AuthController {
   @SessionOnly()
   @UseGuards(JwtOrApiKeyGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Delete an API key' })
+  @ApiOperation({
+    summary: 'Revoke an API key',
+    description:
+      'The key stops working immediately. It stays listed with includeRevoked for 30 days.',
+  })
   @ApiParam({ name: 'id', description: 'API key UUID' })
-  @ApiResponse({ status: 200, description: 'API key deleted' })
+  @ApiResponse({ status: 200, description: 'API key revoked' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 404, description: 'API key not found' })
+  @ApiResponse({
+    status: 404,
+    description: 'API key not found or already revoked',
+  })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
   async deleteApiKey(@Req() req: RequestWithUser, @Param('id') id: string) {
-    await this.authService.deleteApiKey(req.user.userId, id);
-    return { message: 'API key deleted' };
+    await this.authService.revokeApiKey(req.user.userId, id);
+    return { message: 'API key revoked' };
   }
 
   // ── CLI device login (krakenkey auth login --web) ──────────────────────

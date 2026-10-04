@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 
@@ -17,7 +22,7 @@ import Redis from 'ioredis';
  * IP throttler rather than blocking legitimate authentication.
  */
 @Injectable()
-export class ApiKeySecurityService implements OnModuleDestroy {
+export class ApiKeySecurityService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ApiKeySecurityService.name);
   private readonly redis: Redis;
   private readonly failureThreshold: number;
@@ -55,6 +60,18 @@ export class ApiKeySecurityService implements OnModuleDestroy {
         );
       }
     });
+  }
+
+  /** Connect up front: with lazyConnect and no offline queue, the first
+   * command would otherwise fail (open) before the connection is ready. */
+  async onModuleInit() {
+    try {
+      await this.redis.connect();
+    } catch (err) {
+      this.logger.warn(
+        `Redis connect failed for API key lockout (failing open): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   onModuleDestroy() {

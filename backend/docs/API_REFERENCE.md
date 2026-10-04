@@ -144,7 +144,9 @@ Update the current user's profile.
 
 ### GET /auth/api-keys
 
-List all API keys for the current user. Returns metadata only (name, dates) — hashes are never exposed.
+List the current user's active API keys. Returns metadata only (name, dates, last use); hashes are never exposed.
+
+Query: `includeRevoked=true` also returns keys revoked in the last 30 days, with `revokedAt` set. The dashboard uses this; older clients that omit it only ever see active keys.
 
 **Response:**
 ```json
@@ -153,10 +155,15 @@ List all API keys for the current user. Returns metadata only (name, dates) — 
     "id": "uuid",
     "name": "CI/CD Key",
     "expiresAt": "2027-03-27T00:00:00.000Z",
-    "createdAt": "2026-03-27T10:00:00.000Z"
+    "createdAt": "2026-03-27T10:00:00.000Z",
+    "revokedAt": null,
+    "lastUsedAt": "2026-03-28T09:15:00.000Z",
+    "lastUsedIp": "203.0.113.7"
   }
 ]
 ```
+
+`lastUsedAt` and `lastUsedIp` are updated on successful authentication, at most once a minute per key unless the client IP changes. `lastUsedIp` is the client address as resolved through `KK_TRUSTED_PROXIES`.
 
 ### POST /auth/api-keys
 
@@ -185,7 +192,7 @@ The `apiKey` value is shown **only once**. Store it securely.
 
 ### DELETE /auth/api-keys/:id
 
-Delete an API key.
+Revoke an API key. It stops authenticating immediately and no longer counts toward the plan's API key limit. The row is kept, and listed with `includeRevoked=true`, for 30 days; a daily job deletes it after that. Returns `404` if the key doesn't exist, belongs to someone else, or is already revoked.
 
 ### POST /auth/confirm-auto-renewal
 

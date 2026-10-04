@@ -7,7 +7,8 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { In, Repository } from 'typeorm';
+import { In, IsNull, LessThan, MoreThan, Repository } from 'typeorm';
+import { Cron } from '@nestjs/schedule';
 import { UserApiKey } from './entities/user-api-key.entity';
 import { ServiceApiKey } from './entities/service-api-key.entity';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -27,6 +28,16 @@ import type {
   SubscriptionPlan,
   UserProfile,
 } from '@krakenkey/shared';
+
+/** Revoked keys stay listed (and in the table) this long before the purge. */
+export const REVOKED_KEY_RETENTION_DAYS = 30;
+const LAST_USED_RESOLUTION_MS = 60_000;
+
+function revokedKeyCutoff(): Date {
+  return new Date(
+    Date.now() - REVOKED_KEY_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+  );
+}
 
 @Injectable()
 export class AuthService implements OnModuleInit {
@@ -244,7 +255,7 @@ export class AuthService implements OnModuleInit {
   /**
    * Creates a new API key for a user.
    *
-   * Keys are prefixed with 'kk_' and hashed (SHA-256) before storage.
+   * Keys are prefixed with 'kk_' and hashed (scrypt) before storage.
    * The raw key is returned only once - it cannot be retrieved later.
    */
   async createApiKey(userId: string, name: string, expiresAt?: string) {
@@ -283,7 +294,7 @@ export class AuthService implements OnModuleInit {
       const memberIds =
         await this.billingService.getResourceCountUserIds(userId);
       const count = await this.userApiKeyRepo.count({
-        where: { userId: In(memberIds) },
+        where: { userId: In(memberIds), revokedAt: IsNull() },
       });
       if (count >= limits.apiKeys) {
         throw new HttpException(
@@ -300,30 +311,68 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
-   * Returns all API keys for a user (metadata only, no secrets).
+   * Returns a user's API keys (metadata only, no secrets). Revoked keys are
+   * left out unless includeRevoked, which adds those revoked in the last
+   * REVOKED_KEY_RETENTION_DAYS.
    */
-  async listApiKeys(userId: string): Promise<ApiKey[]> {
+  async listApiKeys(
+    userId: string,
+    opts: { includeRevoked?: boolean } = {},
+  ): Promise<ApiKey[]> {
+    const where = opts.includeRevoked
+      ? [
+          { userId, revokedAt: IsNull() },
+          { userId, revokedAt: MoreThan(revokedKeyCutoff()) },
+        ]
+      : { userId, revokedAt: IsNull() };
     const keys = await this.userApiKeyRepo.find({
-      where: { userId },
+      where,
       order: { createdAt: 'DESC' },
-      select: ['id', 'name', 'createdAt', 'expiresAt'],
+      select: [
+        'id',
+        'name',
+        'createdAt',
+        'expiresAt',
+        'revokedAt',
+        'lastUsedAt',
+        'lastUsedIp',
+      ],
     });
     return keys.map((k) => ({
       id: k.id,
       name: k.name,
       createdAt: k.createdAt.toISOString(),
       expiresAt: k.expiresAt ? k.expiresAt.toISOString() : null,
+      revokedAt: k.revokedAt ? k.revokedAt.toISOString() : null,
+      lastUsedAt: k.lastUsedAt ? k.lastUsedAt.toISOString() : null,
+      lastUsedIp: k.lastUsedIp ?? null,
     }));
   }
 
   /**
-   * Deletes an API key owned by the specified user.
-   * Throws NotFoundException if the key doesn't exist or isn't owned by the user.
+   * Revokes an API key owned by the specified user. The row is kept so the
+   * dashboard can show when it was revoked and last used; the daily purge
+   * removes it later. Throws NotFoundException if the key doesn't exist,
+   * isn't owned by the user, or is already revoked.
    */
-  async deleteApiKey(userId: string, keyId: string): Promise<void> {
-    const result = await this.userApiKeyRepo.delete({ id: keyId, userId });
+  async revokeApiKey(userId: string, keyId: string): Promise<void> {
+    const result = await this.userApiKeyRepo.update(
+      { id: keyId, userId, revokedAt: IsNull() },
+      { revokedAt: new Date() },
+    );
     if (result.affected === 0) {
       throw new NotFoundException(`API key #${keyId} not found`);
+    }
+  }
+
+  /** Daily: delete keys revoked more than REVOKED_KEY_RETENTION_DAYS ago. */
+  @Cron('30 4 * * *')
+  async purgeRevokedApiKeys(): Promise<void> {
+    const result = await this.userApiKeyRepo.delete({
+      revokedAt: LessThan(revokedKeyCutoff()),
+    });
+    if (result.affected) {
+      this.logger.log(`Purged ${result.affected} revoked API key(s)`);
     }
   }
 
@@ -341,11 +390,44 @@ export class AuthService implements OnModuleInit {
       relations: ['user'],
     });
     if (!record) return null;
+    if (record.revokedAt) {
+      this.logger.warn(
+        `Revoked API key ${record.id} presented${meta?.ip ? ` from ${meta.ip}` : ''}`,
+      );
+      return null;
+    }
     if (record.expiresAt && record.expiresAt < new Date()) {
       await this.notifyExpiredKeyUse(record, meta?.ip);
       return null;
     }
+    await this.recordKeyUse(record, meta?.ip);
     return record;
+  }
+
+  /**
+   * Updates lastUsedAt/lastUsedIp, skipping the write when the key was used
+   * from the same IP within the last minute. Never throws.
+   */
+  private async recordKeyUse(record: UserApiKey, ip?: string): Promise<void> {
+    const now = new Date();
+    const lastUsedIp = ip || null;
+    if (
+      record.lastUsedAt &&
+      now.getTime() - record.lastUsedAt.getTime() < LAST_USED_RESOLUTION_MS &&
+      record.lastUsedIp === lastUsedIp
+    ) {
+      return;
+    }
+    try {
+      await this.userApiKeyRepo.update(record.id, {
+        lastUsedAt: now,
+        lastUsedIp,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Failed to record use of API key ${record.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   /**
@@ -395,7 +477,9 @@ export class AuthService implements OnModuleInit {
     const [domainCount, certCount, apiKeyCount] = await Promise.all([
       this.domainRepo.count({ where: { userId: In(memberIds) } }),
       this.tlsCrtRepo.count({ where: { userId: In(memberIds) } }),
-      this.userApiKeyRepo.count({ where: { userId: In(memberIds) } }),
+      this.userApiKeyRepo.count({
+        where: { userId: In(memberIds), revokedAt: IsNull() },
+      }),
     ]);
 
     return {
