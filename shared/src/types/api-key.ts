@@ -3,6 +3,10 @@ export interface ApiKey {
   name: string;
   createdAt: string;
   expiresAt: string | null;
+  /** Set once the key is revoked. Only listed with includeRevoked. */
+  revokedAt: string | null;
+  lastUsedAt: string | null;
+  lastUsedIp: string | null;
 }
 
 export interface CreateApiKeyRequest {

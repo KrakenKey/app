@@ -30,7 +30,7 @@ describe('API keys on session-only routes (e2e)', () => {
     }),
     listApiKeys: jest.fn().mockResolvedValue([]),
     createApiKey: jest.fn(),
-    deleteApiKey: jest.fn(),
+    revokeApiKey: jest.fn(),
     getFullProfile: jest.fn().mockResolvedValue({ id: MOCK_USER.userId }),
   };
   const usersService = {
@@ -114,7 +114,7 @@ describe('API keys on session-only routes (e2e)', () => {
       .delete('/auth/api-keys/key-2')
       .set('Authorization', KEY)
       .expect(403);
-    expect(authService.deleteApiKey).not.toHaveBeenCalled();
+    expect(authService.revokeApiKey).not.toHaveBeenCalled();
   });
 
   it('refuses to change the account email', async () => {
