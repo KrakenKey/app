@@ -9,7 +9,7 @@ import type { SubscriptionPlan } from '@krakenkey/shared';
 import { MetricsService } from '../../../metrics/metrics.service';
 import { EmailService } from '../../../notifications/email.service';
 import { BillingService } from '../../../billing/billing.service';
-import { PLAN_LIMITS } from '../../../billing/constants/plan-limits';
+import { daysUntilExpiry, renewalWindowDays } from '../util/renewal-window';
 import { User } from '../../../users/entities/user.entity';
 
 @Injectable()
@@ -59,10 +59,9 @@ export class CertMonitorService {
       const nearest = withExpiry.reduce((min, c) =>
         c.expiresAt! < min.expiresAt! ? c : min,
       );
-      const daysUntilExpiry = Math.floor(
-        (nearest.expiresAt!.getTime() - Date.now()) / 86_400_000,
+      this.metricsService.certExpiryDays.set(
+        daysUntilExpiry(nearest.expiresAt!),
       );
-      this.metricsService.certExpiryDays.set(daysUntilExpiry);
     }
 
     this.logger.log(
@@ -76,9 +75,7 @@ export class CertMonitorService {
     for (const cert of expiring) {
       if (!cert.expiresAt) continue;
 
-      const daysUntilExpiry = Math.floor(
-        (cert.expiresAt.getTime() - Date.now()) / 86_400_000,
-      );
+      const daysLeft = daysUntilExpiry(cert.expiresAt);
 
       // Determine tier-specific renewal window (cached per user)
       let userPlan = planCache.get(cert.userId);
@@ -88,11 +85,10 @@ export class CertMonitorService {
         )) as SubscriptionPlan;
         planCache.set(cert.userId, userPlan);
       }
-      const windowDays = (PLAN_LIMITS[userPlan] ?? PLAN_LIMITS.free)
-        .renewalWindowDays;
+      const windowDays = renewalWindowDays(userPlan);
 
       // Skip certs outside this user's renewal window
-      if (daysUntilExpiry > windowDays) continue;
+      if (daysLeft > windowDays) continue;
 
       // Free-tier auto-renewal confirmation check
       if (userPlan === 'free') {
@@ -127,7 +123,7 @@ export class CertMonitorService {
           certId: cert.id,
           commonName,
           expiresAt: cert.expiresAt,
-          daysUntilExpiry,
+          daysUntilExpiry: daysLeft,
         });
       }
 

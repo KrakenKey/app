@@ -74,7 +74,11 @@ export const handlers = [
   }),
 
   http.post(`${API_URL}/certs/tls/:id/renew`, ({ params }) => {
-    return HttpResponse.json({ id: Number(params.id), status: 'renewing' });
+    return HttpResponse.json({
+      id: Number(params.id),
+      status: 'renewing',
+      skipped: false,
+    });
   }),
 
   http.post(`${API_URL}/certs/tls/:id/revoke`, ({ params }) => {

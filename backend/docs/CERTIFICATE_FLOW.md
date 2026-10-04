@@ -328,6 +328,8 @@ curl -X POST https://api.example.com/certs/tls/42/renew \
   -H "Authorization: Bearer $API_KEY"
 ```
 
+A manual renewal always runs and counts against the monthly certificate limit. To renew from a scheduled job without re-issuing every day, add `?ifDue=true`: the request only renews once the certificate is inside the renewal window above, and otherwise returns `200` with `"skipped": true` and queues nothing. See [API_REFERENCE.md](API_REFERENCE.md#post-certstlsidrenew).
+
 ### Disabling Auto-Renewal
 
 ```bash
