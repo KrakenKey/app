@@ -8,13 +8,18 @@ import {
   Param,
   UseGuards,
   Request,
+  Query,
+  Res,
+  HttpStatus,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   ApiTags,
   ApiBearerAuth,
   ApiOperation,
   ApiResponse,
   ApiParam,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { TlsService } from './tls.service';
 import { CreateTlsCrtDto } from './dto/create-tls-crt.dto';
@@ -168,7 +173,29 @@ export class TlsController {
   @Post(':id/renew')
   @ApiOperation({ summary: 'Renew a certificate' })
   @ApiParam({ name: 'id', description: 'Certificate ID' })
-  @ApiResponse({ status: 200, description: 'Certificate renewal initiated' })
+  @ApiQuery({
+    name: 'ifDue',
+    required: false,
+    type: Boolean,
+    description:
+      'Only renew if the certificate is inside its plan renewal window ' +
+      '(free: 5 days, paid: 30 days before expiry). Otherwise nothing is ' +
+      'queued and the response has skipped: true. Default: false (always renew).',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Certificate renewal initiated (skipped: false)',
+  })
+  @ApiResponse({
+    status: 200,
+    description:
+      'ifDue=true and the certificate is not due yet; nothing was queued ' +
+      "(skipped: true, reason: 'not_due')",
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Certificate not issued or missing CSR data',
+  })
   @ApiResponse({
     status: 403,
     description: 'Viewers cannot renew certificates',
@@ -176,8 +203,18 @@ export class TlsController {
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.EXPENSIVE)
-  renew(@Request() req: RequestWithUser, @Param('id') id: string) {
-    return this.tlsService.renew(+id, req.user.userId);
+  async renew(
+    @Request() req: RequestWithUser,
+    @Param('id') id: string,
+    @Res({ passthrough: true }) res: Response,
+    @Query('ifDue') ifDue?: string,
+  ) {
+    const result = await this.tlsService.renew(+id, req.user.userId, {
+      ifDue: ifDue === 'true',
+    });
+    // Nothing was created, so a skip is a plain 200 rather than 201
+    if (result.skipped) res.status(HttpStatus.OK);
+    return result;
   }
 
   @Post(':id/retry')

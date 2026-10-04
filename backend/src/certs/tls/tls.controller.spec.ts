@@ -157,14 +157,60 @@ describe('TlsController', () => {
   });
 
   describe('renew', () => {
-    it('passes numeric id and userId to service.renew()', () => {
-      mockService.renew.mockReturnValue({ id: 1, status: 'renewing' });
+    const mockRes = () => ({ status: jest.fn() }) as any;
 
-      expect(controller.renew(mockReq, '1')).toEqual({
+    it('passes numeric id and userId to service.renew()', async () => {
+      const res = mockRes();
+      mockService.renew.mockResolvedValue({
         id: 1,
         status: 'renewing',
+        skipped: false,
       });
-      expect(mockService.renew).toHaveBeenCalledWith(1, userId);
+
+      await expect(controller.renew(mockReq, '1', res)).resolves.toEqual({
+        id: 1,
+        status: 'renewing',
+        skipped: false,
+      });
+      expect(mockService.renew).toHaveBeenCalledWith(1, userId, {
+        ifDue: false,
+      });
+      expect(res.status).not.toHaveBeenCalled();
+    });
+
+    it('passes ifDue=true through and returns 200 when skipped', async () => {
+      const res = mockRes();
+      const skipped = {
+        id: 1,
+        status: 'issued',
+        skipped: true,
+        reason: 'not_due',
+        expiresAt: '2026-12-01T00:00:00.000Z',
+        renewalWindowDays: 30,
+      };
+      mockService.renew.mockResolvedValue(skipped);
+
+      await expect(
+        controller.renew(mockReq, '1', res, 'true'),
+      ).resolves.toEqual(skipped);
+      expect(mockService.renew).toHaveBeenCalledWith(1, userId, {
+        ifDue: true,
+      });
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('treats any value other than "true" as false', async () => {
+      mockService.renew.mockResolvedValue({ skipped: false });
+
+      await controller.renew(mockReq, '1', mockRes(), 'false');
+      await controller.renew(mockReq, '1', mockRes(), '1');
+
+      expect(mockService.renew).toHaveBeenNthCalledWith(1, 1, userId, {
+        ifDue: false,
+      });
+      expect(mockService.renew).toHaveBeenNthCalledWith(2, 1, userId, {
+        ifDue: false,
+      });
     });
   });
 
