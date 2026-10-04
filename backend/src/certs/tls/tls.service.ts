@@ -37,6 +37,7 @@ import { EmailService } from '../../notifications/email.service';
 import { BillingService } from '../../billing/billing.service';
 import { PLAN_LIMITS } from '../../billing/constants/plan-limits';
 import type { SubscriptionPlan } from '@krakenkey/shared';
+import { daysUntilExpiry, renewalWindowDays } from './util/renewal-window';
 
 /**
  * Manages TLS certificate lifecycle through a job queue.
@@ -427,8 +428,17 @@ export class TlsService {
    * - Original CSR must be available
    *
    * Queues a separate 'tlsCertRenewal' job to handle ACME renewal.
+   *
+   * By default the renewal is forced (e.g. after a key compromise). With
+   * `ifDue`, a cert that is not yet inside its plan's renewal window is left
+   * alone: nothing is queued and no quota is used. This lets clients call
+   * renew from a daily timer without re-issuing every day.
    */
-  async renew(id: number, userId: string) {
+  async renew(
+    id: number,
+    userId: string,
+    options: { ifDue?: boolean } = {},
+  ): Promise<RenewTlsCertResponse> {
     const cert = await this.findOne(id, userId);
 
     if (cert.status !== CertStatus.ISSUED) {
@@ -441,6 +451,23 @@ export class TlsService {
       throw new BadRequestException(
         'Certificate missing CSR data, cannot renew',
       );
+    }
+
+    if (options.ifDue && cert.expiresAt) {
+      // Same window the auto-renewal cron applies to this cert's owner
+      const windowDays = renewalWindowDays(
+        await this.billingService.resolveUserTier(cert.userId),
+      );
+      if (daysUntilExpiry(cert.expiresAt) > windowDays) {
+        return {
+          id: cert.id,
+          status: CertStatus.ISSUED,
+          skipped: true,
+          reason: 'not_due',
+          expiresAt: cert.expiresAt.toISOString(),
+          renewalWindowDays: windowDays,
+        };
+      }
     }
 
     // Plan-based limit checks (renewals count against monthly cert limit)
@@ -457,11 +484,11 @@ export class TlsService {
       backoff: { type: 'exponential', delay: 5000 },
     });
 
-    const response: RenewTlsCertResponse = {
+    return {
       id: cert.id,
       status: CertStatus.RENEWING,
+      skipped: false,
     };
-    return response;
   }
 
   /**

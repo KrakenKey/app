@@ -25,6 +25,7 @@ describe('TlsService', () => {
   let mockAcme: Record<string, jest.Mock>;
   let mockRepository: any;
   let mockQueue: any;
+  let billingService: { resolveUserTier: jest.Mock };
 
   const userId = 'user123';
 
@@ -148,6 +149,7 @@ describe('TlsService', () => {
     csrUtilService = module.get<CsrUtilService>(CsrUtilService);
     certUtilService = module.get<CertUtilService>(CertUtilService);
     domainsService = module.get<DomainsService>(DomainsService);
+    billingService = module.get(BillingService);
   });
 
   it('should be defined', () => {
@@ -673,7 +675,7 @@ describe('TlsService', () => {
         { certId: 1 },
         { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
       );
-      expect(result).toEqual({ id: 1, status: 'renewing' });
+      expect(result).toEqual({ id: 1, status: 'renewing', skipped: false });
     });
 
     it('throws BadRequestException when cert is not issued', async () => {
@@ -685,6 +687,133 @@ describe('TlsService', () => {
       await expect(service.renew(1, userId)).rejects.toThrow(
         BadRequestException,
       );
+    });
+
+    describe('with ifDue', () => {
+      const DAY = 86_400_000;
+      const expiringIn = (days: number) =>
+        new Date(Date.now() + days * DAY + 60_000);
+
+      it('forces renewal without ifDue even when far from expiry', async () => {
+        mockRepository.findOneBy.mockResolvedValue({
+          ...issuedCert,
+          expiresAt: expiringIn(80),
+        });
+
+        const result = await service.renew(1, userId);
+
+        expect(result).toEqual({ id: 1, status: 'renewing', skipped: false });
+        expect(mockQueue.add).toHaveBeenCalled();
+        expect(billingService.resolveUserTier).toHaveBeenCalledTimes(1); // limits only
+      });
+
+      it('skips without touching status, quota or queue when outside the window', async () => {
+        const expiresAt = expiringIn(60);
+        mockRepository.findOneBy.mockResolvedValue({
+          ...issuedCert,
+          expiresAt,
+        });
+        billingService.resolveUserTier.mockResolvedValue('starter');
+
+        const result = await service.renew(1, userId, { ifDue: true });
+
+        expect(result).toEqual({
+          id: 1,
+          status: 'issued',
+          skipped: true,
+          reason: 'not_due',
+          expiresAt: expiresAt.toISOString(),
+          renewalWindowDays: 30,
+        });
+        expect(mockRepository.update).not.toHaveBeenCalled();
+        expect(mockQueue.add).not.toHaveBeenCalled();
+        // resolveUserTier is called once for the window; enforceCertLimits
+        // would call it again and count certs
+        expect(billingService.resolveUserTier).toHaveBeenCalledTimes(1);
+        expect(mockRepository.count).not.toHaveBeenCalled();
+      });
+
+      it('renews when inside the window', async () => {
+        mockRepository.findOneBy.mockResolvedValue({
+          ...issuedCert,
+          expiresAt: expiringIn(20),
+        });
+        billingService.resolveUserTier.mockResolvedValue('starter');
+
+        const result = await service.renew(1, userId, { ifDue: true });
+
+        expect(result).toEqual({ id: 1, status: 'renewing', skipped: false });
+        expect(mockRepository.update).toHaveBeenCalledWith(1, {
+          status: 'renewing',
+        });
+        expect(mockQueue.add).toHaveBeenCalledWith(
+          'tlsCertRenewal',
+          { certId: 1 },
+          expect.any(Object),
+        );
+      });
+
+      it('uses the 5-day free window: 20 days out is skipped', async () => {
+        mockRepository.findOneBy.mockResolvedValue({
+          ...issuedCert,
+          expiresAt: expiringIn(20),
+        });
+        billingService.resolveUserTier.mockResolvedValue('free');
+
+        const result = await service.renew(1, userId, { ifDue: true });
+
+        expect(result).toMatchObject({ skipped: true, renewalWindowDays: 5 });
+        expect(mockQueue.add).not.toHaveBeenCalled();
+      });
+
+      it('uses the 5-day free window: 4 days out renews', async () => {
+        mockRepository.findOneBy.mockResolvedValue({
+          ...issuedCert,
+          expiresAt: expiringIn(4),
+        });
+        billingService.resolveUserTier.mockResolvedValue('free');
+
+        const result = await service.renew(1, userId, { ifDue: true });
+
+        expect(result).toEqual({ id: 1, status: 'renewing', skipped: false });
+        expect(mockQueue.add).toHaveBeenCalled();
+      });
+
+      it('resolves the window from the cert owner', async () => {
+        mockRepository.findOneBy.mockResolvedValue({
+          ...issuedCert,
+          userId: 'owner-1',
+          expiresAt: expiringIn(60),
+        });
+
+        await service.renew(1, userId, { ifDue: true });
+
+        expect(billingService.resolveUserTier).toHaveBeenCalledWith('owner-1');
+      });
+
+      it('renews when the cert has no expiresAt', async () => {
+        mockRepository.findOneBy.mockResolvedValue({
+          ...issuedCert,
+          expiresAt: null,
+        });
+
+        const result = await service.renew(1, userId, { ifDue: true });
+
+        expect(result).toEqual({ id: 1, status: 'renewing', skipped: false });
+      });
+
+      it('still rejects a cert that is not issued', async () => {
+        mockRepository.findOneBy.mockResolvedValue({
+          ...issuedCert,
+          status: 'failed',
+          expiresAt: expiringIn(60),
+        });
+
+        await expect(service.renew(1, userId, { ifDue: true })).rejects.toThrow(
+          BadRequestException,
+        );
+        expect(mockQueue.add).not.toHaveBeenCalled();
+      });
     });
 
     it('throws BadRequestException when CSR data is missing', async () => {

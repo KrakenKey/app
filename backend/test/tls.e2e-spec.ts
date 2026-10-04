@@ -259,6 +259,29 @@ describe('TLS Certificates (e2e)', () => {
           expect(res.body.status).toBe('renewing');
         }));
 
+    it('returns 200 and passes ifDue when the renewal is skipped', async () => {
+      const skipped = {
+        id: 1,
+        status: 'issued',
+        skipped: true,
+        reason: 'not_due',
+        expiresAt: '2026-12-01T00:00:00.000Z',
+        renewalWindowDays: 30,
+      };
+      mockTlsService.renew.mockResolvedValueOnce(skipped);
+
+      const res = await request(app.getHttpServer())
+        .post('/certs/tls/1/renew?ifDue=true')
+        .expect(200);
+
+      expect(res.body).toEqual(skipped);
+      expect(mockTlsService.renew).toHaveBeenLastCalledWith(
+        1,
+        expect.any(String),
+        { ifDue: true },
+      );
+    });
+
     it('returns 400 when cert not in issued state', async () => {
       mockTlsService.renew.mockRejectedValueOnce(
         new BadRequestException('Certificate is not in issued state'),

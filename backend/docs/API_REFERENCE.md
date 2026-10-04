@@ -358,7 +358,36 @@ Update certificate metadata.
 
 ### POST /certs/tls/:id/renew
 
-Manually queue a renewal for an `issued` certificate. Creates a new ACME order using the original CSR.
+Manually queue a renewal for an `issued` certificate. Creates a new ACME order using the original CSR. By default the renewal always runs, whatever the expiry date, so it can be used to replace a certificate right away (for example after a key compromise). Each renewal counts against the monthly certificate limit.
+
+**Query parameters:**
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `ifDue` | boolean | `false` | Only renew if the certificate is inside its plan's renewal window (Free: 5 days before expiry, paid plans: 30 days, the same window auto-renewal uses). Only the string `true` turns it on. |
+
+Use `ifDue=true` when calling renew on a schedule (cron, systemd timer, CI): it renews once the certificate is due and does nothing on the other days, so no quota is used. A certificate with no recorded expiry is always renewed. The status and CSR checks run first either way, so a certificate that is not `issued` still returns `400`.
+
+**Response `201` (renewal queued):**
+```json
+{
+  "id": 42,
+  "status": "renewing",
+  "skipped": false
+}
+```
+
+**Response `200` (`ifDue=true`, not due yet; nothing queued, status unchanged):**
+```json
+{
+  "id": 42,
+  "status": "issued",
+  "skipped": true,
+  "reason": "not_due",
+  "expiresAt": "2026-12-20T09:15:00.000Z",
+  "renewalWindowDays": 30
+}
+```
 
 ### POST /certs/tls/:id/retry
 

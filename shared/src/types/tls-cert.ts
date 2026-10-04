@@ -44,6 +44,17 @@ export interface CreateTlsCertResponse {
 export interface RenewTlsCertResponse {
   id: number;
   status: CertStatus;
+  /**
+   * True when the request used `ifDue=true` and the certificate is not yet
+   * inside its renewal window. Nothing was queued and the status is unchanged.
+   */
+  skipped: boolean;
+  /** Why the renewal was skipped. Only set when `skipped` is true. */
+  reason?: 'not_due';
+  /** Current expiry (ISO 8601). Only set when `skipped` is true. */
+  expiresAt?: string;
+  /** The plan's renewal window in days. Only set when `skipped` is true. */
+  renewalWindowDays?: number;
 }
 
 export interface RetryTlsCertResponse {
