@@ -36,7 +36,25 @@ describe('HttpExceptionFilter', () => {
       expect.objectContaining({
         statusCode: 404,
         message: 'Not found',
+        error: 'Not Found',
         path: '/test',
+      }),
+    );
+  });
+
+  it('labels a string-message 429 as Too Many Requests', () => {
+    const exception = new HttpException(
+      'Too many failed API key attempts. Try again later.',
+      HttpStatus.TOO_MANY_REQUESTS,
+    );
+
+    filter.catch(exception, mockHost);
+
+    expect(mockResponse.status).toHaveBeenCalledWith(429);
+    expect(mockResponse.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 429,
+        error: 'Too Many Requests',
       }),
     );
   });
