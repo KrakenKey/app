@@ -25,6 +25,7 @@ describe('AuthController', () => {
       getLoginRedirect: jest.fn(),
       getRegisterRedirect: jest.fn(),
       handleCallback: jest.fn(),
+      getLogoutUrl: jest.fn(),
       createApiKey: jest.fn(),
       listApiKeys: jest.fn(),
       revokeApiKey: jest.fn(),
@@ -110,6 +111,27 @@ describe('AuthController', () => {
         }),
       );
       expect(res.redirect).toHaveBeenCalledWith(302, redirect.url);
+    });
+  });
+
+  describe('getLogoutUrl', () => {
+    it('returns the logout URL from authService.getLogoutUrl()', () => {
+      const logout = {
+        url: 'https://auth.example.com/application/o/krakenkey/end-session/',
+        postLogoutRedirectUri: 'https://app.example.com',
+      };
+      mockAuthService.getLogoutUrl.mockReturnValue(logout);
+
+      expect(controller.getLogoutUrl()).toEqual(logout);
+      expect(mockAuthService.getLogoutUrl).toHaveBeenCalled();
+    });
+
+    it('needs no auth guard', () => {
+      const guards = Reflect.getMetadata(
+        '__guards__',
+        AuthController.prototype.getLogoutUrl,
+      ) as unknown[] | undefined;
+      expect(guards).toBeUndefined();
     });
   });
 

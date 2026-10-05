@@ -36,6 +36,7 @@ import { DeviceAuthService } from './services/device-auth.service';
 import { RateLimitCategoryDecorator } from '../throttler/decorators/rate-limit-category.decorator';
 import { RateLimitCategory } from '../throttler/interfaces/rate-limit-category.enum';
 import { SessionOnly } from './decorators/session-only.decorator';
+import type { LogoutUrlResponse } from '@krakenkey/shared';
 
 const OAUTH_STATE_COOKIE = 'oauth_state';
 const OAUTH_STATE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
@@ -83,6 +84,37 @@ export class AuthController {
       path: '/auth/callback',
     });
     res.redirect(302, url);
+  }
+
+  @Get('logout-url')
+  @ApiOperation({
+    summary: 'Get the SSO logout URL',
+    description:
+      'Returns the Authentik end-session endpoint and the post-logout redirect URI. ' +
+      'The client adds its ID token as id_token_hint and sends the browser there, ' +
+      'so the token goes to Authentik and not to this API.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'End-session URL and post-logout redirect URI',
+    schema: {
+      type: 'object',
+      properties: {
+        url: {
+          type: 'string',
+          example:
+            'https://auth.krakenkey.io/application/o/krakenkey/end-session/',
+        },
+        postLogoutRedirectUri: {
+          type: 'string',
+          example: 'https://app.krakenkey.io',
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 500, description: 'Authentik is not configured' })
+  getLogoutUrl(): LogoutUrlResponse {
+    return this.authService.getLogoutUrl();
   }
 
   @Get('callback')
