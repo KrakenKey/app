@@ -8,6 +8,7 @@ import {
   Index,
 } from 'typeorm';
 import { ApiHideProperty } from '@nestjs/swagger';
+import type { ApiKeyScope } from '@krakenkey/shared';
 import { User } from '../../users/entities/user.entity';
 
 @Entity()
@@ -36,6 +37,25 @@ export class UserApiKey {
 
   @Column({ type: 'text', nullable: true })
   lastUsedIp?: string | null;
+
+  /**
+   * Scopes the key may use; null = full access. Set at creation and never
+   * changed, so a key can't widen itself. See ApiKeyScope in @krakenkey/shared.
+   */
+  @Column({ type: 'text', array: true, nullable: true })
+  scopes?: ApiKeyScope[] | null;
+
+  /** Domains the key may act on (certs, domains, endpoints); null = all. */
+  @Column({ type: 'uuid', array: true, nullable: true })
+  allowedDomainIds?: string[] | null;
+
+  /** Certificates the key may act on; null = all. Blocks new issuance. */
+  @Column({ type: 'int', array: true, nullable: true })
+  allowedCertIds?: number[] | null;
+
+  /** IPs/CIDRs the key may be used from; null = anywhere. */
+  @Column({ type: 'text', array: true, nullable: true })
+  allowedIps?: string[] | null;
 
   @CreateDateColumn()
   createdAt: Date;

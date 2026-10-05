@@ -22,6 +22,7 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { TlsService } from './tls.service';
+import { ApiKeyAccessService } from '../../auth/access/api-key-access.service';
 import { CreateTlsCrtDto } from './dto/create-tls-crt.dto';
 import { UpdateTlsCrtDto } from './dto/update-tls-crt.dto';
 import { RevokeTlsCrtDto } from './dto/revoke-tls-crt.dto';
@@ -31,15 +32,30 @@ import { Roles } from '../../auth/decorators/roles.decorator';
 import type { RequestWithUser } from '../../auth/interfaces/request-with-user.interface';
 import { RateLimitCategoryDecorator } from '../../throttler/decorators/rate-limit-category.decorator';
 import { RateLimitCategory } from '../../throttler/interfaces/rate-limit-category.enum';
+import { RequireScope } from '../../auth/decorators/require-scope.decorator';
 
 @Controller('certs/tls')
 @ApiTags('TLS Certificates')
 @ApiBearerAuth()
 @UseGuards(JwtOrApiKeyGuard, RoleGuard)
 export class TlsController {
-  constructor(private readonly tlsService: TlsService) {}
+  constructor(
+    private readonly tlsService: TlsService,
+    private readonly keyAccess: ApiKeyAccessService,
+  ) {}
+
+  /**
+   * For API keys limited to specific domains or certificates: 404 unless
+   * the certificate is inside those limits. No-op for everyone else.
+   */
+  private async checkKeyAccess(req: RequestWithUser, id: number) {
+    if (!this.keyAccess.isRestricted(req.user)) return;
+    const cert = await this.tlsService.findOne(id, req.user.userId);
+    await this.keyAccess.assertCert(req.user, cert);
+  }
 
   @Get()
+  @RequireScope('certs:read')
   @ApiOperation({ summary: 'List all TLS certificates' })
   @ApiResponse({
     status: 200,
@@ -47,11 +63,13 @@ export class TlsController {
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
-  findAll(@Request() req: RequestWithUser) {
-    return this.tlsService.findAll(req.user.userId);
+  async findAll(@Request() req: RequestWithUser) {
+    const certs = await this.tlsService.findAll(req.user.userId);
+    return this.keyAccess.filterCerts(req.user, certs);
   }
 
   @Post()
+  @RequireScope('certs:issue')
   @ApiOperation({ summary: 'Request a new TLS certificate' })
   @ApiResponse({ status: 201, description: 'Certificate request submitted' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
@@ -67,25 +85,33 @@ export class TlsController {
   })
   @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.EXPENSIVE)
-  create(
+  async create(
     @Request() req: RequestWithUser,
     @Body() createTlsCrtDto: CreateTlsCrtDto,
   ) {
-    return this.tlsService.create(req.user.userId, createTlsCrtDto);
+    const restrictToHostnames = await this.keyAccess.issuanceHostnames(
+      req.user,
+    );
+    return this.tlsService.create(req.user.userId, createTlsCrtDto, {
+      restrictToHostnames,
+    });
   }
 
   @Get(':id/details')
+  @RequireScope('certs:read')
   @ApiOperation({ summary: 'Get parsed certificate details from issued cert' })
   @ApiParam({ name: 'id', description: 'Certificate ID' })
   @ApiResponse({ status: 200, description: 'Parsed certificate details' })
   @ApiResponse({ status: 400, description: 'Certificate not yet issued' })
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
-  getDetails(@Request() req: RequestWithUser, @Param('id') id: string) {
+  async getDetails(@Request() req: RequestWithUser, @Param('id') id: string) {
+    await this.checkKeyAccess(req, +id);
     return this.tlsService.getDetails(+id, req.user.userId);
   }
 
   @Get(':id/chain')
+  @RequireScope('certs:read')
   @ApiOperation({
     summary: 'Get full certificate chain with parsed details',
   })
@@ -98,21 +124,26 @@ export class TlsController {
   @ApiResponse({ status: 400, description: 'Certificate not yet issued' })
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
-  getChain(@Request() req: RequestWithUser, @Param('id') id: string) {
+  async getChain(@Request() req: RequestWithUser, @Param('id') id: string) {
+    await this.checkKeyAccess(req, +id);
     return this.tlsService.getChain(+id, req.user.userId);
   }
 
   @Get(':id')
+  @RequireScope('certs:read')
   @ApiOperation({ summary: 'Get certificate details' })
   @ApiParam({ name: 'id', description: 'Certificate ID' })
   @ApiResponse({ status: 200, description: 'Certificate details' })
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
-  findOne(@Request() req: RequestWithUser, @Param('id') id: string) {
-    return this.tlsService.findOne(+id, req.user.userId);
+  async findOne(@Request() req: RequestWithUser, @Param('id') id: string) {
+    const cert = await this.tlsService.findOne(+id, req.user.userId);
+    await this.keyAccess.assertCert(req.user, cert);
+    return cert;
   }
 
   @Patch(':id')
+  @RequireScope('certs:renew')
   @ApiOperation({ summary: 'Update a certificate' })
   @ApiParam({ name: 'id', description: 'Certificate ID' })
   @ApiResponse({ status: 200, description: 'Certificate updated' })
@@ -123,15 +154,17 @@ export class TlsController {
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
-  update(
+  async update(
     @Request() req: RequestWithUser,
     @Param('id') id: string,
     @Body() updateTlsCrtDto: UpdateTlsCrtDto,
   ) {
+    await this.checkKeyAccess(req, +id);
     return this.tlsService.update(+id, req.user.userId, updateTlsCrtDto);
   }
 
   @Post(':id/revoke')
+  @RequireScope('certs:revoke')
   @ApiOperation({ summary: 'Revoke a certificate' })
   @ApiParam({ name: 'id', description: 'Certificate ID' })
   @ApiResponse({ status: 200, description: 'Certificate revocation initiated' })
@@ -143,15 +176,17 @@ export class TlsController {
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.EXPENSIVE)
-  revoke(
+  async revoke(
     @Request() req: RequestWithUser,
     @Param('id') id: string,
     @Body() revokeTlsCrtDto: RevokeTlsCrtDto,
   ) {
+    await this.checkKeyAccess(req, +id);
     return this.tlsService.revoke(+id, req.user.userId, revokeTlsCrtDto.reason);
   }
 
   @Delete(':id')
+  @RequireScope('certs:revoke')
   @ApiOperation({ summary: 'Delete a failed or revoked certificate' })
   @ApiParam({ name: 'id', description: 'Certificate ID' })
   @ApiResponse({ status: 200, description: 'Certificate deleted' })
@@ -166,11 +201,13 @@ export class TlsController {
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
-  remove(@Request() req: RequestWithUser, @Param('id') id: string) {
+  async remove(@Request() req: RequestWithUser, @Param('id') id: string) {
+    await this.checkKeyAccess(req, +id);
     return this.tlsService.remove(+id, req.user.userId);
   }
 
   @Post(':id/renew')
+  @RequireScope('certs:renew')
   @ApiOperation({ summary: 'Renew a certificate' })
   @ApiParam({ name: 'id', description: 'Certificate ID' })
   @ApiQuery({
@@ -209,6 +246,7 @@ export class TlsController {
     @Res({ passthrough: true }) res: Response,
     @Query('ifDue') ifDue?: string,
   ) {
+    await this.checkKeyAccess(req, +id);
     const result = await this.tlsService.renew(+id, req.user.userId, {
       ifDue: ifDue === 'true',
     });
@@ -218,6 +256,7 @@ export class TlsController {
   }
 
   @Post(':id/retry')
+  @RequireScope('certs:issue')
   @ApiOperation({ summary: 'Retry a failed certificate issuance' })
   @ApiParam({ name: 'id', description: 'Certificate ID' })
   @ApiResponse({ status: 200, description: 'Certificate retry initiated' })
@@ -229,7 +268,8 @@ export class TlsController {
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.EXPENSIVE)
-  retry(@Request() req: RequestWithUser, @Param('id') id: string) {
+  async retry(@Request() req: RequestWithUser, @Param('id') id: string) {
+    await this.checkKeyAccess(req, +id);
     return this.tlsService.retry(+id, req.user.userId);
   }
 }

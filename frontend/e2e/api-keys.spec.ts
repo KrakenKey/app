@@ -41,7 +41,7 @@ test.describe('API key management', () => {
 
     await page.goto('/dashboard/api-keys');
 
-    const nameInput = page.getByPlaceholder(/name/i);
+    const nameInput = page.getByLabel('Name', { exact: true });
     await nameInput.fill('new-key');
     await page.getByRole('button', { name: /create/i }).click();
 
@@ -69,7 +69,7 @@ test.describe('API key management', () => {
     });
 
     await page.goto('/dashboard/api-keys');
-    const nameInput = page.getByPlaceholder(/name/i);
+    const nameInput = page.getByLabel('Name', { exact: true });
     await nameInput.fill('copy-test');
     await page.getByRole('button', { name: /create/i }).click();
 
@@ -92,6 +92,48 @@ test.describe('API key management', () => {
     await expect(page.getByText('Your API Keys (2)')).toBeVisible();
     // Only the two active keys can be revoked
     await expect(page.getByRole('button', { name: /revoke/i })).toHaveCount(2);
+  });
+
+  test('creates a certificate renewal key limited to an IP', async ({
+    page,
+  }) => {
+    let body: Record<string, unknown> | undefined;
+    await page.route(KEYS, (route) => {
+      if (route.request().method() === 'POST') {
+        body = route.request().postDataJSON();
+        return route.fulfill({
+          status: 201,
+          json: {
+            id: 'key_004',
+            name: 'pfe-renewal',
+            apiKey: 'kk_live_renewal_only',
+            scopes: body?.scopes,
+            allowedDomainIds: null,
+            allowedCertIds: null,
+            allowedIps: body?.allowedIps,
+          },
+        });
+      }
+      return route.fulfill({ status: 200, json: mockApiKeys });
+    });
+
+    await page.goto('/dashboard/api-keys');
+    await page.getByLabel('Name', { exact: true }).fill('pfe-renewal');
+    await page.getByRole('radio', { name: /certificate renewal/i }).check();
+    await page.getByRole('button', { name: /restrictions/i }).click();
+    await page.getByLabel(/allowed ips/i).fill('203.0.113.7');
+    await page.getByRole('button', { name: /create/i }).click();
+
+    await expect(page.getByText('kk_live_renewal_only')).toBeVisible();
+    expect(body).toMatchObject({
+      name: 'pfe-renewal',
+      allowedIps: ['203.0.113.7'],
+    });
+    expect([...(body?.scopes as string[])].sort()).toEqual([
+      'account:read',
+      'certs:read',
+      'certs:renew',
+    ]);
   });
 
   test('can revoke an API key', async ({ page }) => {

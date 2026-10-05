@@ -9,6 +9,7 @@ import { Strategy } from 'passport-custom';
 import { Request } from 'express';
 import { AuthService } from '../auth.service';
 import { ApiKeySecurityService } from '../services/api-key-security.service';
+import type { ApiKeyContext } from '../api-key-restrictions';
 
 @Injectable()
 export class ApiKeyStrategy extends PassportStrategy(Strategy, 'api-key') {
@@ -45,10 +46,17 @@ export class ApiKeyStrategy extends PassportStrategy(Strategy, 'api-key') {
       throw new UnauthorizedException('Invalid API key');
     }
 
+    const keyContext: ApiKeyContext = {
+      id: record.id,
+      scopes: record.scopes ?? null,
+      allowedDomainIds: record.allowedDomainIds ?? null,
+      allowedCertIds: record.allowedCertIds ?? null,
+    };
     return {
       userId: record.user.id,
       apiKeyId: record.id,
       groups: record.user.groups,
+      apiKey: keyContext,
     };
   }
 }

@@ -9,6 +9,7 @@ import cookieParser from 'cookie-parser';
 import { DataSource } from 'typeorm';
 import { JwtOrApiKeyGuard } from '../../src/auth/guards/jwt-or-api-key.guard';
 import { HttpExceptionFilter } from '../../src/filters/http-exception.filter';
+import { ApiKeyAccessService } from '../../src/auth/access/api-key-access.service';
 import { MOCK_USER } from './mock-data';
 
 export interface CreateTestAppOptions {
@@ -31,6 +32,11 @@ export interface CreateTestAppOptions {
    * user, which passes every @Roles() check.
    */
   orgRole?: string | null;
+  /**
+   * Domains ApiKeyAccessService resolves for keys limited to domain ids.
+   * Only matters for requests made with such a key.
+   */
+  keyAccessDomains?: { id: string; hostname: string }[];
 }
 
 const PASS_THROUGH_GUARD = (user: Record<string, any>) => ({
@@ -55,6 +61,7 @@ export async function createTestApp(options: CreateTestAppOptions) {
     extraGuards = [],
     mockUser = MOCK_USER,
     orgRole = null,
+    keyAccessDomains = [],
   } = options;
 
   // RoleGuard looks up the caller's org role through the DataSource; serve it
@@ -71,7 +78,21 @@ export async function createTestApp(options: CreateTestAppOptions) {
   let builder: TestingModuleBuilder = Test.createTestingModule({
     imports,
     controllers,
-    providers: [roleLookup, ...providers],
+    // ApiKeyAccessService comes from a global module in the app; provide it
+    // here (before the caller's providers, so a test can replace it).
+    providers: [
+      roleLookup,
+      {
+        provide: ApiKeyAccessService,
+        useValue: new ApiKeyAccessService({
+          find: ({ where }: { where: { id: { _value: string[] } } }) =>
+            Promise.resolve(
+              keyAccessDomains.filter((d) => where.id._value.includes(d.id)),
+            ),
+        } as never),
+      },
+      ...providers,
+    ],
   });
 
   if (guardMode === 'passthrough') {

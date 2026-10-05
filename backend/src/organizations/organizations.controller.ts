@@ -31,6 +31,7 @@ import type { RequestWithUser } from '../auth/interfaces/request-with-user.inter
 import { RateLimitCategoryDecorator } from '../throttler/decorators/rate-limit-category.decorator';
 import { RateLimitCategory } from '../throttler/interfaces/rate-limit-category.enum';
 import { SessionOnly } from '../auth/decorators/session-only.decorator';
+import { RequireScope } from '../auth/decorators/require-scope.decorator';
 
 @Controller('organizations')
 @ApiTags('Organizations')
@@ -58,6 +59,7 @@ export class OrganizationsController {
    * Only members of the org may call this.
    */
   @Get(':id')
+  @RequireScope('account:read')
   @ApiOperation({ summary: 'Get organization details' })
   @ApiParam({ name: 'id', description: 'Organization UUID' })
   @ApiResponse({ status: 200, description: 'Organization details' })

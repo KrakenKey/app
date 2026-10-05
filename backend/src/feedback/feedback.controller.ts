@@ -11,6 +11,7 @@ import { JwtOrApiKeyGuard } from '../auth/guards/jwt-or-api-key.guard';
 import type { RequestWithUser } from '../auth/interfaces/request-with-user.interface';
 import { RateLimitCategoryDecorator } from '../throttler/decorators/rate-limit-category.decorator';
 import { RateLimitCategory } from '../throttler/interfaces/rate-limit-category.enum';
+import { RequireScope } from '../auth/decorators/require-scope.decorator';
 
 @Controller('feedback')
 @ApiTags('Feedback')
@@ -20,6 +21,7 @@ export class FeedbackController {
   constructor(private readonly feedbackService: FeedbackService) {}
 
   @Post()
+  @RequireScope('account:write')
   @ApiOperation({ summary: 'Submit feedback' })
   @ApiResponse({ status: 201, description: 'Feedback submitted successfully' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })

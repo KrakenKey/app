@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   InternalServerErrorException,
   HttpException,
   Logger,
@@ -38,6 +39,7 @@ import { BillingService } from '../../billing/billing.service';
 import { PLAN_LIMITS } from '../../billing/constants/plan-limits';
 import type { SubscriptionPlan } from '@krakenkey/shared';
 import { daysUntilExpiry, renewalWindowDays } from './util/renewal-window';
+import { nameCovered } from '../../auth/api-key-restrictions';
 
 /**
  * Manages TLS certificate lifecycle through a job queue.
@@ -110,7 +112,11 @@ export class TlsService {
    * The background job (tlsCertIssuance) handles the actual ACME interaction.
    * Job retries 3 times with exponential backoff on failure.
    */
-  async create(userId: string, createTlsCrtDto: CreateTlsCrtDto) {
+  async create(
+    userId: string,
+    createTlsCrtDto: CreateTlsCrtDto,
+    opts: { restrictToHostnames?: string[] } = {},
+  ) {
     const csr = await this.csrUtilService.validateAndParse(
       createTlsCrtDto.csrPem,
     );
@@ -129,6 +135,18 @@ export class TlsService {
     const allowedDomainNames = userDomains.map((d) => d.hostname);
     this.csrUtilService.isAuthorized(csr.domains, allowedDomainNames);
     // This throws BadRequestException if any domain is unauthorized
+
+    // An API key limited to specific domains may only request names under them.
+    if (opts.restrictToHostnames) {
+      const outside = csr.domains.filter(
+        (name) => !nameCovered(name, opts.restrictToHostnames!),
+      );
+      if (outside.length > 0) {
+        throw new ForbiddenException(
+          `This API key cannot request certificates for: ${outside.join(', ')}`,
+        );
+      }
+    }
 
     // Idempotency: a retried/duplicated request with the same CSR within the
     // idempotency window returns the original cert instead of creating another.

@@ -14,6 +14,7 @@ import { RateLimitCategory } from '../throttler/interfaces/rate-limit-category.e
 import { ProbesService } from './probes.service';
 import { RegisterProbeDto } from './dto/register-probe.dto';
 import { SubmitReportDto } from './dto/submit-report.dto';
+import { RequireScope } from '../auth/decorators/require-scope.decorator';
 
 @Controller('probes')
 @ApiTags('Probes')
@@ -22,6 +23,7 @@ export class ProbesController {
   constructor(private readonly probesService: ProbesService) {}
 
   @Post('register')
+  @RequireScope('probes:report')
   @UseGuards(ServiceOrUserKeyGuard)
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
   register(@Request() req: any, @Body() dto: RegisterProbeDto) {
@@ -29,6 +31,7 @@ export class ProbesController {
   }
 
   @Post('report')
+  @RequireScope('probes:report')
   @UseGuards(ServiceOrUserKeyGuard)
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
   report(@Request() req: any, @Body() dto: SubmitReportDto) {
@@ -36,6 +39,7 @@ export class ProbesController {
   }
 
   @Get(':probeId/config')
+  @RequireScope('probes:report')
   @UseGuards(ServiceOrUserKeyGuard)
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
   getConfig(@Request() req: any, @Param('probeId') probeId: string) {

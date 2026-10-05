@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { DomainsController } from './domains.controller';
 import { DomainsService } from './domains.service';
+import { ApiKeyAccessService } from '../auth/access/api-key-access.service';
 import { RoleGuard } from '../auth/guards/role.guard';
 
 describe('DomainsController', () => {
@@ -25,6 +26,12 @@ describe('DomainsController', () => {
         {
           provide: DomainsService,
           useValue: mockService,
+        },
+        {
+          provide: ApiKeyAccessService,
+          useValue: new ApiKeyAccessService({
+            find: jest.fn().mockResolvedValue([]),
+          } as any),
         },
       ],
     })
@@ -51,11 +58,11 @@ describe('DomainsController', () => {
   });
 
   describe('findAll', () => {
-    it('passes userId to domainsService.findAll()', () => {
+    it('passes userId to domainsService.findAll()', async () => {
       const domains = [{ id: 'd1' }];
       mockService.findAll.mockReturnValue(domains);
 
-      expect(controller.findAll(mockReq)).toEqual(domains);
+      expect(await controller.findAll(mockReq)).toEqual(domains);
       expect(mockService.findAll).toHaveBeenCalledWith(userId);
     });
   });

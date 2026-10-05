@@ -8,6 +8,7 @@ import { CertsModule } from './certs/certs.module';
 import { BullModule } from '@nestjs/bullmq';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AuthModule } from './auth/auth.module';
+import { ApiKeyAccessModule } from './auth/access/api-key-access.module';
 import { UsersModule } from './users/users.module';
 import { DomainsModule } from './domains/domains.module';
 import { KKThrottlerModule } from './throttler/throttler.module';
@@ -66,6 +67,7 @@ import { PublicScanModule } from './public-scan/public-scan.module';
     }),
     KKThrottlerModule,
     AuthModule,
+    ApiKeyAccessModule,
     UsersModule,
     DomainsModule,
     BillingModule,
