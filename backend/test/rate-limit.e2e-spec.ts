@@ -9,6 +9,7 @@ import { TIER_RESOLVER } from '../src/throttler/interfaces/tier-resolver.interfa
 import { TlsController } from '../src/certs/tls/tls.controller';
 import { TlsService } from '../src/certs/tls/tls.service';
 import { JwtOrApiKeyGuard } from '../src/auth/guards/jwt-or-api-key.guard';
+import { ApiKeyAccessService } from '../src/auth/access/api-key-access.service';
 
 describe('Rate Limiting (e2e)', () => {
   let app: INestApplication;
@@ -25,6 +26,10 @@ describe('Rate Limiting (e2e)', () => {
       ],
       controllers: [TlsController],
       providers: [
+        {
+          provide: ApiKeyAccessService,
+          useValue: new ApiKeyAccessService({ find: async () => [] } as never),
+        },
         {
           provide: APP_GUARD,
           useClass: TierAwareThrottlerGuard,
