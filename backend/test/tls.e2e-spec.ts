@@ -106,9 +106,11 @@ describe('TLS Certificates (e2e)', () => {
             id: 1,
             status: 'pending',
           });
-          expect(mockTlsService.create).toHaveBeenCalledWith(MOCK_USER.userId, {
-            csrPem: MOCK_CSR_PEM,
-          });
+          expect(mockTlsService.create).toHaveBeenCalledWith(
+            MOCK_USER.userId,
+            { csrPem: MOCK_CSR_PEM },
+            { restrictToHostnames: undefined },
+          );
         }));
   });
 

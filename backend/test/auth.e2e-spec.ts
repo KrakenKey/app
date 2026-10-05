@@ -204,6 +204,12 @@ describe('Auth (e2e)', () => {
         MOCK_USER.userId,
         'default',
         undefined,
+        {
+          scopes: undefined,
+          allowedDomainIds: undefined,
+          allowedCertIds: undefined,
+          allowedIps: undefined,
+        },
       );
     });
 
