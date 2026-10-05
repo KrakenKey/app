@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { EndpointsController } from './endpoints.controller';
 import { EndpointsService } from './endpoints.service';
+import { ApiKeyAccessService } from '../auth/access/api-key-access.service';
 import { RoleGuard } from '../auth/guards/role.guard';
 import { MetricsService } from '../metrics/metrics.service';
 import type { RequestWithUser } from '../auth/interfaces/request-with-user.interface';
@@ -32,6 +33,12 @@ describe('EndpointsController', () => {
       controllers: [EndpointsController],
       providers: [
         { provide: EndpointsService, useValue: service },
+        {
+          provide: ApiKeyAccessService,
+          useValue: new ApiKeyAccessService({
+            find: jest.fn().mockResolvedValue([]),
+          } as any),
+        },
         {
           provide: MetricsService,
           useValue: { authTotal: { inc: jest.fn() } },

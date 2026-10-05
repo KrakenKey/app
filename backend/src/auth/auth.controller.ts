@@ -37,6 +37,7 @@ import { RateLimitCategoryDecorator } from '../throttler/decorators/rate-limit-c
 import { RateLimitCategory } from '../throttler/interfaces/rate-limit-category.enum';
 import { SessionOnly } from './decorators/session-only.decorator';
 import type { LogoutUrlResponse } from '@krakenkey/shared';
+import { RequireScope } from './decorators/require-scope.decorator';
 
 const OAUTH_STATE_COOKIE = 'oauth_state';
 const OAUTH_STATE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
@@ -137,6 +138,7 @@ export class AuthController {
   }
 
   @Get('profile')
+  @RequireScope('account:read')
   @UseGuards(JwtOrApiKeyGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current user profile with resource counts' })
@@ -148,6 +150,7 @@ export class AuthController {
   }
 
   @Patch('profile')
+  @RequireScope('account:write')
   @UseGuards(JwtOrApiKeyGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update current user profile' })
@@ -159,6 +162,7 @@ export class AuthController {
   }
 
   @Get('api-keys')
+  @RequireScope('account:read')
   @UseGuards(JwtOrApiKeyGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'List API keys for the current user' })
@@ -200,10 +204,17 @@ export class AuthController {
       req.user.userId,
       dto.name,
       dto.expiresAt,
+      {
+        scopes: dto.scopes,
+        allowedDomainIds: dto.allowedDomainIds,
+        allowedCertIds: dto.allowedCertIds,
+        allowedIps: dto.allowedIps,
+      },
     );
   }
 
   @Post('confirm-auto-renewal')
+  @RequireScope('account:write')
   @UseGuards(JwtOrApiKeyGuard)
   @ApiBearerAuth()
   @ApiOperation({

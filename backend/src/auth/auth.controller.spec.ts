@@ -218,6 +218,12 @@ describe('AuthController', () => {
         userId,
         'my-key',
         '2027-01-01T00:00:00.000Z',
+        {
+          scopes: undefined,
+          allowedDomainIds: undefined,
+          allowedCertIds: undefined,
+          allowedIps: undefined,
+        },
       );
       expect(result).toEqual(response);
     });

@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { TlsController } from './tls.controller';
 import { TlsService } from './tls.service';
+import { ApiKeyAccessService } from '../../auth/access/api-key-access.service';
 import { RoleGuard } from '../../auth/guards/role.guard';
 
 describe('TlsController', () => {
@@ -31,6 +32,12 @@ describe('TlsController', () => {
           provide: TlsService,
           useValue: mockService,
         },
+        {
+          provide: ApiKeyAccessService,
+          useValue: new ApiKeyAccessService({
+            find: jest.fn().mockResolvedValue([]),
+          } as any),
+        },
       ],
     })
       .overrideGuard(RoleGuard)
@@ -45,33 +52,35 @@ describe('TlsController', () => {
   });
 
   describe('findAll', () => {
-    it('passes userId to service.findAll()', () => {
+    it('passes userId to service.findAll()', async () => {
       const certs = [{ id: 1, status: 'issued' }];
       mockService.findAll.mockReturnValue(certs);
 
-      expect(controller.findAll(mockReq)).toEqual(certs);
+      expect(await controller.findAll(mockReq)).toEqual(certs);
       expect(mockService.findAll).toHaveBeenCalledWith(userId);
     });
   });
 
   describe('create', () => {
-    it('passes userId and dto to service.create()', () => {
+    it('passes userId and dto to service.create()', async () => {
       const dto = {
         csrPem:
           '-----BEGIN CERTIFICATE REQUEST-----\nfoo\n-----END CERTIFICATE REQUEST-----',
       };
       mockService.create.mockReturnValue({ id: 1, status: 'pending' });
 
-      expect(controller.create(mockReq, dto as any)).toEqual({
+      expect(await controller.create(mockReq, dto as any)).toEqual({
         id: 1,
         status: 'pending',
       });
-      expect(mockService.create).toHaveBeenCalledWith(userId, dto);
+      expect(mockService.create).toHaveBeenCalledWith(userId, dto, {
+        restrictToHostnames: undefined,
+      });
     });
   });
 
   describe('getDetails', () => {
-    it('passes numeric id and userId to service.getDetails()', () => {
+    it('passes numeric id and userId to service.getDetails()', async () => {
       const details = {
         serialNumber: '03A1',
         issuer: 'CN=R3',
@@ -84,13 +93,13 @@ describe('TlsController', () => {
       };
       mockService.getDetails.mockReturnValue(details);
 
-      expect(controller.getDetails(mockReq, '42')).toEqual(details);
+      expect(await controller.getDetails(mockReq, '42')).toEqual(details);
       expect(mockService.getDetails).toHaveBeenCalledWith(42, userId);
     });
   });
 
   describe('getChain', () => {
-    it('passes numeric id and userId to service.getChain()', () => {
+    it('passes numeric id and userId to service.getChain()', async () => {
       const chainInfo = {
         leafCert: {
           serialNumber: '03A1',
@@ -107,38 +116,38 @@ describe('TlsController', () => {
       };
       mockService.getChain.mockReturnValue(chainInfo);
 
-      expect(controller.getChain(mockReq, '42')).toEqual(chainInfo);
+      expect(await controller.getChain(mockReq, '42')).toEqual(chainInfo);
       expect(mockService.getChain).toHaveBeenCalledWith(42, userId);
     });
   });
 
   describe('findOne', () => {
-    it('passes numeric id and userId to service.findOne()', () => {
+    it('passes numeric id and userId to service.findOne()', async () => {
       const cert = { id: 42, status: 'issued' };
       mockService.findOne.mockReturnValue(cert);
 
-      expect(controller.findOne(mockReq, '42')).toEqual(cert);
+      expect(await controller.findOne(mockReq, '42')).toEqual(cert);
       expect(mockService.findOne).toHaveBeenCalledWith(42, userId);
     });
   });
 
   describe('update', () => {
-    it('passes numeric id, userId, and dto to service.update()', () => {
+    it('passes numeric id, userId, and dto to service.update()', async () => {
       const dto = { autoRenew: true };
       mockService.update.mockReturnValue({ id: 1 });
 
-      void controller.update(mockReq, '1', dto as any);
+      await controller.update(mockReq, '1', dto as any);
 
       expect(mockService.update).toHaveBeenCalledWith(1, userId, dto);
     });
   });
 
   describe('revoke', () => {
-    it('passes numeric id, userId, and reason to service.revoke()', () => {
+    it('passes numeric id, userId, and reason to service.revoke()', async () => {
       const dto = { reason: 4 };
       mockService.revoke.mockReturnValue({ id: 1, status: 'revoked' });
 
-      expect(controller.revoke(mockReq, '1', dto as any)).toEqual({
+      expect(await controller.revoke(mockReq, '1', dto as any)).toEqual({
         id: 1,
         status: 'revoked',
       });
@@ -147,10 +156,10 @@ describe('TlsController', () => {
   });
 
   describe('remove', () => {
-    it('passes numeric id and userId to service.remove()', () => {
+    it('passes numeric id and userId to service.remove()', async () => {
       mockService.remove.mockReturnValue({ id: 1 });
 
-      void controller.remove(mockReq, '1');
+      await controller.remove(mockReq, '1');
 
       expect(mockService.remove).toHaveBeenCalledWith(1, userId);
     });
@@ -215,10 +224,10 @@ describe('TlsController', () => {
   });
 
   describe('retry', () => {
-    it('passes numeric id and userId to service.retry()', () => {
+    it('passes numeric id and userId to service.retry()', async () => {
       mockService.retry.mockReturnValue({ id: 1, status: 'pending' });
 
-      expect(controller.retry(mockReq, '1')).toEqual({
+      expect(await controller.retry(mockReq, '1')).toEqual({
         id: 1,
         status: 'pending',
       });

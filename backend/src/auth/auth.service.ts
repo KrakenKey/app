@@ -1,4 +1,6 @@
 import {
+  BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -22,14 +24,24 @@ import { BillingService } from '../billing/billing.service';
 import { PLAN_LIMITS } from '../billing/constants/plan-limits';
 import { EmailService } from '../notifications/email.service';
 import { ApiKeySecurityService } from './services/api-key-security.service';
+import { ipAllowed, parseIpEntry } from './api-key-restrictions';
 import type {
   ApiKey,
+  ApiKeyScope,
   AuthCallbackResponse,
   CreateApiKeyResponse,
   LogoutUrlResponse,
   SubscriptionPlan,
   UserProfile,
 } from '@krakenkey/shared';
+
+/** Restrictions chosen when a key is created; all optional, all fixed. */
+export interface ApiKeyRestrictions {
+  scopes?: ApiKeyScope[];
+  allowedDomainIds?: string[];
+  allowedCertIds?: number[];
+  allowedIps?: string[];
+}
 
 /** Revoked keys stay listed (and in the table) this long before the purge. */
 export const REVOKED_KEY_RETENTION_DAYS = 30;
@@ -293,7 +305,13 @@ export class AuthService implements OnModuleInit {
    * Keys are prefixed with 'kk_' and hashed (scrypt) before storage.
    * The raw key is returned only once - it cannot be retrieved later.
    */
-  async createApiKey(userId: string, name: string, expiresAt?: string) {
+  async createApiKey(
+    userId: string,
+    name: string,
+    expiresAt?: string,
+    restrictions: ApiKeyRestrictions = {},
+  ) {
+    const limits = await this.validateRestrictions(userId, restrictions);
     await this.assertApiKeyLimit(userId);
 
     const rawKey = `kk_${randomBytes(24).toString('hex')}`;
@@ -304,6 +322,7 @@ export class AuthService implements OnModuleInit {
       hash,
       user: { id: userId },
       ...(expiresAt ? { expiresAt: new Date(expiresAt) } : {}),
+      ...limits,
     });
     await this.userApiKeyRepo.save(apiKey);
 
@@ -311,8 +330,78 @@ export class AuthService implements OnModuleInit {
       apiKey: rawKey,
       id: apiKey.id,
       name: apiKey.name,
+      ...limits,
     };
     return response;
+  }
+
+  /**
+   * Checks the restrictions for a new key and returns them normalised, with
+   * null for "unrestricted". Domain and certificate ids must belong to the
+   * user or their organization, so a key can never point at someone else's
+   * resources (restrictions only narrow access, but a foreign id would
+   * still leak whether it exists).
+   */
+  private async validateRestrictions(
+    userId: string,
+    r: ApiKeyRestrictions,
+  ): Promise<{
+    scopes: ApiKeyScope[] | null;
+    allowedDomainIds: string[] | null;
+    allowedCertIds: number[] | null;
+    allowedIps: string[] | null;
+  }> {
+    const scopes = r.scopes ? [...new Set(r.scopes)] : null;
+    const allowedDomainIds = r.allowedDomainIds?.length
+      ? [...new Set(r.allowedDomainIds)]
+      : null;
+    const allowedCertIds = r.allowedCertIds?.length
+      ? [...new Set(r.allowedCertIds)]
+      : null;
+
+    let allowedIps: string[] | null = null;
+    if (r.allowedIps?.length) {
+      const bad = r.allowedIps.filter((e) => !parseIpEntry(e));
+      if (bad.length) {
+        throw new BadRequestException(
+          `Invalid IP address or CIDR range: ${bad.join(', ')}`,
+        );
+      }
+      allowedIps = [...new Set(r.allowedIps.map((e) => e.trim()))];
+    }
+
+    if (allowedDomainIds || allowedCertIds) {
+      const memberIds =
+        await this.billingService.getResourceCountUserIds(userId);
+      if (allowedDomainIds) {
+        const found = await this.domainRepo.find({
+          where: { id: In(allowedDomainIds), userId: In(memberIds) },
+          select: ['id'],
+        });
+        const known = new Set(found.map((d) => d.id));
+        const missing = allowedDomainIds.filter((id) => !known.has(id));
+        if (missing.length) {
+          throw new BadRequestException(
+            `Unknown domain id(s): ${missing.join(', ')}`,
+          );
+        }
+      }
+      if (allowedCertIds) {
+        const found = await this.tlsCrtRepo.find({
+          where: { id: In(allowedCertIds), userId: In(memberIds) },
+          select: ['id'],
+        });
+        const known = new Set(found.map((c) => c.id));
+        const missing = allowedCertIds.filter((id) => !known.has(id));
+        if (missing.length) {
+          throw new BadRequestException(
+            `Unknown certificate id(s): ${missing.join(', ')}`,
+          );
+        }
+      }
+    }
+
+    return { scopes, allowedDomainIds, allowedCertIds, allowedIps };
   }
 
   /**
@@ -371,6 +460,10 @@ export class AuthService implements OnModuleInit {
         'revokedAt',
         'lastUsedAt',
         'lastUsedIp',
+        'scopes',
+        'allowedDomainIds',
+        'allowedCertIds',
+        'allowedIps',
       ],
     });
     return keys.map((k) => ({
@@ -381,6 +474,10 @@ export class AuthService implements OnModuleInit {
       revokedAt: k.revokedAt ? k.revokedAt.toISOString() : null,
       lastUsedAt: k.lastUsedAt ? k.lastUsedAt.toISOString() : null,
       lastUsedIp: k.lastUsedIp ?? null,
+      scopes: k.scopes ?? null,
+      allowedDomainIds: k.allowedDomainIds ?? null,
+      allowedCertIds: k.allowedCertIds ?? null,
+      allowedIps: k.allowedIps ?? null,
     }));
   }
 
@@ -434,6 +531,19 @@ export class AuthService implements OnModuleInit {
     if (record.expiresAt && record.expiresAt < new Date()) {
       await this.notifyExpiredKeyUse(record, meta?.ip);
       return null;
+    }
+    // A valid key from the wrong address: 403, not 401, and not counted
+    // toward the brute-force lockout, since the key itself is correct.
+    if (
+      record.allowedIps?.length &&
+      !ipAllowed(meta?.ip ?? '', record.allowedIps)
+    ) {
+      this.logger.warn(
+        `API key ${record.id} refused from ${meta?.ip || 'unknown address'}: not in its IP allowlist`,
+      );
+      throw new ForbiddenException(
+        'This API key cannot be used from this IP address.',
+      );
     }
     await this.recordKeyUse(record, meta?.ip);
     return record;

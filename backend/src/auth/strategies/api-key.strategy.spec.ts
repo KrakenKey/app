@@ -28,7 +28,16 @@ describe('ApiKeyStrategy', () => {
       } as any;
 
       const result = await strategy.validate(req);
-      expect(result).toEqual({ userId: 'user-1', apiKeyId: 'key-1' });
+      expect(result).toEqual({
+        userId: 'user-1',
+        apiKeyId: 'key-1',
+        apiKey: {
+          id: 'key-1',
+          scopes: null,
+          allowedDomainIds: null,
+          allowedCertIds: null,
+        },
+      });
       expect(mockAuthService.validateApiKey).toHaveBeenCalledWith('kk_abc123', {
         ip: '10.0.0.1',
       });

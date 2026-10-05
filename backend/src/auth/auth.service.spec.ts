@@ -651,6 +651,10 @@ describe('AuthService', () => {
       'revokedAt',
       'lastUsedAt',
       'lastUsedIp',
+      'scopes',
+      'allowedDomainIds',
+      'allowedCertIds',
+      'allowedIps',
     ];
 
     it('returns active keys for the user with ISO string dates', async () => {
@@ -663,6 +667,10 @@ describe('AuthService', () => {
           revokedAt: null,
           lastUsedAt: new Date('2026-03-01'),
           lastUsedIp: '10.0.0.1',
+          scopes: ['certs:read'],
+          allowedDomainIds: ['d1'],
+          allowedCertIds: [7],
+          allowedIps: ['10.0.0.0/8'],
         },
         {
           id: 'k2',
@@ -692,6 +700,10 @@ describe('AuthService', () => {
           revokedAt: null,
           lastUsedAt: '2026-03-01T00:00:00.000Z',
           lastUsedIp: '10.0.0.1',
+          scopes: ['certs:read'],
+          allowedDomainIds: ['d1'],
+          allowedCertIds: [7],
+          allowedIps: ['10.0.0.0/8'],
         },
         {
           id: 'k2',
@@ -701,6 +713,10 @@ describe('AuthService', () => {
           revokedAt: null,
           lastUsedAt: null,
           lastUsedIp: null,
+          scopes: null,
+          allowedDomainIds: null,
+          allowedCertIds: null,
+          allowedIps: null,
         },
       ]);
     });

@@ -25,6 +25,7 @@ import type { RequestWithUser } from '../auth/interfaces/request-with-user.inter
 import { RateLimitCategoryDecorator } from '../throttler/decorators/rate-limit-category.decorator';
 import { RateLimitCategory } from '../throttler/interfaces/rate-limit-category.enum';
 import { SessionOnly } from '../auth/decorators/session-only.decorator';
+import { RequireScope } from '../auth/decorators/require-scope.decorator';
 
 @Controller('users')
 @ApiTags('Users')
@@ -47,6 +48,7 @@ export class UsersController {
   }
 
   @Get(':id')
+  @RequireScope('account:read')
   @ApiOperation({ summary: 'Get user by ID (own record or admin)' })
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({ status: 200, description: 'User details' })

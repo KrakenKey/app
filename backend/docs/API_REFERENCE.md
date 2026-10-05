@@ -33,6 +33,41 @@ API keys work for domains, certificates and endpoints, but some routes only acce
 
 Admin rights also need a session; an admin's API key acts as a regular user. The routes are marked with `@SessionOnly()` and enforced by `JwtOrApiKeyGuard`.
 
+### API key scopes and restrictions
+
+A key can be limited when it is created. None of the limits can be changed afterwards; create a new key instead. A key created without limits has full access, which is also what every key created before scopes existed has.
+
+**Scopes.** A key with `scopes` set can only call routes that declare one of them, and gets `403` (`This API key needs the <scope> scope for this request.`) everywhere else. Dashboard sessions are not affected.
+
+| Scope | Routes |
+| --- | --- |
+| `certs:read` | `GET /certs/tls`, `GET /certs/tls/:id`, `/details`, `/chain` |
+| `certs:issue` | `POST /certs/tls`, `POST /certs/tls/:id/retry` |
+| `certs:renew` | `POST /certs/tls/:id/renew`, `PATCH /certs/tls/:id` |
+| `certs:revoke` | `POST /certs/tls/:id/revoke`, `DELETE /certs/tls/:id` |
+| `domains:read` | `GET /domains`, `GET /domains/:id` |
+| `domains:write` | `POST /domains`, `POST /domains/:id/verify`, `DELETE /domains/:id` |
+| `endpoints:read` | `GET /endpoints`, `GET /endpoints/:id`, results, export, latest, `GET /endpoints/probes/mine` |
+| `endpoints:write` | every other `/endpoints` route (create, update, delete, probes, regions, scan) |
+| `probes:report` | `POST /probes/register`, `POST /probes/report`, `GET /probes/:probeId/config` |
+| `account:read` | `GET /auth/profile`, `GET /auth/api-keys`, `GET /users/:id`, `GET /billing/subscription`, `POST /billing/upgrade/preview`, `GET /organizations/:id` |
+| `account:write` | `PATCH /auth/profile`, `POST /auth/confirm-auto-renewal`, `POST /feedback` |
+
+The dashboard and CLI offer presets: **read-only** (`certs:read`, `domains:read`, `endpoints:read`, `account:read`), **cert renewal** (`certs:read`, `certs:renew`, `account:read`), **probe** (`probes:report`) and **full** (no scopes). The lists live in `API_KEY_SCOPES` and `API_KEY_PRESETS` in `@krakenkey/shared`. A new route is refused to scoped keys until it declares a scope with `@RequireScope()`, and `require-scope.coverage.spec.ts` fails if a route that accepts keys declares neither a scope nor `@SessionOnly()`.
+
+**Domains.** `allowedDomainIds` limits the key to those domains (ids of domains on the account or its organization):
+
+- certificates are visible only when every name on them is one of those domains or a subdomain; others return `404`
+- `POST /certs/tls` refuses a CSR with any name outside them (`403`)
+- only those domains are listed, the rest return `404`, and `POST /domains` is refused
+- endpoints are visible, and can be created, only for hosts under those domains
+
+**Certificates.** `allowedCertIds` limits the key to those certificates; others return `404`. Such a key cannot request new certificates. Renewal keeps the certificate id, so the limit survives renewals.
+
+When a key has both, a certificate must satisfy both. Keys limited to domains or certificates cannot use the probe routes, since a probe sees every endpoint assigned to it.
+
+**Source IPs.** `allowedIps` takes up to 20 IPv4/IPv6 addresses or CIDR ranges. A request from any other address gets `403` (`This API key cannot be used from this IP address.`), is logged with the key id and address, does not update `lastUsedAt`, and does not count toward the failed-key lockout. The address is the client IP as resolved through `KK_TRUSTED_PROXIES`.
+
 ## Error Response Format
 
 All errors follow a consistent JSON format:
@@ -174,10 +209,16 @@ Query: `includeRevoked=true` also returns keys revoked in the last 30 days, with
     "createdAt": "2026-03-27T10:00:00.000Z",
     "revokedAt": null,
     "lastUsedAt": "2026-03-28T09:15:00.000Z",
-    "lastUsedIp": "203.0.113.7"
+    "lastUsedIp": "203.0.113.7",
+    "scopes": ["certs:read", "certs:renew", "account:read"],
+    "allowedDomainIds": ["3f1c2b9e-..."],
+    "allowedCertIds": null,
+    "allowedIps": ["203.0.113.7"]
   }
 ]
 ```
+
+`scopes`, `allowedDomainIds`, `allowedCertIds` and `allowedIps` are `null` when the key is not limited that way.
 
 `lastUsedAt` and `lastUsedIp` are updated on successful authentication, at most once a minute per key unless the client IP changes. `lastUsedIp` is the client address as resolved through `KK_TRUSTED_PROXIES`.
 
@@ -188,19 +229,26 @@ Generate a new API key.
 **Request:**
 ```json
 {
-  "name": "CI/CD Key",
-  "expiresAt": "2027-03-27T00:00:00.000Z"
+  "name": "pfe renewal",
+  "expiresAt": "2027-03-27T00:00:00.000Z",
+  "scopes": ["certs:read", "certs:renew", "account:read"],
+  "allowedDomainIds": ["3f1c2b9e-..."],
+  "allowedIps": ["203.0.113.7"]
 }
 ```
 
-Both fields are optional. `name` defaults to `"default"` (max 100 chars). `expiresAt` is an ISO 8601 date string.
+Every field is optional. `name` defaults to `"default"` (max 100 chars). `expiresAt` is an ISO 8601 date string. `scopes`, `allowedDomainIds` (max 50), `allowedCertIds` (max 50) and `allowedIps` (max 20) are described in [API key scopes and restrictions](#api-key-scopes-and-restrictions); omit them for a full-access key. Unknown scopes, ids that don't belong to the account or its organization, and malformed IPs or ranges return `400`.
 
 **Response:**
 ```json
 {
   "id": "uuid",
-  "name": "CI/CD Key",
-  "apiKey": "kk_a1b2c3d4..."
+  "name": "pfe renewal",
+  "apiKey": "kk_a1b2c3d4...",
+  "scopes": ["certs:read", "certs:renew", "account:read"],
+  "allowedDomainIds": ["3f1c2b9e-..."],
+  "allowedCertIds": null,
+  "allowedIps": ["203.0.113.7"]
 }
 ```
 

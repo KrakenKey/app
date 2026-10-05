@@ -9,6 +9,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { Logger } from '@nestjs/common';
 import { MetricsService } from '../../metrics/metrics.service';
 import { SESSION_ONLY_KEY } from '../decorators/session-only.decorator';
+import { assertApiKeyScope } from '../decorators/require-scope.decorator';
 
 @Injectable()
 export class JwtOrApiKeyGuard extends AuthGuard(['jwt', 'api-key']) {
@@ -52,6 +53,8 @@ export class JwtOrApiKeyGuard extends AuthGuard(['jwt', 'api-key']) {
         'API keys cannot be used for this action. Sign in to the dashboard instead.',
       );
     }
+
+    assertApiKeyScope(this.reflector, context);
 
     return result;
   }

@@ -1,4 +1,5 @@
 import type { OrgRole } from '@krakenkey/shared';
+import type { ApiKeyContext } from '../api-key-restrictions';
 
 export interface RequestWithUser extends Request {
   user: {
@@ -8,5 +9,8 @@ export interface RequestWithUser extends Request {
     groups?: string[];
     role?: OrgRole | null;
     organizationId?: string | null;
+    /** Set only when the request authenticated with a user API key. */
+    apiKeyId?: string;
+    apiKey?: ApiKeyContext;
   };
 }
