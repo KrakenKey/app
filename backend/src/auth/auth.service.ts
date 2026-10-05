@@ -3,6 +3,7 @@ import {
   Logger,
   NotFoundException,
   HttpException,
+  InternalServerErrorException,
   UnauthorizedException,
   type OnModuleInit,
 } from '@nestjs/common';
@@ -25,6 +26,7 @@ import type {
   ApiKey,
   AuthCallbackResponse,
   CreateApiKeyResponse,
+  LogoutUrlResponse,
   SubscriptionPlan,
   UserProfile,
 } from '@krakenkey/shared';
@@ -172,6 +174,39 @@ export class AuthService implements OnModuleInit {
     url.searchParams.set('state', state);
 
     return { url: url.toString(), state, statusCode: 302 };
+  }
+
+  /**
+   * Returns the Authentik end-session endpoint for OIDC RP-initiated logout,
+   * plus the app origin to come back to afterwards.
+   *
+   * The browser adds id_token_hint itself and goes to Authentik directly, so
+   * the ID token never passes through this API. postLogoutRedirectUri must be
+   * registered as a logout redirect URI on the Authentik provider, otherwise
+   * Authentik rejects the request.
+   */
+  getLogoutUrl(): LogoutUrlResponse {
+    const issuerUrl = this.config.get<string>('KK_AUTHENTIK_ISSUER_URL');
+    const redirectUri = this.config.get<string>('KK_AUTHENTIK_REDIRECT_URI');
+
+    if (!issuerUrl || !redirectUri) {
+      this.logger.error(
+        'KK_AUTHENTIK_ISSUER_URL and KK_AUTHENTIK_REDIRECT_URI must be set to build the logout URL',
+      );
+      throw new InternalServerErrorException('Logout is not configured');
+    }
+
+    try {
+      const base = issuerUrl.endsWith('/') ? issuerUrl : `${issuerUrl}/`;
+      const url = new URL('end-session/', base).toString();
+      const postLogoutRedirectUri = new URL(redirectUri).origin;
+      return { url, postLogoutRedirectUri };
+    } catch {
+      this.logger.error(
+        'KK_AUTHENTIK_ISSUER_URL or KK_AUTHENTIK_REDIRECT_URI is not a valid URL',
+      );
+      throw new InternalServerErrorException('Logout is not configured');
+    }
   }
 
   /**

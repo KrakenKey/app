@@ -37,7 +37,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
   const navigate = useNavigate();
 
   const handleLogout = () => {
-    logout();
+    void logout();
   };
 
   const handleNavClick = () => {

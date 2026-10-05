@@ -189,6 +189,7 @@ Authentik ──▶ Redirect to /auth/callback with authorization code
    - Client ID: Copy to `KK_AUTHENTIK_CLIENT_ID`
    - Client Secret: Copy to `KK_AUTHENTIK_CLIENT_SECRET`
    - Redirect URIs: Add your `KK_AUTHENTIK_REDIRECT_URI`
+   - Logout redirect URIs: Add the origin of `KK_AUTHENTIK_REDIRECT_URI` (e.g. `https://app.example.com`, no trailing slash). Logout sends users to the provider's end-session endpoint and Authentik only returns them to a registered URI.
    - Signing Key: Select an RSA key (RS256)
    - Scopes: `openid`, `profile`, `email`
 

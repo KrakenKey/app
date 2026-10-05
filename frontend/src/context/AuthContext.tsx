@@ -1,14 +1,19 @@
 import React, { createContext, useState, useEffect } from 'react';
 import api from '../services/api';
 import axios from 'axios';
-import type { User, AuthCallbackResponse } from '@krakenkey/shared';
+import { API_ROUTES } from '@krakenkey/shared';
+import type {
+  User,
+  AuthCallbackResponse,
+  LogoutUrlResponse,
+} from '@krakenkey/shared';
 
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   login: () => void;
   register: () => void;
-  logout: () => void;
+  logout: () => Promise<void>;
   handleCallback: (code: string, state: string | null) => Promise<void>;
   deleteAccount: () => Promise<void>;
   refreshUser: () => Promise<void>;
@@ -18,6 +23,33 @@ interface AuthContextType {
 export const AuthContext = createContext<AuthContextType | undefined>(
   undefined,
 );
+
+/**
+ * True when the token looks like a JWT (three segments, JSON header with alg,
+ * JSON payload with iss and aud). Authentik shows an error page instead of
+ * logging out if id_token_hint can't be decoded, so anything else is left out.
+ */
+function looksLikeIdToken(token: string): boolean {
+  const parts = token.split('.');
+  if (parts.length !== 3) return false;
+  try {
+    const decode = (segment: string) => {
+      const b64 = segment.replace(/-/g, '+').replace(/_/g, '/');
+      return JSON.parse(
+        atob(b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), '=')),
+      ) as unknown;
+    };
+    const header = decode(parts[0]) as { alg?: unknown } | null;
+    const payload = decode(parts[1]) as { iss?: unknown; aud?: unknown } | null;
+    return (
+      typeof header?.alg === 'string' &&
+      typeof payload?.iss === 'string' &&
+      payload.aud !== undefined
+    );
+  } catch {
+    return false;
+  }
+}
 
 /**
  * AuthProvider manages authentication state for the entire app.
@@ -47,8 +79,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           console.log('Token valid, user authenticated:', response.data.email);
           setUser(response.data);
         } catch (error) {
-          console.error('Token validation failed, logging out', error);
-          logout();
+          console.error('Token validation failed, clearing session', error);
+          // Local only: a stale token on page load should not send the
+          // browser through Authentik's logout on every visit.
+          clearSession();
         }
       }
       setIsLoading(false);
@@ -134,21 +168,57 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   /**
-   * Logs out by clearing token from localStorage and resetting state.
-   *
-   * Note: This does NOT invalidate the token at Authentik (stateless JWT).
-   * The token will remain valid until it expires.
+   * Forgets the token and user locally. Does not touch the Authentik session.
    */
-  const logout = () => {
+  const clearSession = () => {
     localStorage.removeItem('access_token');
     setUser(null);
-    window.location.href = '/';
+  };
+
+  /**
+   * Logs out locally and ends the Authentik SSO session (OIDC RP-initiated
+   * logout), so the next "Log in" asks for credentials again.
+   *
+   * The local session is cleared first, so the user is logged out of the app
+   * even if the rest fails. The ID token goes to Authentik as id_token_hint in
+   * the browser redirect; it is not sent to our API (the token is already out
+   * of localStorage when /auth/logout-url is fetched). If the logout URL
+   * can't be fetched, falls back to a local-only logout.
+   */
+  const logout = async () => {
+    const idToken = localStorage.getItem('access_token');
+    clearSession();
+
+    try {
+      const { data } = await api.get<LogoutUrlResponse>(
+        API_ROUTES.AUTH.LOGOUT_URL,
+      );
+      const url = new URL(data.url);
+      // Authentik requires id_token_hint when post_logout_redirect_uri is
+      // set, and errors on a hint it can't decode. Without a usable token,
+      // send neither: the session still ends and Authentik shows its own
+      // logged-out page.
+      if (idToken && looksLikeIdToken(idToken)) {
+        url.searchParams.set('id_token_hint', idToken);
+        url.searchParams.set(
+          'post_logout_redirect_uri',
+          data.postLogoutRedirectUri,
+        );
+      }
+      window.location.assign(url.toString());
+    } catch (error) {
+      console.error(
+        'Could not end the SSO session, logging out locally',
+        error,
+      );
+      window.location.href = '/';
+    }
   };
 
   const deleteAccount = async () => {
     if (!user) return;
     await api.delete(`/users/${user.id}`);
-    logout();
+    await logout();
   };
 
   const refreshUser = async () => {

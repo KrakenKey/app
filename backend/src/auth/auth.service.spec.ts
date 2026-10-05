@@ -2,7 +2,11 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { scryptSync } from 'crypto';
-import { NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  InternalServerErrorException,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { AuthService, REVOKED_KEY_RETENTION_DAYS } from './auth.service';
 import { IsNull } from 'typeorm';
 import { UserApiKey } from './entities/user-api-key.entity';
@@ -22,6 +26,7 @@ const CONFIG: Record<string, string> = {
   KK_AUTHENTIK_CLIENT_ID: 'krakenkey-backend',
   KK_AUTHENTIK_CLIENT_SECRET: 's3cr3t',
   KK_AUTHENTIK_REDIRECT_URI: 'https://api.example.com/auth/callback',
+  KK_AUTHENTIK_ISSUER_URL: 'https://auth.example.com/application/o/krakenkey/',
   KK_HMAC_SECRET: HMAC_SECRET,
 };
 
@@ -46,6 +51,7 @@ describe('AuthService', () => {
     sendApiKeyExpiredUse: jest.Mock;
   };
   let mockApiKeySecurity: { shouldNotifyExpiredKeyUse: jest.Mock };
+  let configGet: jest.Mock;
 
   beforeEach(async () => {
     mockUserApiKeyRepo = {
@@ -111,6 +117,7 @@ describe('AuthService', () => {
     }).compile();
 
     service = module.get<AuthService>(AuthService);
+    configGet = module.get<{ get: jest.Mock }>(ConfigService).get;
   });
 
   afterEach(() => {
@@ -181,6 +188,66 @@ describe('AuthService', () => {
       expect(result.state).toHaveLength(64);
       const next = decodeURIComponent(result.url.split('next=')[1]);
       expect(next).toContain(`state=${result.state}`);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // getLogoutUrl
+  // ---------------------------------------------------------------------------
+  describe('getLogoutUrl', () => {
+    const withConfig = (overrides: Record<string, string | undefined>) => {
+      const merged: Record<string, string | undefined> = {
+        ...CONFIG,
+        ...overrides,
+      };
+      configGet.mockImplementation((key: string) => merged[key]);
+    };
+
+    it('returns the provider end-session endpoint under the issuer URL', () => {
+      expect(service.getLogoutUrl().url).toBe(
+        'https://auth.example.com/application/o/krakenkey/end-session/',
+      );
+    });
+
+    it('adds the trailing slash when the issuer URL has none', () => {
+      withConfig({
+        KK_AUTHENTIK_ISSUER_URL:
+          'https://auth.example.com/application/o/krakenkey',
+      });
+      expect(service.getLogoutUrl().url).toBe(
+        'https://auth.example.com/application/o/krakenkey/end-session/',
+      );
+    });
+
+    it('uses the origin of the OAuth redirect URI as the post-logout redirect', () => {
+      withConfig({
+        KK_AUTHENTIK_REDIRECT_URI: 'https://app.example.com/auth/callback',
+      });
+      expect(service.getLogoutUrl().postLogoutRedirectUri).toBe(
+        'https://app.example.com',
+      );
+    });
+
+    it('does not put a token or state in the URL', () => {
+      const parsed = new URL(service.getLogoutUrl().url);
+      expect(parsed.search).toBe('');
+    });
+
+    it.each(['KK_AUTHENTIK_ISSUER_URL', 'KK_AUTHENTIK_REDIRECT_URI'])(
+      'throws when %s is missing',
+      (key) => {
+        withConfig({ [key]: undefined });
+        expect(() => service.getLogoutUrl()).toThrow(
+          InternalServerErrorException,
+        );
+      },
+    );
+
+    it('throws when the redirect URI is not a valid URL', () => {
+      withConfig({ KK_AUTHENTIK_REDIRECT_URI: 'not a url' });
+      expect(() => service.getLogoutUrl()).toThrow(
+        InternalServerErrorException,
+      );
     });
   });
 
