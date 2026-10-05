@@ -12,16 +12,31 @@ import 'reflect-metadata';
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { SwaggerExplorer } from '@nestjs/swagger/dist/swagger-explorer';
-import { SchemaObjectFactory } from '@nestjs/swagger/dist/services/schema-object-factory';
-import { SwaggerTypesMapper } from '@nestjs/swagger/dist/services/swagger-types-mapper';
-import { ModelPropertiesAccessor } from '@nestjs/swagger/dist/services/model-properties-accessor';
 import { ApplicationConfig } from '@nestjs/core';
 import { createSwaggerConfig } from '../src/config/swagger.config';
 
 import { OPENAPI_CONTROLLERS } from '../src/config/openapi-controllers';
 
 const log = (msg: string) => process.stderr.write(msg + '\n');
+
+/**
+ * Since 11.4.3, @nestjs/swagger declares an "exports" map that only exposes
+ * the package root, so `@nestjs/swagger/dist/...` imports no longer resolve.
+ * The explorer classes below are not part of the public API, so load them by
+ * file path from the installed package instead.
+ */
+const swaggerDist = path.dirname(require.resolve('@nestjs/swagger'));
+const swaggerInternal = (file: string): any =>
+  require(path.join(swaggerDist, file));
+
+const { SwaggerExplorer } = swaggerInternal('swagger-explorer');
+const { SchemaObjectFactory } = swaggerInternal(
+  'services/schema-object-factory',
+);
+const { SwaggerTypesMapper } = swaggerInternal('services/swagger-types-mapper');
+const { ModelPropertiesAccessor } = swaggerInternal(
+  'services/model-properties-accessor',
+);
 
 /**
  * Create a fake instance that has the correct prototype chain

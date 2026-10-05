@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import * as fs from 'fs';
 import * as path from 'path';
 import { PATH_METADATA } from '@nestjs/common/constants';
-import { DECORATORS } from '@nestjs/swagger/dist/constants';
+import { DECORATORS } from '@nestjs/swagger';
 import { OPENAPI_CONTROLLERS } from './openapi-controllers';
 
 function controllerFiles(dir: string): string[] {
