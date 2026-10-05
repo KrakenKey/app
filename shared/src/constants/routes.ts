@@ -4,6 +4,7 @@ export const API_ROUTES = {
     REGISTER: '/auth/register',
     PROFILE: '/auth/profile',
     CALLBACK: '/auth/callback',
+    LOGOUT_URL: '/auth/logout-url',
     CONFIRM_AUTO_RENEWAL: '/auth/confirm-auto-renewal',
   },
   USERS: {

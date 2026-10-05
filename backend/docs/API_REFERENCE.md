@@ -103,6 +103,22 @@ OIDC callback handler. Exchanges the authorization code for tokens and provision
 
 **Authentication**: None
 
+### GET /auth/logout-url
+
+Returns the Authentik end-session endpoint for OIDC RP-initiated logout, and the app origin to return to afterwards. The dashboard clears its token, then sends the browser to `url` with `id_token_hint=<ID token>` and `post_logout_redirect_uri=<postLogoutRedirectUri>`, which ends the Authentik session. The ID token goes to Authentik, not to this API.
+
+`url` is `KK_AUTHENTIK_ISSUER_URL` + `end-session/`. `postLogoutRedirectUri` is the origin of `KK_AUTHENTIK_REDIRECT_URI` and must be registered as a logout redirect URI on the Authentik provider.
+
+**Authentication**: None
+
+**Response:**
+```json
+{
+  "url": "https://auth.krakenkey.io/application/o/krakenkey/end-session/",
+  "postLogoutRedirectUri": "https://app.krakenkey.io"
+}
+```
+
 ### GET /auth/profile
 
 Returns the authenticated user's full profile including plan, resource counts, and organization info.
