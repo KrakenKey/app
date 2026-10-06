@@ -70,6 +70,13 @@ export const API_ROUTES = {
     TRANSFER_OWNERSHIP: (id: string) =>
       `/organizations/${id}/transfer-ownership`,
   },
+  NOTIFICATION_CHANNELS: {
+    BASE: '/notifications/channels',
+    BY_ID: (id: string) => `/notifications/channels/${id}`,
+    TEST: (id: string) => `/notifications/channels/${id}/test`,
+    ROTATE_SECRET: (id: string) =>
+      `/notifications/channels/${id}/rotate-secret`,
+  },
   PUBLIC_SCAN: {
     SCAN: '/public-scan',
   },

@@ -7,6 +7,7 @@ import { DomainsController } from '../domains/domains.controller';
 import { EndpointsController } from '../endpoints/endpoints.controller';
 import { FeedbackController } from '../feedback/feedback.controller';
 import { HealthController } from '../health/health.controller';
+import { NotificationChannelsController } from '../notifications/channels/notification-channels.controller';
 import { OrganizationsController } from '../organizations/organizations.controller';
 import { ProbesController } from '../probes/probes.controller';
 import { PublicScanController } from '../public-scan/public-scan.controller';
@@ -29,6 +30,7 @@ export const OPENAPI_CONTROLLERS: Type<unknown>[] = [
   EndpointsController,
   FeedbackController,
   HealthController,
+  NotificationChannelsController,
   OrganizationsController,
   ProbesController,
   PublicScanController,

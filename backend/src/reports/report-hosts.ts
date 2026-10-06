@@ -1,4 +1,4 @@
-import { isIpLiteral, isPrivateAddress } from '../common/net/ssrf';
+import { isIpLiteral, isPrivateIP } from '../common/net/ssrf';
 
 export interface ReportTarget {
   host: string;
@@ -33,7 +33,7 @@ export function hostnameProblem(host: string): string | null {
   if (host.length === 0) return 'empty hostname';
   if (host.length > 253) return 'hostname is longer than 253 characters';
   if (isIpLiteral(host)) {
-    return isPrivateAddress(host.replace(/^\[|\]$/g, ''))
+    return isPrivateIP(host)
       ? 'private IP addresses are not allowed'
       : 'IP addresses are not allowed, use a hostname';
   }

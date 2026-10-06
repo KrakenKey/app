@@ -8,7 +8,7 @@ import { firstValueFrom } from 'rxjs';
 import { isIP } from 'net';
 import type { PublicScanResponse } from '@krakenkey/shared';
 import type { PublicScanRequestDto } from './dto/public-scan.dto';
-import { resolveToPublicIPs } from '../common/net/ssrf';
+import { resolveToPublicIPs, SsrfError } from '../common/net/ssrf';
 
 export interface ScanHostOptions {
   /** Overrides the HTTP client's default timeout for the scanner call. */
@@ -42,20 +42,14 @@ export class PublicScanService {
       );
     }
 
-    const resolved = await resolveToPublicIPs(hostname);
+    const resolved = await this.resolveToPublicIPs(hostname);
 
     try {
-      const { data } = await firstValueFrom(
-        this.httpService.post(
-          '/scan',
-          {
-            host: resolved[0],
-            port,
-            sni: hostname,
-          },
-          options.timeoutMs ? { timeout: options.timeoutMs } : undefined,
-        ),
-      );
+      const body = { host: resolved[0], port, sni: hostname };
+      const request = options.timeoutMs
+        ? this.httpService.post('/scan', body, { timeout: options.timeoutMs })
+        : this.httpService.post('/scan', body);
+      const { data } = await firstValueFrom(request);
 
       data.endpoint = { host: hostname, port, sni: hostname };
 
@@ -67,6 +61,21 @@ export class PublicScanService {
       throw new ServiceUnavailableException(
         'Scanner is temporarily unavailable',
       );
+    }
+  }
+
+  private async resolveToPublicIPs(hostname: string): Promise<string[]> {
+    try {
+      return await resolveToPublicIPs(hostname);
+    } catch (err) {
+      if (err instanceof SsrfError) {
+        throw new BadRequestException(
+          err.reason === 'unresolvable'
+            ? 'Could not resolve hostname'
+            : 'Cannot scan private/internal addresses',
+        );
+      }
+      throw err;
     }
   }
 }

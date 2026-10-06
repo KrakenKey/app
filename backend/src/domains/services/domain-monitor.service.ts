@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import { Domain } from '../entities/domain.entity';
 import { DomainsService } from '../domains.service';
 import { EmailService } from '../../notifications/email.service';
+import { AlertsService } from '../../notifications/channels/alerts.service';
 
 @Injectable()
 export class DomainMonitorService {
@@ -15,6 +16,7 @@ export class DomainMonitorService {
     private readonly domainsRepository: Repository<Domain>,
     private readonly domainsService: DomainsService,
     private readonly emailService: EmailService,
+    private readonly alerts: AlertsService,
   ) {}
 
   /**
@@ -59,6 +61,17 @@ export class DomainMonitorService {
               verificationCode: domain.verificationCode,
             });
           }
+          await this.alerts.emit(
+            domain.owner?.id ?? domain.userId,
+            'domain.verification_failed',
+            {
+              subject: domain.hostname,
+              resource: { type: 'domain', id: domain.id },
+              details: {
+                reason: 'TXT verification record not found',
+              },
+            },
+          );
         }
       } catch (err) {
         this.logger.error(

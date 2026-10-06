@@ -1,10 +1,10 @@
-import { BadRequestException } from '@nestjs/common';
 import { promises as dns } from 'dns';
 import { isIP } from 'net';
 
 /**
- * Guards for outbound scans of user-supplied hostnames. Shared by the public
- * scanner and portfolio reports so both refuse the same address ranges.
+ * Helpers that keep server-side requests away from private and internal
+ * networks. Used by the public TLS scan and by webhook notification
+ * delivery.
  */
 
 export function isPrivateIPv4(ip: string): boolean {
@@ -34,30 +34,46 @@ export function isPrivateIPv6(ip: string): boolean {
   if (lower.startsWith('ff')) return true; // multicast
   if (lower.startsWith('2001:db8')) return true; // documentation
 
-  // IPv4-mapped IPv6 (::ffff:x.x.x.x): extract and check the v4 part
+  // IPv4-mapped IPv6 (::ffff:x.x.x.x) — extract and check the v4 part
   const v4Mapped = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
   if (v4Mapped) return isPrivateIPv4(v4Mapped[1]);
 
+  // Same, in the hex form URL parsers normalise to (::ffff:7f00:1)
+  const v4MappedHex = lower.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (v4MappedHex) {
+    const hi = parseInt(v4MappedHex[1], 16);
+    const lo = parseInt(v4MappedHex[2], 16);
+    return isPrivateIPv4(`${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`);
+  }
+
   return false;
 }
 
-/** True for any IPv4/IPv6 address in a private, internal or reserved range. */
-export function isPrivateAddress(addr: string): boolean {
-  const family = isIP(addr);
-  if (family === 4) return isPrivateIPv4(addr);
-  if (family === 6) return isPrivateIPv6(addr);
-  return false;
+/** True for any IP literal (v4 or v6) in a private or reserved range. */
+export function isPrivateIP(ip: string): boolean {
+  const bare = ip.replace(/^\[|\]$/g, '');
+  const family = isIP(bare);
+  if (family === 4) return isPrivateIPv4(bare);
+  if (family === 6) return isPrivateIPv6(bare);
+  return true;
 }
 
-/** True when the string is an IP literal (bracketed IPv6 included). */
-export function isIpLiteral(value: string): boolean {
-  return isIP(value.replace(/^\[|\]$/g, '')) !== 0;
+export type SsrfErrorReason = 'unresolvable' | 'private';
+
+export class SsrfError extends Error {
+  constructor(
+    readonly reason: SsrfErrorReason,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'SsrfError';
+  }
 }
 
 /**
- * Resolves a hostname and refuses it when any address is private or
- * internal. Returns every resolved address; callers connect to the first so
- * the name is not resolved a second time (DNS rebinding).
+ * Resolves a hostname over DNS (A and AAAA) and returns its addresses.
+ * Throws SsrfError('unresolvable') when nothing resolves and
+ * SsrfError('private') when any address is private or internal.
  */
 export async function resolveToPublicIPs(hostname: string): Promise<string[]> {
   const v4 = await dns.resolve4(hostname).catch(() => [] as string[]);
@@ -65,14 +81,22 @@ export async function resolveToPublicIPs(hostname: string): Promise<string[]> {
   const addresses = [...v4, ...v6];
 
   if (addresses.length === 0) {
-    throw new BadRequestException('Could not resolve hostname');
+    throw new SsrfError('unresolvable', 'Could not resolve hostname');
   }
 
   for (const addr of addresses) {
-    if (isPrivateAddress(addr)) {
-      throw new BadRequestException('Cannot scan private/internal addresses');
+    if (isPrivateIP(addr)) {
+      throw new SsrfError(
+        'private',
+        'Hostname resolves to a private or internal address',
+      );
     }
   }
 
   return addresses;
+}
+
+/** True when the string is an IP literal (bracketed IPv6 included). */
+export function isIpLiteral(value: string): boolean {
+  return isIP(value.replace(/^\[|\]$/g, '')) !== 0;
 }
