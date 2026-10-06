@@ -268,7 +268,7 @@ No authentication. Rate-limited as a public route.
 
 The token must be signed by GitHub (`https://token.actions.githubusercontent.com`, keys from its JWKS, RS256 only), unexpired, and issued for the audience `https://api.krakenkey.io` (`KK_GITHUB_OIDC_AUDIENCE` on other environments). Then it must match exactly one trust policy:
 
-- `repository` equals the token's `repository` (case-insensitive), and its numeric `repository_id` equals the one pinned on the policy. The id is pinned from the first token, so a repository deleted and re-created under the same name is refused.
+- `repository` equals the token's `repository` (case-insensitive), and its numeric `repository_id` equals the one pinned on the policy. The id is pinned when the policy is created (see below) or else from the first token, so a repository deleted and re-created under the same name is refused.
 - If the policy has `allowedRefs`, the token's `ref` equals one of them, or starts with an entry ending in `*` (`refs/tags/v*`).
 - If the policy has `environment`, the job runs in that GitHub environment.
 
@@ -286,7 +286,7 @@ The token must be signed by GitHub (`https://token.actions.githubusercontent.com
 
 #### GET /auth/github-oidc/trusts
 
-Lists trust policies (`account:read`). Each has `id`, `name`, `repository`, `repositoryId` (null until first use), `allowedRefs`, `environment`, `scopes`, `allowedDomainIds`, `allowedCertIds`, `lastUsedAt`, `lastUsedRef` and `createdAt`.
+Lists trust policies (`account:read`). Each has `id`, `name`, `repository`, `repositoryId` (null until pinned), `allowedRefs`, `environment`, `scopes`, `allowedDomainIds`, `allowedCertIds`, `lastUsedAt`, `lastUsedRef` and `createdAt`.
 
 #### POST /auth/github-oidc/trusts
 
@@ -296,6 +296,7 @@ Creates a policy. Dashboard session only, like creating API keys.
 {
   "name": "website deploy",
   "repository": "octo/website",
+  "repositoryId": "123456789",
   "allowedRefs": ["refs/heads/main"],
   "environment": "production",
   "scopes": ["certs:read", "certs:renew", "account:read"],
@@ -303,7 +304,16 @@ Creates a policy. Dashboard session only, like creating API keys.
 }
 ```
 
-Only `name` and `repository` are required. Scopes and restrictions work as for [API keys](#api-key-scopes-and-restrictions). Policies can't be edited; create a new one and delete the old. Up to 20 per account.
+Only `name` and `repository` are required.
+
+The policy is pinned to GitHub's numeric repository id right away when possible:
+
+- With `repositoryId`, that id is used. If the repository is public and GitHub reports a different id, the request fails with `400`, which catches a typo in either field.
+- Without it, KrakenKey looks the repository up on GitHub's public API (unauthenticated, 3-second timeout). A public repository is pinned to the id GitHub returns. A private, misspelled or renamed repository, or a failed lookup, leaves `repositoryId` null, and the policy pins to the first token that matches it.
+
+For a private repository, get the id with `gh api repos/OWNER/NAME --jq .id`.
+
+Scopes and restrictions work as for [API keys](#api-key-scopes-and-restrictions). Policies can't be edited; create a new one and delete the old. Up to 20 per account.
 
 #### DELETE /auth/github-oidc/trusts/:id
 

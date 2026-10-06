@@ -23,6 +23,8 @@ export async function createGithubOidcTrust(
     name: request.name,
     repository: request.repository,
   };
+  const repositoryId = request.repositoryId?.trim();
+  if (repositoryId) payload.repositoryId = repositoryId;
   if (request.allowedRefs?.length) payload.allowedRefs = request.allowedRefs;
   const environment = request.environment?.trim();
   if (environment) payload.environment = environment;

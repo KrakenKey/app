@@ -39,6 +39,8 @@ export default function GithubOidcTrusts() {
   const [refsText, setRefsText] = useState('');
   const [refsError, setRefsError] = useState<string | null>(null);
   const [environment, setEnvironment] = useState('');
+  const [repositoryId, setRepositoryId] = useState('');
+  const [repoIdError, setRepoIdError] = useState<string | null>(null);
   const [snippet, setSnippet] = useState<{
     trust: GithubOidcTrust;
     text: string;
@@ -75,6 +77,8 @@ export default function GithubOidcTrusts() {
     setRefsText('');
     setRefsError(null);
     setEnvironment('');
+    setRepositoryId('');
+    setRepoIdError(null);
     accessForm.reset();
   };
 
@@ -89,6 +93,12 @@ export default function GithubOidcTrusts() {
     const repo = repository.trim();
     if (!isValidRepository(repo)) {
       setRepoError('Enter the repository as owner/name, e.g. octo/website.');
+      return;
+    }
+
+    const repoId = repositoryId.trim();
+    if (repoId && !/^[1-9][0-9]{0,19}$/.test(repoId)) {
+      setRepoIdError('The repository ID is a number, e.g. 123456789.');
       return;
     }
 
@@ -112,6 +122,7 @@ export default function GithubOidcTrusts() {
       const trust = await githubOidcService.createGithubOidcTrust({
         name: trimmedName,
         repository: repo,
+        repositoryId: repoId,
         allowedRefs,
         environment,
         scopes: resolved.scopes,
@@ -128,6 +139,11 @@ export default function GithubOidcTrusts() {
         text: workflowSnippet(shared ? trust.id : undefined),
       });
       toast.success(`Trust policy "${trimmedName}" created!`);
+      if (!trust.repositoryId) {
+        toast.info(
+          `${trust.repository} isn't visible on GitHub without signing in (private, or misspelled), so the policy pins to it on its first workflow run. Check the spelling, or add the repository ID to pin it now.`,
+        );
+      }
       resetForm();
       setTrusts((prev) => [...prev, trust]);
     } catch (error) {
@@ -240,6 +256,24 @@ export default function GithubOidcTrusts() {
             />
           </div>
 
+          <Input
+            id="github-oidc-repository-id"
+            label="Repository ID (optional)"
+            placeholder="e.g., 123456789"
+            value={repositoryId}
+            onChange={(e) => {
+              setRepositoryId(e.target.value);
+              setRepoIdError(null);
+            }}
+            disabled={creating || atLimit}
+            error={repoIdError ?? undefined}
+            aria-invalid={repoIdError ? true : undefined}
+            inputMode="numeric"
+            maxLength={20}
+            helpText="Pins the policy to this exact repository before its first run. Public repositories are pinned automatically. For a private one, run: gh api repos/OWNER/NAME --jq .id"
+            className="font-mono"
+          />
+
           <AccessChoiceFields
             form={accessForm}
             idPrefix="github-oidc"
@@ -341,7 +375,7 @@ export default function GithubOidcTrusts() {
                     <span className="block text-xs text-zinc-500">
                       {trust.repositoryId
                         ? `pinned to repo id ${trust.repositoryId}`
-                        : 'not used yet'}
+                        : 'pins on its first run'}
                     </span>
                   </TableCell>
                   <TableCell>
