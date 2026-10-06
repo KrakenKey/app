@@ -1,4 +1,4 @@
-import type { SubscriptionPlan } from '@krakenkey/shared';
+import { REPORT_HOST_LIMITS, type SubscriptionPlan } from '@krakenkey/shared';
 
 export interface PlanLimits {
   domains: number;
@@ -13,6 +13,8 @@ export interface PlanLimits {
   hostedMonitoredEndpoints: number;
   hostedScanInterval: number; // minutes, 0 = unavailable
   scanResultRetentionDays: number;
+  /** Most hosts in one portfolio report (shared REPORT_HOST_LIMITS) */
+  reportHosts: number;
 }
 
 export const PLAN_LIMITS: Record<SubscriptionPlan, PlanLimits> = {
@@ -29,6 +31,7 @@ export const PLAN_LIMITS: Record<SubscriptionPlan, PlanLimits> = {
     hostedMonitoredEndpoints: 0,
     hostedScanInterval: 0,
     scanResultRetentionDays: 5,
+    reportHosts: REPORT_HOST_LIMITS.free,
   },
   starter: {
     domains: 10,
@@ -43,6 +46,7 @@ export const PLAN_LIMITS: Record<SubscriptionPlan, PlanLimits> = {
     hostedMonitoredEndpoints: 5,
     hostedScanInterval: 30,
     scanResultRetentionDays: 30,
+    reportHosts: REPORT_HOST_LIMITS.starter,
   },
   team: {
     domains: 25,
@@ -57,6 +61,7 @@ export const PLAN_LIMITS: Record<SubscriptionPlan, PlanLimits> = {
     hostedMonitoredEndpoints: 25,
     hostedScanInterval: 15,
     scanResultRetentionDays: 90,
+    reportHosts: REPORT_HOST_LIMITS.team,
   },
   business: {
     domains: 75,
@@ -71,6 +76,7 @@ export const PLAN_LIMITS: Record<SubscriptionPlan, PlanLimits> = {
     hostedMonitoredEndpoints: 100,
     hostedScanInterval: 5,
     scanResultRetentionDays: 90,
+    reportHosts: REPORT_HOST_LIMITS.business,
   },
   enterprise: {
     domains: Infinity,
@@ -85,5 +91,6 @@ export const PLAN_LIMITS: Record<SubscriptionPlan, PlanLimits> = {
     hostedMonitoredEndpoints: Infinity,
     hostedScanInterval: 1,
     scanResultRetentionDays: 90,
+    reportHosts: REPORT_HOST_LIMITS.enterprise,
   },
 } as const;
