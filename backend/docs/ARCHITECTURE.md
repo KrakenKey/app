@@ -46,7 +46,7 @@ KrakenKey is a modular NestJS backend for TLS certificate lifecycle management, 
 - `EndpointsModule` — TLS endpoint monitoring
 - `HealthModule` — Health checks
 - `MetricsModule` — Prometheus metrics
-- `NotificationsModule` — Email notifications
+- `NotificationsModule` — Email notifications, plus Slack, Teams and webhook channels (`notifications` BullMQ queue, `AlertsService.emit`)
 - `FeedbackModule` — User feedback
 - `ProbesModule` — Kubernetes probes
 - `ThrottlerModule` — Rate limiting

@@ -287,6 +287,31 @@ CREATE TABLE "endpoint_probe_assignment" (
 
 ---
 
+### NotificationChannel
+
+A Slack, Microsoft Teams or webhook destination for alerts, owned by one user (at most 10 per user). `urlEncrypted` and `secretEncrypted` hold `v1:<iv>:<tag>:<ciphertext>` (AES-256-GCM, key derived from `KK_HMAC_SECRET` with HKDF-SHA256), because a Slack or Teams URL is itself a credential.
+
+```sql
+CREATE TABLE "notification_channel" (
+  "id" UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  "userId" TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+  "type" VARCHAR(16) NOT NULL CHECK ("type" IN ('slack', 'teams', 'webhook')),
+  "name" VARCHAR(100) NOT NULL,
+  "urlEncrypted" TEXT NOT NULL,
+  "secretEncrypted" TEXT,              -- webhook signing secret
+  "events" TEXT[] NOT NULL DEFAULT '{}',
+  "enabled" BOOLEAN NOT NULL DEFAULT true,
+  "lastDeliveryAt" TIMESTAMP,
+  "lastDeliveryStatus" VARCHAR(16),    -- 'ok' | 'failed'
+  "lastError" TEXT,                    -- at most 500 characters
+  "createdAt" TIMESTAMP DEFAULT now(),
+  "updatedAt" TIMESTAMP DEFAULT now()
+);
+CREATE INDEX "IDX_notification_channel_userId" ON "notification_channel" ("userId");
+```
+
+---
+
 ## Entity Relationship Diagram
 
 ```

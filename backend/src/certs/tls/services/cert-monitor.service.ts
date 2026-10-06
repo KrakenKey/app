@@ -8,6 +8,7 @@ import { CertStatus } from '@krakenkey/shared';
 import type { SubscriptionPlan } from '@krakenkey/shared';
 import { MetricsService } from '../../../metrics/metrics.service';
 import { EmailService } from '../../../notifications/email.service';
+import { AlertsService } from '../../../notifications/channels/alerts.service';
 import { BillingService } from '../../../billing/billing.service';
 import { daysUntilExpiry, renewalWindowDays } from '../util/renewal-window';
 import { User } from '../../../users/entities/user.entity';
@@ -25,6 +26,7 @@ export class CertMonitorService {
     private readonly metricsService: MetricsService,
     private readonly emailService: EmailService,
     private readonly billingService: BillingService,
+    private readonly alerts: AlertsService,
   ) {}
 
   /**
@@ -124,6 +126,17 @@ export class CertMonitorService {
           commonName,
           expiresAt: cert.expiresAt,
           daysUntilExpiry: daysLeft,
+        });
+        await this.alerts.emit(cert.user.id, 'cert.expiring', {
+          subject: commonName,
+          resource: { type: 'certificate', id: cert.id },
+          details: {
+            certificateId: cert.id,
+            expiresAt: cert.expiresAt
+              ? new Date(cert.expiresAt).toISOString()
+              : null,
+            daysUntilExpiry: daysLeft,
+          },
         });
       }
 

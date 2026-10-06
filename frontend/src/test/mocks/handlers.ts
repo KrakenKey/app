@@ -30,6 +30,11 @@ export const handlers = [
     });
   }),
 
+  // Notification channels
+  http.get(`${API_URL}/notifications/channels`, () => {
+    return HttpResponse.json([]);
+  }),
+
   // Domains
   http.get(`${API_URL}/domains`, () => {
     return HttpResponse.json(mockDomains);

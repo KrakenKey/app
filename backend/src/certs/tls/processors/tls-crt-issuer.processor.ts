@@ -14,6 +14,7 @@ import { CertStatus } from '@krakenkey/shared';
 import type { TlsCertJobPayload } from '@krakenkey/shared';
 import { MetricsService } from '../../../metrics/metrics.service';
 import { EmailService } from '../../../notifications/email.service';
+import { AlertsService } from '../../../notifications/channels/alerts.service';
 import type { CertEmailContext } from '../../../notifications/email.service';
 import { User } from '../../../users/entities/user.entity';
 
@@ -72,6 +73,7 @@ export class CertIssuerConsumer extends WorkerHost {
     private readonly emailService: EmailService,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    private readonly alerts: AlertsService,
   ) {
     super();
   }
@@ -182,6 +184,18 @@ export class CertIssuerConsumer extends WorkerHost {
           await this.emailService.sendCertIssued(ctx);
         }
       }
+      await this.alerts.emit(
+        csrRecord.user?.id ?? csrRecord.userId,
+        isRenewal ? 'cert.renewed' : 'cert.issued',
+        {
+          subject: commonName,
+          resource: { type: 'certificate', id: certId },
+          details: {
+            certificateId: certId,
+            expiresAt: expiresAt.toISOString(),
+          },
+        },
+      );
 
       return { success: true };
     } catch (err: unknown) {
@@ -226,6 +240,19 @@ export class CertIssuerConsumer extends WorkerHost {
           errorMessage: message,
         });
       }
+      await this.alerts.emit(
+        csrRecord.user?.id ?? csrRecord.userId,
+        'cert.failed',
+        {
+          subject: commonName,
+          resource: { type: 'certificate', id: certId },
+          details: {
+            certificateId: certId,
+            renewal: isRenewal,
+            error: message.slice(0, MAX_FAILURE_REASON_LENGTH),
+          },
+        },
+      );
 
       if (permanent) {
         // UnrecoverableError stops BullMQ from consuming remaining attempts.

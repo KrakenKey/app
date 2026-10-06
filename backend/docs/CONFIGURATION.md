@@ -96,7 +96,7 @@ Set `KK_DNS_PROVIDER` to select which provider handles DNS-01 ACME challenges. O
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `KK_HMAC_SECRET` | Yes | — | 32-byte hex secret used as salt for scrypt hashing of API keys. Generate with `openssl rand -hex 32` |
+| `KK_HMAC_SECRET` | Yes | — | 32-byte hex secret used as salt for scrypt hashing of API keys. Also the input key (HKDF-SHA256) for encrypting notification channel URLs and webhook secrets, so changing it makes existing channels undeliverable until their URLs are saved again. Generate with `openssl rand -hex 32` |
 
 ### Billing (Stripe)
 

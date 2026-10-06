@@ -3,6 +3,7 @@ import { MetricsService } from '../../../metrics/metrics.service';
 import { EmailService } from '../../../notifications/email.service';
 
 describe('CertIssuerConsumer', () => {
+  const mockAlerts = { emit: jest.fn().mockResolvedValue(0) };
   let processor: CertIssuerConsumer;
   let mockTlsService: Record<string, jest.Mock>;
   let mockAcme: Record<string, jest.Mock>;
@@ -64,6 +65,7 @@ describe('CertIssuerConsumer', () => {
       mockMetricsService,
       mockEmailService,
       mockUserRepo as any,
+      mockAlerts as any,
     );
   });
 
@@ -77,6 +79,12 @@ describe('CertIssuerConsumer', () => {
       const result = await processor.process(job);
 
       expect(result).toEqual({ success: true });
+      // No owner on this record: emit is still called and skips internally.
+      expect(mockAlerts.emit).toHaveBeenCalledWith(
+        undefined,
+        'cert.issued',
+        expect.objectContaining({ resource: { type: 'certificate', id: 1 } }),
+      );
       expect(mockTlsService.findOneInternal).toHaveBeenCalledWith(1, {
         relations: ['user'],
       });
@@ -376,6 +384,16 @@ describe('CertIssuerConsumer', () => {
           errorMessage: expect.stringContaining(
             'expected example-com.acme.krakenkey.io',
           ),
+        }),
+      );
+      expect(mockAlerts.emit).toHaveBeenCalledWith(
+        expect.anything(),
+        'cert.failed',
+        expect.objectContaining({
+          resource: { type: 'certificate', id: 1 },
+          details: expect.objectContaining({
+            error: expect.stringContaining('expected example-com'),
+          }),
         }),
       );
     });
