@@ -30,6 +30,10 @@ export const handlers = [
     });
   }),
 
+  http.get(`${API_URL}/auth/github-oidc/trusts`, () => {
+    return HttpResponse.json([]);
+  }),
+
   // Domains
   http.get(`${API_URL}/domains`, () => {
     return HttpResponse.json(mockDomains);
