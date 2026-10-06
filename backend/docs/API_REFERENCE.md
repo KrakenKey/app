@@ -693,6 +693,120 @@ Remove a hosted region.
 
 ---
 
+## Reports
+
+Portfolio TLS reports: scan a list of hosts once and get expiry, issuer, hostname coverage, chain problems and reachability for each, sorted by what needs attention first. Owner only: another account's report returns `404`, also for organization members. API keys limited to specific domains or certificates get `403` on every report route.
+
+### POST /reports
+
+Create a report. Scope: `account:write`. Rate limit category: expensive.
+
+**Request:**
+```json
+{
+  "name": "Client sites",
+  "hosts": ["example.com", "shop.example.com", "api.example.com:8443"]
+}
+```
+
+- `hosts`: one hostname per entry, optionally with `:port` (default `443`). A pasted URL such as `https://example.com/login` is reduced to its host and port. Entries are lowercased and duplicates (same host and port) dropped.
+- IP addresses, single-label names (`localhost`), wildcards and internal suffixes (`.local`, `.internal`, `.lan`, `.home.arpa`) are refused with `400`; `message` lists every rejected entry. Names that resolve to a private or internal address are refused at scan time and show up as a critical host.
+- Plan limit, counted after dedupe: Free 25 hosts per report, paid plans 250. Over the limit returns `403` with `code: "plan_limit_exceeded"`, `limit`, `current` and `plan`.
+
+Returns the report with `status: "pending"`. Hosts are scanned in the background, five at a time with a 20 second limit each, through the same scanner as `POST /public-scan`. Status moves `pending` -> `running` -> `complete` (or `failed`), and each host is stored as soon as it finishes, so poll `GET /reports/:id`.
+
+### GET /reports
+
+List your reports (newest first, up to 100). Scope: `account:read`. Each item has `id`, `name`, `status`, `hostCount`, `completedCount`, `counts` (`critical`, `warning`, `notice`, `ok`), `share` (`{ expiresAt, createdAt }` or `null`), `createdAt`, `completedAt` and `expiresAt`. No per-host results.
+
+### GET /reports/:id
+
+Full report. Scope: `account:read`.
+
+```json
+{
+  "id": "1f0c...",
+  "name": "Client sites",
+  "status": "complete",
+  "hostCount": 3,
+  "completedCount": 3,
+  "share": null,
+  "createdAt": "2026-10-05T10:00:00.000Z",
+  "completedAt": "2026-10-05T10:00:41.000Z",
+  "expiresAt": "2027-01-03T10:00:00.000Z",
+  "summary": {
+    "totalHosts": 3,
+    "scannedHosts": 3,
+    "counts": { "critical": 1, "warning": 0, "notice": 1, "ok": 1 },
+    "issuers": [{ "issuer": "Let's Encrypt", "count": 2 }],
+    "letsEncryptHosts": 2,
+    "earliestExpiry": { "host": "shop.example.com", "port": 443, "notAfter": "2026-10-28T09:12:00Z", "daysLeft": 22 }
+  },
+  "hosts": [
+    {
+      "host": "api.example.com",
+      "port": 8443,
+      "status": "complete",
+      "severity": "critical",
+      "problems": [{ "code": "unreachable", "severity": "critical", "message": "Could not connect: connection refused" }],
+      "reachable": false,
+      "daysLeft": null,
+      "issuerName": null,
+      "letsEncrypt": null
+    }
+  ]
+}
+```
+
+Each host also carries `tlsVersion`, `notAfter`, `issuer` (full DN), `subject`, `sans`, `hostnameCovered`, `trusted`, `chainDepth`, `keyType`, `keySize`, `error` and `scannedAt`. Hosts are sorted by severity, then fewest days left, then hostname. Hosts not scanned yet have `severity: null` and sort last.
+
+| Severity | Problems |
+|----------|----------|
+| `critical` | unreachable or scan failed, no certificate, expired, hostname not covered by any SAN (a wildcard covers exactly one label), untrusted chain, server sends no intermediates |
+| `warning` | expires within 14 days, TLS older than 1.2, RSA key under 2048 bits or EC key under 256 bits |
+| `notice` | expires within 30 days |
+| `ok` | none of the above |
+
+### GET /reports/:id/export?format=csv
+
+Download the report as CSV (sorted like the report). Scope: `account:read`. `format` defaults to `csv`; any other value returns `400`. Columns: `host, port, severity, status, reachable, days_left, not_after, issuer, lets_encrypt, tls_version, key, hostname_covered, trusted, problems`. Cells that start with `=`, `+`, `-` or `@` are prefixed with `'` so spreadsheets do not run them as formulas.
+
+### DELETE /reports/:id
+
+Delete a report, its results and its share link. Scope: `account:write`. Returns `204`.
+
+### POST /reports/:id/share
+
+Create a read-only share link. Scope: `account:write`. Replaces any existing link, so the old one stops working.
+
+```json
+{
+  "url": "https://app.krakenkey.io/r/3q2-7wEh...",
+  "token": "3q2-7wEh...",
+  "expiresAt": "2026-11-04T10:05:00.000Z"
+}
+```
+
+The token is 32 random bytes, base64url encoded. Only its SHA-256 hash is stored, so the link is shown once; create a new one to get it again. Links expire 30 days after creation.
+
+### DELETE /reports/:id/share
+
+Revoke the share link. Scope: `account:write`. Returns `204`.
+
+### GET /public/reports/:token
+
+The shared report. No authentication; rate limited per IP (public category). Returns `name`, `status`, `hostCount`, `completedCount`, `createdAt`, `completedAt`, `shareExpiresAt`, `summary` and `hosts`, with no report id, owner or account details. Unknown, revoked and expired tokens all return `404`. Responses carry `Cache-Control: no-store` and `X-Robots-Tag: noindex, nofollow`.
+
+### GET /public/reports/:token/export?format=csv
+
+CSV download of a shared report, same rules as above.
+
+### Retention
+
+Reports are deleted 90 days after creation by a daily job at 03:30, which also clears expired share links.
+
+---
+
 ## Users
 
 Admin-only endpoints except where noted.
