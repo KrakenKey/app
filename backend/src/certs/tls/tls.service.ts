@@ -471,7 +471,8 @@ export class TlsService {
       );
     }
 
-    if (options.ifDue && cert.expiresAt) {
+    // A CA request for early replacement (ARI) makes the cert due regardless
+    if (options.ifDue && cert.expiresAt && !cert.ariReplacementRequestedAt) {
       // Same window the auto-renewal cron applies to this cert's owner
       const windowDays = renewalWindowDays(
         await this.billingService.resolveUserTier(cert.userId),

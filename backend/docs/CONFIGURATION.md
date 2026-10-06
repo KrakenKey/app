@@ -78,6 +78,7 @@ Set `KK_DNS_PROVIDER` to select which provider handles DNS-01 ACME challenges. O
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `ACME_ACCOUNT_KEY` | Yes | — | RSA 4096-bit private key in PEM format for the ACME account. See [Generating an ACME Account Key](#generating-an-acme-account-key) |
+| `KK_ACME_ARI` | No | `true` | Set to `false` to stop checking ACME Renewal Information (RFC 9773). See [CERTIFICATE_FLOW.md](CERTIFICATE_FLOW.md#acme-renewal-information-ari) |
 | `ACME_DIRECTORY_URL` | No | Let's Encrypt Staging | Custom ACME directory URL. Defaults to staging; set to `https://acme-v02.api.letsencrypt.org/directory` for production |
 
 ### Authentication (Authentik OIDC)

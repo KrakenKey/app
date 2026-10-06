@@ -35,6 +35,13 @@ export class MetricsService implements OnModuleInit {
     registers: [this.registry],
   });
 
+  readonly ariChecksTotal = new Counter({
+    name: 'ari_checks_total',
+    help: 'ACME Renewal Information checks by result (ok, none, error, early_replacement)',
+    labelNames: ['result'] as const,
+    registers: [this.registry],
+  });
+
   readonly acmeChallengeDuration = new Histogram({
     name: 'acme_challenge_duration_seconds',
     help: 'Duration of ACME DNS-01 challenge flow',
