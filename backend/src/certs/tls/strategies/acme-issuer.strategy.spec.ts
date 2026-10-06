@@ -154,26 +154,6 @@ describe('AcmeIssuerStrategy', () => {
       expect(s).toBeDefined();
       // The default resolvers are Cloudflare: 172.64.35.65, 108.162.195.65
     });
-
-    it('uses default contact email when KK_ACME_CONTACT_EMAIL is not set', async () => {
-      configMap.KK_ACME_CONTACT_EMAIL = undefined;
-
-      const module = await Test.createTestingModule({
-        providers: [
-          AcmeIssuerStrategy,
-          {
-            provide: ConfigService,
-            useValue: {
-              get: jest.fn((key: string) => configMap[key]),
-            },
-          },
-          mockMetricsProvider,
-        ],
-      }).compile();
-
-      const s = module.get<AcmeIssuerStrategy>(AcmeIssuerStrategy);
-      expect(s).toBeDefined();
-    });
   });
 
   // ─── revoke ───────────────────────────────────────────────────────────────
@@ -232,6 +212,29 @@ describe('AcmeIssuerStrategy', () => {
       await expect(s.revoke(FAKE_CERT_PEM)).rejects.toThrow(
         'Missing KK_ACME_ACCOUNT_KEY',
       );
+    });
+
+    it('throws when contact email is missing', async () => {
+      configMap.KK_ACME_CONTACT_EMAIL = '  ';
+
+      const module = await Test.createTestingModule({
+        providers: [
+          AcmeIssuerStrategy,
+          {
+            provide: ConfigService,
+            useValue: {
+              get: jest.fn((key: string) => configMap[key]),
+            },
+          },
+          mockMetricsProvider,
+        ],
+      }).compile();
+
+      const s = module.get<AcmeIssuerStrategy>(AcmeIssuerStrategy);
+      await expect(s.revoke(FAKE_CERT_PEM)).rejects.toThrow(
+        'Missing KK_ACME_CONTACT_EMAIL',
+      );
+      expect(mockClient.createAccount).not.toHaveBeenCalled();
     });
   });
 
