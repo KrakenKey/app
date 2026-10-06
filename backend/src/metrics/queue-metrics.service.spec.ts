@@ -34,6 +34,7 @@ describe('QueueMetricsService', () => {
       metricsService,
       mockQueue('tlsCertIssuance', tlsCounts),
       mockQueue('orgDissolution', orgCounts),
+      mockQueue('reportScan', jest.fn().mockResolvedValue({ waiting: 4 })),
     );
 
     const output = await metricsService.getMetrics();
@@ -46,6 +47,9 @@ describe('QueueMetricsService', () => {
     );
     expect(output).toContain(
       'bullmq_queue_jobs{queue="orgDissolution",state="delayed"} 1',
+    );
+    expect(output).toContain(
+      'bullmq_queue_jobs{queue="reportScan",state="waiting"} 4',
     );
     expect(tlsCounts).toHaveBeenCalledWith(
       'waiting',
