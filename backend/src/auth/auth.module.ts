@@ -18,6 +18,7 @@ import { GithubOidcTrust } from './entities/github-oidc-trust.entity';
 import { GithubOidcController } from './oidc/github-oidc.controller';
 import { GithubOidcService } from './oidc/github-oidc.service';
 import { GithubOidcVerifier } from './oidc/github-oidc.verifier';
+import { GithubRepoLookup } from './oidc/github-repo-lookup';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { GithubOidcVerifier } from './oidc/github-oidc.verifier';
     ApiKeyStrategy,
     ServiceKeyStrategy,
     GithubOidcVerifier,
+    GithubRepoLookup,
     GithubOidcService,
   ],
   exports: [AuthService],

@@ -59,7 +59,12 @@ describe('GithubOidcService.exchange', () => {
       }),
     };
     verifier = { verify: jest.fn().mockResolvedValue(claims) };
-    svc = new GithubOidcService(repo as any, auth as any, verifier as any);
+    svc = new GithubOidcService(
+      repo as any,
+      auth as any,
+      verifier as any,
+      { lookup: jest.fn() } as any,
+    );
   });
 
   it('mints a 15-minute key with the trust policy limits and pins the repository id', async () => {
@@ -138,5 +143,76 @@ describe('GithubOidcService.exchange', () => {
     verifier.verify.mockRejectedValue(new Error('bad'));
     await expect(svc.exchange('jwt', undefined)).rejects.toThrow('bad');
     expect(repo.createQueryBuilder).not.toHaveBeenCalled();
+  });
+});
+
+describe('GithubOidcService.create', () => {
+  let repo: { count: jest.Mock; create: jest.Mock; save: jest.Mock };
+  let auth: { validateRestrictions: jest.Mock };
+  let lookup: { lookup: jest.Mock };
+  let svc: GithubOidcService;
+
+  const dto = (over: Record<string, unknown> = {}) => ({
+    name: 'deploy',
+    repository: 'octo/site',
+    ...over,
+  });
+  const savedRepositoryId = () => repo.save.mock.calls[0][0].repositoryId;
+
+  beforeEach(() => {
+    repo = {
+      count: jest.fn().mockResolvedValue(0),
+      create: jest.fn((v: Record<string, unknown>) => ({
+        id: 't1',
+        createdAt: new Date(),
+        ...v,
+      })),
+      save: jest.fn(),
+    };
+    auth = {
+      validateRestrictions: jest.fn().mockResolvedValue({
+        scopes: null,
+        allowedDomainIds: null,
+        allowedCertIds: null,
+      }),
+    };
+    lookup = { lookup: jest.fn() };
+    svc = new GithubOidcService(
+      repo as any,
+      auth as any,
+      {} as any,
+      lookup as any,
+    );
+  });
+
+  it('pins a public repository right away', async () => {
+    lookup.lookup.mockResolvedValue({ status: 'found', id: '987' });
+    const res = await svc.create('u1', dto() as any);
+    expect(lookup.lookup).toHaveBeenCalledWith('octo/site');
+    expect(savedRepositoryId()).toBe('987');
+    expect(res.repositoryId).toBe('987');
+  });
+
+  it('leaves a private, misspelled or unreachable repository to pin on first use', async () => {
+    for (const status of ['not_found', 'unavailable']) {
+      repo.save.mockClear();
+      lookup.lookup.mockResolvedValue({ status });
+      await svc.create('u1', dto() as any);
+      expect(savedRepositoryId()).toBeNull();
+    }
+  });
+
+  it('uses a given id when GitHub cannot see the repository', async () => {
+    lookup.lookup.mockResolvedValue({ status: 'not_found' });
+    await svc.create('u1', dto({ repositoryId: '555' }) as any);
+    expect(savedRepositoryId()).toBe('555');
+  });
+
+  it('refuses a given id that does not match the public repository', async () => {
+    lookup.lookup.mockResolvedValue({ status: 'found', id: '987' });
+    await expect(
+      svc.create('u1', dto({ repositoryId: '555' }) as any),
+    ).rejects.toThrow('octo/site has repository id 987 on GitHub, not 555');
+    expect(repo.save).not.toHaveBeenCalled();
   });
 });

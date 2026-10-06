@@ -6,6 +6,7 @@ import type { GithubOidcTrust } from '@krakenkey/shared';
 import { server } from '../../test/mocks/server';
 import { API_URL } from '../../services/api';
 import GithubOidcTrusts from '../GithubOidcTrusts';
+import { toast } from '../../utils/toast';
 
 const TRUSTS = `${API_URL}/auth/github-oidc/trusts`;
 
@@ -55,6 +56,7 @@ describe('GithubOidcTrusts', () => {
             id: 'new-trust-id',
             name: posted.name,
             repository: posted.repository,
+            repositoryId: posted.repositoryId ?? null,
             scopes: posted.scopes ?? null,
           },
           { status: 201 },
@@ -70,7 +72,7 @@ describe('GithubOidcTrusts', () => {
     const table = within(screen.getByRole('table'));
     expect(screen.getByText('Trust Policies (2 of 20)')).toBeInTheDocument();
     expect(table.getByText('pinned to repo id 123456')).toBeInTheDocument();
-    expect(table.getByText('not used yet')).toBeInTheDocument();
+    expect(table.getByText('pins on its first run')).toBeInTheDocument();
     expect(
       table.getByText('refs/heads/main, refs/tags/v*'),
     ).toBeInTheDocument();
@@ -168,6 +170,48 @@ describe('GithubOidcTrusts', () => {
       'aria-invalid',
       'true',
     );
+    expect(posted).toBeNull();
+  });
+
+  it('sends a repository ID to pin the policy up front', async () => {
+    const info = vi.spyOn(toast, 'info');
+    const user = await fillForm();
+    await user.type(screen.getByLabelText(/Repository ID/), ' 987654 ');
+
+    await submit(user);
+
+    await waitFor(() =>
+      expect(posted).toEqual({
+        name: 'api deploy',
+        repository: 'octo/api',
+        repositoryId: '987654',
+      }),
+    );
+    expect(info).not.toHaveBeenCalled();
+  });
+
+  it('says when a new policy could not be pinned yet', async () => {
+    const info = vi.spyOn(toast, 'info');
+    const user = await fillForm();
+
+    await submit(user);
+
+    await waitFor(() =>
+      expect(info).toHaveBeenCalledWith(
+        expect.stringContaining('pins to it on its first workflow run'),
+      ),
+    );
+  });
+
+  it('rejects a repository ID that is not a number', async () => {
+    const user = await fillForm();
+    await user.type(screen.getByLabelText(/Repository ID/), 'octo/api');
+
+    await submit(user);
+
+    expect(
+      await screen.findByText(/The repository ID is a number/),
+    ).toBeInTheDocument();
     expect(posted).toBeNull();
   });
 

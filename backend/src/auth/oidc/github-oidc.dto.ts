@@ -23,6 +23,8 @@ import {
 /** `owner/name`, GitHub's character rules. */
 export const REPOSITORY_PATTERN =
   /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
+/** GitHub's numeric repository id, as a string. */
+export const REPOSITORY_ID_PATTERN = /^[1-9][0-9]{0,19}$/;
 /** A full ref, optionally ending in `*` for a prefix match. */
 export const REF_PATTERN = /^refs\/[A-Za-z0-9._/-]+\*?$|^refs\/\*$/;
 
@@ -52,6 +54,17 @@ export class CreateGithubOidcTrustDto {
   @ApiProperty({ example: 'krakenkey/website' })
   @Matches(REPOSITORY_PATTERN, { message: 'repository must be owner/name' })
   repository: string;
+
+  @ApiPropertyOptional({
+    description:
+      "GitHub's numeric repository id, to pin the policy before its first run. Find it with `gh api repos/OWNER/NAME --jq .id`. Public repositories are looked up automatically when omitted.",
+    example: '123456789',
+  })
+  @IsOptional()
+  @Matches(REPOSITORY_ID_PATTERN, {
+    message: 'repositoryId must be a positive number',
+  })
+  repositoryId?: string;
 
   @ApiPropertyOptional({
     description:

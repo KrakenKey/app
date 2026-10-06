@@ -20,6 +20,7 @@ import {
   type GithubOidcClaims,
 } from './github-oidc.verifier';
 import type { CreateGithubOidcTrustDto } from './github-oidc.dto';
+import { GithubRepoLookup } from './github-repo-lookup';
 
 /** Trust policies per user. */
 export const MAX_TRUSTS_PER_USER = 20;
@@ -45,6 +46,7 @@ export class GithubOidcService {
     private readonly trustRepo: Repository<GithubOidcTrust>,
     private readonly authService: AuthService,
     private readonly verifier: GithubOidcVerifier,
+    private readonly repoLookup: GithubRepoLookup,
   ) {}
 
   async list(userId: string): Promise<GithubOidcTrustDto[]> {
@@ -70,11 +72,15 @@ export class GithubOidcService {
       allowedDomainIds: dto.allowedDomainIds,
       allowedCertIds: dto.allowedCertIds,
     });
+    const repositoryId = await this.resolveRepositoryId(
+      dto.repository,
+      dto.repositoryId,
+    );
     const trust = this.trustRepo.create({
       userId,
       name: dto.name,
       repository: dto.repository,
-      repositoryId: null,
+      repositoryId,
       allowedRefs: dto.allowedRefs ?? null,
       environment: dto.environment ?? null,
       scopes: limits.scopes,
@@ -85,6 +91,28 @@ export class GithubOidcService {
     });
     await this.trustRepo.save(trust);
     return toDto(trust);
+  }
+
+  /**
+   * The id to pin a new policy to. A given id is used as is, unless GitHub
+   * says the public repository has a different one (a typo in either
+   * field). Without one, a public repository's id is looked up; a private,
+   * misspelled or unreachable one stays unpinned and pins on first use.
+   */
+  private async resolveRepositoryId(
+    repository: string,
+    given?: string,
+  ): Promise<string | null> {
+    const found = await this.repoLookup.lookup(repository);
+    if (given) {
+      if (found.status === 'found' && found.id !== given) {
+        throw new BadRequestException(
+          `${repository} has repository id ${found.id} on GitHub, not ${given}`,
+        );
+      }
+      return given;
+    }
+    return found.status === 'found' ? found.id : null;
   }
 
   async remove(userId: string, id: string): Promise<void> {

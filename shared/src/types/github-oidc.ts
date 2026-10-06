@@ -26,6 +26,8 @@ export interface GithubOidcTrust {
 export interface CreateGithubOidcTrustRequest {
   name: string;
   repository: string;
+  /** Pins the policy up front; public repositories are looked up when omitted. */
+  repositoryId?: string;
   allowedRefs?: string[];
   environment?: string;
   scopes?: ApiKeyScope[];
