@@ -15,9 +15,11 @@ import { User } from '../../users/entities/user.entity';
 import { getQueueToken } from '@nestjs/bullmq';
 import type { ParsedCsr } from '@krakenkey/shared';
 import { EmailService } from '../../notifications/email.service';
+import { AlertsService } from '../../notifications/channels/alerts.service';
 import { BillingService } from '../../billing/billing.service';
 
 describe('TlsService', () => {
+  const mockAlerts = { emit: jest.fn().mockResolvedValue(0) };
   let service: TlsService;
   let csrUtilService: CsrUtilService;
   let certUtilService: CertUtilService;
@@ -122,6 +124,7 @@ describe('TlsService', () => {
           provide: getQueueToken('tlsCertIssuance'),
           useValue: mockQueue,
         },
+        { provide: AlertsService, useValue: mockAlerts },
         {
           provide: EmailService,
           useValue: {
@@ -705,6 +708,20 @@ describe('TlsService', () => {
         expect(result).toEqual({ id: 1, status: 'renewing', skipped: false });
         expect(mockQueue.add).toHaveBeenCalled();
         expect(billingService.resolveUserTier).toHaveBeenCalledTimes(1); // limits only
+      });
+
+      it('renews outside the window when the CA asked for early replacement', async () => {
+        mockRepository.findOneBy.mockResolvedValue({
+          ...issuedCert,
+          expiresAt: expiringIn(60),
+          ariReplacementRequestedAt: new Date(),
+        });
+        billingService.resolveUserTier.mockResolvedValue('starter');
+
+        const result = await service.renew(1, userId, { ifDue: true });
+
+        expect(result).toEqual({ id: 1, status: 'renewing', skipped: false });
+        expect(mockQueue.add).toHaveBeenCalled();
       });
 
       it('skips without touching status, quota or queue when outside the window', async () => {

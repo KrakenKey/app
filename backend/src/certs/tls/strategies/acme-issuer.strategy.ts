@@ -4,6 +4,7 @@ import { CertIssuerStrategy } from '../interfaces/tls-crt-issuer.interface';
 import { DnsProvider } from '../interfaces/dns-provider.interface';
 import { ConfigService } from '@nestjs/config/dist/config.service';
 import * as acme from 'acme-client';
+import { resolveAcmeDirectoryUrl } from '../util/acme-directory';
 import { promises as dns } from 'dns';
 import { MetricsService } from '../../../metrics/metrics.service';
 
@@ -27,9 +28,9 @@ export class AcmeIssuerStrategy implements CertIssuerStrategy {
       ? resolvers.split(',').map((s) => s.trim())
       : ['172.64.35.65', '108.162.195.65'];
 
-    this.contactEmail =
-      this.configService.get<string>('KK_ACME_CONTACT_EMAIL') ||
-      'admin@cloudwalker.it';
+    this.contactEmail = (
+      this.configService.get<string>('KK_ACME_CONTACT_EMAIL') ?? ''
+    ).trim();
   }
   /**
    * Initializes an ACME client with the configured account key and directory,
@@ -44,32 +45,18 @@ export class AcmeIssuerStrategy implements CertIssuerStrategy {
       throw new Error('Missing KK_ACME_ACCOUNT_KEY in configuration');
     }
 
+    if (!this.contactEmail) {
+      throw new Error('Missing KK_ACME_CONTACT_EMAIL in configuration');
+    }
+
     const letsEncryptAccountKey = this.normalizePrivateKeyPem(
       rawLetsEncryptAccountKey,
     );
 
-    // Determine ACME directory URL.
-    // KK_ACME_STAGING=true opts into Let's Encrypt Staging; production is the default.
-    // KK_ACME_DIRECTORY_URL overrides both when set.
-    let acmeDirectoryUrl = this.configService.get<string>(
-      'KK_ACME_DIRECTORY_URL',
+    const { url: acmeDirectoryUrl, label } = resolveAcmeDirectoryUrl(
+      this.configService,
     );
-    if (!acmeDirectoryUrl) {
-      const useStaging =
-        this.configService.get<string>('KK_ACME_STAGING')?.toLowerCase() ===
-        'true';
-      if (useStaging) {
-        this.logger.log(
-          "Using Let's Encrypt Staging environment for ACME (KK_ACME_STAGING=true)",
-        );
-        acmeDirectoryUrl = acme.directory.letsencrypt.staging;
-      } else {
-        this.logger.log("Using Let's Encrypt Production environment for ACME");
-        acmeDirectoryUrl = acme.directory.letsencrypt.production;
-      }
-    } else {
-      this.logger.log(`Using custom ACME directory: ${acmeDirectoryUrl}`);
-    }
+    this.logger.log(`Using ${label}`);
 
     const client = new acme.Client({
       directoryUrl: acmeDirectoryUrl,
@@ -84,7 +71,18 @@ export class AcmeIssuerStrategy implements CertIssuerStrategy {
     return client;
   }
 
-  async issue(csrPem: string, dnsProvider: DnsProvider): Promise<string> {
+  /**
+   * Issues a certificate for the CSR. `replaces` is the RFC 9773 identifier
+   * of the certificate being renewed; the CA uses it to link the two (Let's
+   * Encrypt exempts such orders from some rate limits). If the CA refuses it,
+   * for example because that certificate was already replaced, the order is
+   * retried without it.
+   */
+  async issue(
+    csrPem: string,
+    dnsProvider: DnsProvider,
+    options: { replaces?: string | null } = {},
+  ): Promise<string> {
     const endTimer = this.metricsService.acmeChallengeDuration.startTimer();
     // 1. Extract domains from the CSR
     const csrData = acme.crypto.readCsrDomains(csrPem);
@@ -101,9 +99,26 @@ export class AcmeIssuerStrategy implements CertIssuerStrategy {
     this.logger.log(`Creating order for: ${domains.join(', ')}`);
 
     // 3. Create the Order
-    const order = await client.createOrder({
-      identifiers: domains.map((domain) => ({ type: 'dns', value: domain })),
-    });
+    const identifiers = domains.map((domain) => ({
+      type: 'dns',
+      value: domain,
+    }));
+    let order: acme.Order;
+    if (options.replaces) {
+      try {
+        order = await client.createOrder({
+          identifiers,
+          replaces: options.replaces,
+        } as Parameters<acme.Client['createOrder']>[0]);
+      } catch (err) {
+        this.logger.warn(
+          `CA refused replaces=${options.replaces} (${err instanceof Error ? err.message : String(err)}); ordering without it`,
+        );
+        order = await client.createOrder({ identifiers });
+      }
+    } else {
+      order = await client.createOrder({ identifiers });
+    }
 
     const authorizations = await client.getAuthorizations(order);
     const challengeRecords: { recordName: string }[] = [];

@@ -15,6 +15,7 @@ KrakenKey uses Stripe for subscription management with five plan tiers that cont
 | **Hosted Probe Regions** | — | 2 | 5 | 15 | Unlimited |
 | **Hosted Endpoints** | — | 5 | 25 | 100 | Unlimited |
 | **Hosted Scan Interval** | — | 30 min | 15 min | 5 min | 1 min |
+| **Hosts per Report** | 25 | 250 | 250 | 250 | 250 |
 | **Data Retention** | 5 days | 30 days | 90 days | 90 days | Custom |
 | **Auto-Renewal Window** | 5 days | 30 days | 30 days | 30 days | 30 days |
 | **Organizations** | — | — | Yes | Yes | Yes |

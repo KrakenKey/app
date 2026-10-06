@@ -8,12 +8,15 @@ import { ProbeScanResult } from './entities/probe-scan-result.entity';
 import { Endpoint } from '../endpoints/entities/endpoint.entity';
 import { EndpointHostedRegion } from '../endpoints/entities/endpoint-hosted-region.entity';
 import { EndpointProbeAssignment } from '../endpoints/entities/endpoint-probe-assignment.entity';
+import { AlertsService } from '../notifications/channels/alerts.service';
+import { scanFailureReason } from './scan-failure';
 
 describe('ProbesService', () => {
   let service: ProbesService;
   let probeRepo: Record<string, jest.Mock>;
   let scanResultRepo: Record<string, jest.Mock>;
   let endpointRepo: Record<string, jest.Mock>;
+  let alerts: { emit: jest.Mock };
 
   const serviceKeyUser = { isServiceKey: true, serviceKeyId: 'svc-1' };
   const connectedUser = { userId: 'user-123' };
@@ -53,7 +56,10 @@ describe('ProbesService', () => {
       save: jest.fn((entity) => Promise.resolve(entity)),
     };
 
+    alerts = { emit: jest.fn().mockResolvedValue(1) };
+
     scanResultRepo = {
+      findOne: jest.fn().mockResolvedValue(null),
       create: jest.fn((dto) => ({ id: 'sr-1', ...dto })),
       save: jest.fn((entities) => Promise.resolve(entities)),
     };
@@ -94,6 +100,7 @@ describe('ProbesService', () => {
           provide: ConfigService,
           useValue: { get: jest.fn().mockReturnValue('60m') },
         },
+        { provide: AlertsService, useValue: alerts },
       ],
     }).compile();
 
@@ -215,6 +222,106 @@ describe('ProbesService', () => {
       expect(scanResultRepo.save).toHaveBeenCalled();
     });
 
+    describe('endpoint.scan_failed alerts', () => {
+      const failing = {
+        ...dto,
+        results: [
+          {
+            endpoint: { host: 'example.com', port: 443 },
+            connection: { success: false, error: 'connection refused' },
+          },
+        ],
+      };
+      const healthyRow = {
+        connectionSuccess: true,
+        certTrusted: true,
+        certChainComplete: true,
+        certDaysUntilExpiry: 40,
+      };
+      const failingRow = { connectionSuccess: false };
+
+      beforeEach(() => {
+        probeRepo.findOne.mockResolvedValue({ ...mockProbe });
+        endpointRepo.findOne.mockResolvedValue(mockEndpoint);
+      });
+
+      it('emits when a healthy endpoint starts failing', async () => {
+        scanResultRepo.findOne.mockResolvedValue(healthyRow);
+
+        await service.submitReport(failing, connectedUser);
+
+        expect(scanResultRepo.findOne).toHaveBeenCalledWith({
+          where: { endpointId: 'ep-1', probeId: 'probe-1' },
+          order: { scannedAt: 'DESC' },
+        });
+        expect(alerts.emit).toHaveBeenCalledTimes(1);
+        expect(alerts.emit).toHaveBeenCalledWith(
+          'user-123',
+          'endpoint.scan_failed',
+          expect.objectContaining({
+            subject: 'example.com:443',
+            resource: { type: 'endpoint', id: 'ep-1' },
+            details: expect.objectContaining({
+              reason: 'Connection failed: connection refused',
+            }),
+          }),
+        );
+      });
+
+      it('emits on the first scan when it fails', async () => {
+        scanResultRepo.findOne.mockResolvedValue(null);
+        await service.submitReport(failing, connectedUser);
+        expect(alerts.emit).toHaveBeenCalledTimes(1);
+      });
+
+      it('does not emit again while the endpoint keeps failing', async () => {
+        scanResultRepo.findOne.mockResolvedValue(failingRow);
+        await service.submitReport(failing, connectedUser);
+        expect(alerts.emit).not.toHaveBeenCalled();
+      });
+
+      it('does not emit for a healthy scan', async () => {
+        scanResultRepo.findOne.mockResolvedValue(failingRow);
+        await service.submitReport(dto, connectedUser);
+        expect(alerts.emit).not.toHaveBeenCalled();
+        expect(scanResultRepo.findOne).not.toHaveBeenCalled();
+      });
+
+      it('treats an expired certificate as failing', async () => {
+        scanResultRepo.findOne.mockResolvedValue(healthyRow);
+        await service.submitReport(
+          {
+            ...dto,
+            results: [
+              {
+                endpoint: { host: 'example.com', port: 443 },
+                connection: { success: true },
+                certificate: { daysUntilExpiry: -2, trusted: true },
+              },
+            ],
+          },
+          connectedUser,
+        );
+        expect(alerts.emit).toHaveBeenCalledWith(
+          'user-123',
+          'endpoint.scan_failed',
+          expect.objectContaining({
+            details: expect.objectContaining({
+              reason: 'Certificate has expired',
+            }),
+          }),
+        );
+      });
+
+      it('still accepts the report when the previous-scan lookup fails', async () => {
+        scanResultRepo.findOne.mockRejectedValue(new Error('db down'));
+        await expect(
+          service.submitReport(failing, connectedUser),
+        ).resolves.toEqual({ accepted: 1 });
+        expect(alerts.emit).not.toHaveBeenCalled();
+      });
+    });
+
     it('should skip results with no matching endpoint for connected probe', async () => {
       probeRepo.findOne.mockResolvedValue({ ...mockProbe });
       endpointRepo.findOne.mockResolvedValue(null);
@@ -296,5 +403,37 @@ describe('ProbesService', () => {
         ForbiddenException,
       );
     });
+  });
+});
+
+describe('scanFailureReason', () => {
+  it('is null for a healthy scan', () => {
+    expect(
+      scanFailureReason({
+        connectionSuccess: true,
+        certTrusted: true,
+        certChainComplete: true,
+        certDaysUntilExpiry: 10,
+      }),
+    ).toBeNull();
+  });
+
+  it('flags connection errors, expiry and chain problems', () => {
+    expect(scanFailureReason({ connectionSuccess: false })).toBe(
+      'Connection failed',
+    );
+    expect(
+      scanFailureReason({
+        connectionSuccess: true,
+        certNotAfter: new Date('2020-01-01'),
+        scannedAt: new Date('2021-01-01'),
+      }),
+    ).toBe('Certificate has expired');
+    expect(
+      scanFailureReason({ connectionSuccess: true, certChainComplete: false }),
+    ).toBe('Certificate chain is incomplete');
+    expect(
+      scanFailureReason({ connectionSuccess: true, certTrusted: false }),
+    ).toBe('Certificate chain is not trusted');
   });
 });

@@ -18,8 +18,6 @@ Complete reference for all environment variables used by the KrakenKey backend a
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `KK_APP_DOMAIN` | Yes | — | Web app domain. Must be a single-level subdomain for Cloudflare Free tier proxy support (e.g. `dev-web.krakenkey.io`) |
-| `ACME_AUTH_ZONE_DOMAIN` | Yes | — | DNS zone used for ACME DNS-01 challenge delegation (e.g. `acme.krakenkey.io`). Can be multi-level since it's DNS-only (no SSL proxy needed) |
-| `ACME_CONTACT_EMAIL` | Yes | — | Email registered with Let's Encrypt for certificate expiry notifications |
 
 ### PostgreSQL Database
 
@@ -77,9 +75,13 @@ Set `KK_DNS_PROVIDER` to select which provider handles DNS-01 ACME challenges. O
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `ACME_ACCOUNT_KEY` | Yes | — | RSA 4096-bit private key in PEM format for the ACME account. See [Generating an ACME Account Key](#generating-an-acme-account-key) |
-| `KK_GITHUB_OIDC_AUDIENCE` | No | `https://api.krakenkey.io` | Audience GitHub OIDC tokens must be issued for. Set it to this environment's API URL on dev and self-hosted installs, and use the same value as the Action's `oidc-audience` input |
-| `ACME_DIRECTORY_URL` | No | Let's Encrypt Staging | Custom ACME directory URL. Defaults to staging; set to `https://acme-v02.api.letsencrypt.org/directory` for production |
+| `KK_ACME_ACCOUNT_KEY` | Yes | — | RSA 4096-bit private key in PEM format for the ACME account. See [Generating an ACME Account Key](#generating-an-acme-account-key) |
+| `KK_ACME_AUTH_ZONE_DOMAIN` | Yes | — | DNS zone used for ACME DNS-01 challenge delegation (e.g. `acme.krakenkey.io`). Can be multi-level since it's DNS-only (no SSL proxy needed) |
+| `KK_ACME_CONTACT_EMAIL` | Yes | — | Email registered with the ACME account. Let's Encrypt uses it for account and policy notices |
+| `KK_ACME_STAGING` | No | `false` | Set to `true` to use Let's Encrypt Staging. Production is the default |
+| `KK_ACME_DIRECTORY_URL` | No | — | Custom ACME directory URL. Overrides `KK_ACME_STAGING` when set |
+| `KK_ACME_ARI` | No | `true` | Set to `false` to stop checking ACME Renewal Information (RFC 9773). See [CERTIFICATE_FLOW.md](CERTIFICATE_FLOW.md#acme-renewal-information-ari) |
+| `KK_ACME_DNS_RESOLVERS` | No | Cloudflare authoritative nameservers | Comma-separated resolver IPs used to check that the DNS-01 TXT record has propagated before asking the CA to validate |
 
 ### Authentication (Authentik OIDC)
 
@@ -92,12 +94,13 @@ Set `KK_DNS_PROVIDER` to select which provider handles DNS-01 ACME challenges. O
 | `KK_AUTHENTIK_CLIENT_SECRET` | Yes | — | OAuth2 client secret from Authentik provider configuration |
 | `KK_AUTHENTIK_REDIRECT_URI` | Yes | — | OAuth2 callback URL pointing to your API (e.g. `https://api-dev.krakenkey.io/auth/callback`) |
 | `KK_AUTHENTIK_POST_ENROLLMENT_REDIRECT` | Yes | — | Where to redirect after user enrollment (e.g. `https://api-dev.krakenkey.io/auth/login`) |
+| `KK_GITHUB_OIDC_AUDIENCE` | No | `https://api.krakenkey.io` | Audience GitHub OIDC tokens must be issued for. Set it to this environment's API URL on dev and self-hosted installs, and use the same value as the Action's `oidc-audience` input |
 
 ### API Key Hashing
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `KK_HMAC_SECRET` | Yes | — | 32-byte hex secret used as salt for scrypt hashing of API keys. Generate with `openssl rand -hex 32` |
+| `KK_HMAC_SECRET` | Yes | — | 32-byte hex secret used as salt for scrypt hashing of API keys. Also the input key (HKDF-SHA256) for encrypting notification channel URLs and webhook secrets, so changing it makes existing channels undeliverable until their URLs are saved again. Generate with `openssl rand -hex 32` |
 
 ### Billing (Stripe)
 
@@ -145,7 +148,7 @@ cat acme-account.key
 When placing the key in your `.env` file, wrap it in single quotes and replace newlines with literal `\n`:
 
 ```env
-ACME_ACCOUNT_KEY='<paste PEM content with newlines replaced by literal \n>'
+KK_ACME_ACCOUNT_KEY='<paste PEM content with newlines replaced by literal \n>'
 ```
 
 The backend automatically normalizes PEM formatting (handles literal `\n`, stray quotes, incorrect line wrapping).
@@ -177,7 +180,7 @@ cp frontend/.env.example frontend/.env
 - [ ] Set `KK_DB_SYNCHRONIZE=false` (use migrations)
 - [ ] Set `KK_DB_LOGGING=false`
 - [ ] Set `KK_DB_SSL=true`
-- [ ] Use the Let's Encrypt production directory URL
+- [ ] Leave `KK_ACME_STAGING` and `KK_ACME_DIRECTORY_URL` unset so issuance uses Let's Encrypt production
 - [ ] Generate a strong `KK_HMAC_SECRET`
 - [ ] Configure Stripe with production keys
 - [ ] Ensure `KK_AUTHENTIK_REDIRECT_URI` points to your production API domain

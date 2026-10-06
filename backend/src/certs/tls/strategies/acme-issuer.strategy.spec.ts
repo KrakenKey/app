@@ -154,26 +154,6 @@ describe('AcmeIssuerStrategy', () => {
       expect(s).toBeDefined();
       // The default resolvers are Cloudflare: 172.64.35.65, 108.162.195.65
     });
-
-    it('uses default contact email when KK_ACME_CONTACT_EMAIL is not set', async () => {
-      configMap.KK_ACME_CONTACT_EMAIL = undefined;
-
-      const module = await Test.createTestingModule({
-        providers: [
-          AcmeIssuerStrategy,
-          {
-            provide: ConfigService,
-            useValue: {
-              get: jest.fn((key: string) => configMap[key]),
-            },
-          },
-          mockMetricsProvider,
-        ],
-      }).compile();
-
-      const s = module.get<AcmeIssuerStrategy>(AcmeIssuerStrategy);
-      expect(s).toBeDefined();
-    });
   });
 
   // ─── revoke ───────────────────────────────────────────────────────────────
@@ -233,6 +213,29 @@ describe('AcmeIssuerStrategy', () => {
         'Missing KK_ACME_ACCOUNT_KEY',
       );
     });
+
+    it('throws when contact email is missing', async () => {
+      configMap.KK_ACME_CONTACT_EMAIL = '  ';
+
+      const module = await Test.createTestingModule({
+        providers: [
+          AcmeIssuerStrategy,
+          {
+            provide: ConfigService,
+            useValue: {
+              get: jest.fn((key: string) => configMap[key]),
+            },
+          },
+          mockMetricsProvider,
+        ],
+      }).compile();
+
+      const s = module.get<AcmeIssuerStrategy>(AcmeIssuerStrategy);
+      await expect(s.revoke(FAKE_CERT_PEM)).rejects.toThrow(
+        'Missing KK_ACME_CONTACT_EMAIL',
+      );
+      expect(mockClient.createAccount).not.toHaveBeenCalled();
+    });
   });
 
   // ─── issue ────────────────────────────────────────────────────────────────
@@ -288,6 +291,36 @@ describe('AcmeIssuerStrategy', () => {
         FAKE_CSR_PEM,
       );
       expect(mockClient.getCertificate).toHaveBeenCalled();
+    });
+
+    it('sends replaces on a renewal order (RFC 9773)', async () => {
+      const promise = strategy.issue(FAKE_CSR_PEM, mockDnsProvider, {
+        replaces: 'aYhba4dGQEHhs3uEe6CuLN4ByNQ.AIdlQyE',
+      });
+      await jest.advanceTimersByTimeAsync(30000);
+      await promise;
+
+      expect(mockClient.createOrder).toHaveBeenCalledTimes(1);
+      expect(mockClient.createOrder).toHaveBeenCalledWith({
+        identifiers: [{ type: 'dns', value: 'example.com' }],
+        replaces: 'aYhba4dGQEHhs3uEe6CuLN4ByNQ.AIdlQyE',
+      });
+    });
+
+    it('orders without replaces when the CA refuses it', async () => {
+      mockClient.createOrder
+        .mockRejectedValueOnce(new Error('alreadyReplaced'))
+        .mockResolvedValueOnce(mockOrder);
+      const promise = strategy.issue(FAKE_CSR_PEM, mockDnsProvider, {
+        replaces: 'aYhba4dGQEHhs3uEe6CuLN4ByNQ.AIdlQyE',
+      });
+      await jest.advanceTimersByTimeAsync(30000);
+      await expect(promise).resolves.toBe(FAKE_CERT_PEM);
+
+      expect(mockClient.createOrder).toHaveBeenCalledTimes(2);
+      expect(mockClient.createOrder).toHaveBeenLastCalledWith({
+        identifiers: [{ type: 'dns', value: 'example.com' }],
+      });
     });
 
     it('cleans up DNS records after successful issuance', async () => {

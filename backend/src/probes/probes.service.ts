@@ -14,6 +14,8 @@ import { EndpointHostedRegion } from '../endpoints/entities/endpoint-hosted-regi
 import { EndpointProbeAssignment } from '../endpoints/entities/endpoint-probe-assignment.entity';
 import type { RegisterProbeDto } from './dto/register-probe.dto';
 import type { SubmitReportDto, ScanResultDto } from './dto/submit-report.dto';
+import { AlertsService } from '../notifications/channels/alerts.service';
+import { scanFailureReason } from './scan-failure';
 
 export interface HostedEndpoint {
   host: string;
@@ -43,6 +45,7 @@ export class ProbesService {
     @InjectRepository(Endpoint)
     private readonly endpointRepo: Repository<Endpoint>,
     private readonly config: ConfigService,
+    private readonly alerts: AlertsService,
   ) {}
 
   async registerProbe(
@@ -107,6 +110,7 @@ export class ProbesService {
     const probeUserId = user.isServiceKey ? undefined : user.userId;
 
     const entities: ProbeScanResult[] = [];
+    const newlyFailing: { endpoint: Endpoint; result: ProbeScanResult }[] = [];
 
     for (const r of dto.results) {
       // Match host:port to registered Endpoint(s)
@@ -126,53 +130,91 @@ export class ProbesService {
       }
 
       for (const endpoint of endpoints) {
-        entities.push(
-          this.scanResultRepo.create({
-            probeId: dto.probeId,
-            endpointId: endpoint.id,
-            host: r.endpoint.host,
-            port: r.endpoint.port,
-            sni: r.endpoint.sni,
-            userId: endpoint.userId,
-            probeMode,
-            probeRegion,
-            connectionSuccess: r.connection.success,
-            connectionError: r.connection.error,
-            latencyMs: r.connection.latencyMs,
-            tlsVersion: r.connection.tlsVersion,
-            cipherSuite: r.connection.cipherSuite,
-            ocspStapled: r.connection.ocspStapled,
-            certSubject: r.certificate?.subject,
-            certSans: r.certificate?.sans,
-            certIssuer: r.certificate?.issuer,
-            certSerialNumber: r.certificate?.serialNumber,
-            certNotBefore: r.certificate?.notBefore
-              ? new Date(r.certificate.notBefore)
-              : undefined,
-            certNotAfter: r.certificate?.notAfter
-              ? new Date(r.certificate.notAfter)
-              : undefined,
-            certDaysUntilExpiry: r.certificate?.daysUntilExpiry,
-            certKeyType: r.certificate?.keyType,
-            certKeySize: r.certificate?.keySize,
-            certSignatureAlgorithm: r.certificate?.signatureAlgorithm,
-            certFingerprint: r.certificate?.fingerprint,
-            certChainDepth: r.certificate?.chainDepth,
-            certChainComplete: r.certificate?.chainComplete,
-            certTrusted: r.certificate?.trusted,
-            scannedAt,
-          }),
-        );
+        const entity = this.scanResultRepo.create({
+          probeId: dto.probeId,
+          endpointId: endpoint.id,
+          host: r.endpoint.host,
+          port: r.endpoint.port,
+          sni: r.endpoint.sni,
+          userId: endpoint.userId,
+          probeMode,
+          probeRegion,
+          connectionSuccess: r.connection.success,
+          connectionError: r.connection.error,
+          latencyMs: r.connection.latencyMs,
+          tlsVersion: r.connection.tlsVersion,
+          cipherSuite: r.connection.cipherSuite,
+          ocspStapled: r.connection.ocspStapled,
+          certSubject: r.certificate?.subject,
+          certSans: r.certificate?.sans,
+          certIssuer: r.certificate?.issuer,
+          certSerialNumber: r.certificate?.serialNumber,
+          certNotBefore: r.certificate?.notBefore
+            ? new Date(r.certificate.notBefore)
+            : undefined,
+          certNotAfter: r.certificate?.notAfter
+            ? new Date(r.certificate.notAfter)
+            : undefined,
+          certDaysUntilExpiry: r.certificate?.daysUntilExpiry,
+          certKeyType: r.certificate?.keyType,
+          certKeySize: r.certificate?.keySize,
+          certSignatureAlgorithm: r.certificate?.signatureAlgorithm,
+          certFingerprint: r.certificate?.fingerprint,
+          certChainDepth: r.certificate?.chainDepth,
+          certChainComplete: r.certificate?.chainComplete,
+          certTrusted: r.certificate?.trusted,
+          scannedAt,
+        });
+        entities.push(entity);
+        if (await this.startedFailing(entity)) {
+          newlyFailing.push({ endpoint, result: entity });
+        }
       }
     }
 
     if (entities.length > 0) {
       await this.scanResultRepo.save(entities);
     }
+    for (const { endpoint, result } of newlyFailing) {
+      await this.alerts.emit(endpoint.userId, 'endpoint.scan_failed', {
+        subject: `${endpoint.host}:${endpoint.port}`,
+        resource: { type: 'endpoint', id: endpoint.id },
+        details: {
+          endpointId: endpoint.id,
+          label: endpoint.label ?? null,
+          reason: scanFailureReason(result),
+          probeMode: result.probeMode ?? null,
+          probeRegion: result.probeRegion ?? null,
+          scannedAt: result.scannedAt.toISOString(),
+        },
+      });
+    }
     this.logger.log(
       `Accepted ${entities.length} scan results from probe ${dto.probeId}`,
     );
     return { accepted: entities.length };
+  }
+
+  /**
+   * True when this result is failing and the previous result from the same
+   * probe for the same endpoint was healthy (or there was none). Alerts go
+   * out on the transition only, not on every failing scan. Compared per
+   * probe so a failing region does not flap against a healthy one.
+   */
+  private async startedFailing(result: ProbeScanResult): Promise<boolean> {
+    if (!scanFailureReason(result) || !result.endpointId) return false;
+    try {
+      const previous = await this.scanResultRepo.findOne({
+        where: { endpointId: result.endpointId, probeId: result.probeId },
+        order: { scannedAt: 'DESC' },
+      });
+      return !previous || scanFailureReason(previous) === null;
+    } catch (err) {
+      this.logger.warn(
+        `Could not load previous scan for endpoint ${result.endpointId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return false;
+    }
   }
 
   async getConfig(

@@ -14,8 +14,10 @@ import { CertStatus } from '@krakenkey/shared';
 import type { TlsCertJobPayload } from '@krakenkey/shared';
 import { MetricsService } from '../../../metrics/metrics.service';
 import { EmailService } from '../../../notifications/email.service';
+import { AlertsService } from '../../../notifications/channels/alerts.service';
 import type { CertEmailContext } from '../../../notifications/email.service';
 import { User } from '../../../users/entities/user.entity';
+import { ariCertId } from '../util/ari';
 
 const MAX_FAILURE_REASON_LENGTH = 2000;
 
@@ -72,6 +74,7 @@ export class CertIssuerConsumer extends WorkerHost {
     private readonly emailService: EmailService,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    private readonly alerts: AlertsService,
   ) {
     super();
   }
@@ -128,10 +131,17 @@ export class CertIssuerConsumer extends WorkerHost {
         statusDuringProcess,
       );
 
+      // A renewal tells the CA which certificate it replaces (RFC 9773).
+      // csrRecord was loaded before crtPem was cleared above.
+      const replaces = isRenewal
+        ? (csrRecord.ariCertId ?? safeAriCertId(csrRecord.crtPem))
+        : null;
+
       // ACME issuance handles DNS-01 challenge creation, validation, and cert retrieval
       const fullChainPem = await this.acmeStrategy.issue(
         this.csrUtilService.formatPem(csrRecord.rawCsr),
         this.dnsStrategy,
+        { replaces },
       );
 
       const { leaf: crtPem, intermediates: chainPem } =
@@ -142,7 +152,18 @@ export class CertIssuerConsumer extends WorkerHost {
       const updateData: InternalUpdateTlsCrtDto & {
         expiresAt: Date;
         lastRenewedAt?: Date;
-      } = { crtPem, chainPem, expiresAt };
+      } = {
+        crtPem,
+        chainPem,
+        expiresAt,
+        // New leaf: new ARI identifier, and the old window no longer applies
+        ariCertId: safeAriCertId(crtPem),
+        ariWindowStart: null,
+        ariWindowEnd: null,
+        ariExplanationUrl: null,
+        ariNextCheckAt: null,
+        ariReplacementRequestedAt: null,
+      };
       if (isRenewal) {
         updateData.lastRenewedAt = new Date();
       }
@@ -182,6 +203,18 @@ export class CertIssuerConsumer extends WorkerHost {
           await this.emailService.sendCertIssued(ctx);
         }
       }
+      await this.alerts.emit(
+        csrRecord.user?.id ?? csrRecord.userId,
+        isRenewal ? 'cert.renewed' : 'cert.issued',
+        {
+          subject: commonName,
+          resource: { type: 'certificate', id: certId },
+          details: {
+            certificateId: certId,
+            expiresAt: expiresAt.toISOString(),
+          },
+        },
+      );
 
       return { success: true };
     } catch (err: unknown) {
@@ -226,6 +259,19 @@ export class CertIssuerConsumer extends WorkerHost {
           errorMessage: message,
         });
       }
+      await this.alerts.emit(
+        csrRecord.user?.id ?? csrRecord.userId,
+        'cert.failed',
+        {
+          subject: commonName,
+          resource: { type: 'certificate', id: certId },
+          details: {
+            certificateId: certId,
+            renewal: isRenewal,
+            error: message.slice(0, MAX_FAILURE_REASON_LENGTH),
+          },
+        },
+      );
 
       if (permanent) {
         // UnrecoverableError stops BullMQ from consuming remaining attempts.
@@ -237,5 +283,15 @@ export class CertIssuerConsumer extends WorkerHost {
 
   private isPermanentFailure(message: string): boolean {
     return PERMANENT_FAILURE_PATTERNS.some((p) => p.test(message));
+  }
+}
+
+/** RFC 9773 identifier of a leaf PEM, or null if it can't be computed. */
+function safeAriCertId(pem: string | null | undefined): string | null {
+  if (!pem) return null;
+  try {
+    return ariCertId(pem);
+  } catch {
+    return null;
   }
 }

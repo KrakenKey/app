@@ -492,6 +492,8 @@ Manually queue a renewal for an `issued` certificate. Creates a new ACME order u
 |------|------|---------|-------------|
 | `ifDue` | boolean | `false` | Only renew if the certificate is inside its plan's renewal window (Free: 5 days before expiry, paid plans: 30 days, the same window auto-renewal uses). Only the string `true` turns it on. |
 
+A certificate the CA has asked to replace early (`ariReplacementRequestedAt` set, see [ACME Renewal Information](CERTIFICATE_FLOW.md#acme-renewal-information-ari)) counts as due whatever the window.
+
 Use `ifDue=true` when calling renew on a schedule (cron, systemd timer, CI): it renews once the certificate is due and does nothing on the other days, so no quota is used. A certificate with no recorded expiry is always renewed. The status and CSR checks run first either way, so a certificate that is not `issued` still returns `400`.
 
 **Response `201` (renewal queued):**
@@ -745,6 +747,264 @@ Add a hosted probe region.
 ### DELETE /endpoints/:id/regions/:region
 
 Remove a hosted region.
+
+---
+
+## Notification Channels
+
+Send alerts to Slack, Microsoft Teams or your own HTTPS endpoint, alongside the existing emails. Channels belong to the signed-in user. Each user can have up to 10.
+
+| Method | Path | Scope | Rate limit | Description |
+|--------|------|-------|------------|-------------|
+| GET | `/notifications/channels` | `account:read` | read | List channels |
+| POST | `/notifications/channels` | `account:write` | write | Add a channel |
+| PATCH | `/notifications/channels/:id` | `account:write` | write | Change `name`, `url`, `events` or `enabled` |
+| DELETE | `/notifications/channels/:id` | `account:write` | write | Delete a channel (`204`) |
+| POST | `/notifications/channels/:id/test` | `account:write` | expensive | Send a `test` alert now and report the result |
+| POST | `/notifications/channels/:id/rotate-secret` | `account:write` | write | New webhook signing secret (webhook channels only) |
+
+A channel that belongs to someone else returns `404`. API keys limited to specific domains or certificates can list channels but get `403` on the write routes, because a channel receives alerts for the whole account.
+
+### Channel types and URLs
+
+| `type` | Accepted URL |
+|--------|--------------|
+| `slack` | A Slack incoming webhook: `https://hooks.slack.com/services/...` |
+| `teams` | A Teams **Workflows** webhook (Power Automate "When a Teams webhook request is received"): https, host ending in `.logic.azure.com`, `.powerplatform.com`, `.environment.api.powerplatform.com` or `.webhook.office.com`. Microsoft has retired Office 365 connectors, so their `outlook.office.com/webhook/...` URLs are not accepted. |
+| `webhook` | Any `https` URL whose host resolves only to public addresses. Any port is fine. URLs with a username or password, `localhost`, and private, loopback, link-local or IPv4-mapped private addresses are rejected. The host is checked again on every delivery. |
+
+URLs and webhook secrets are stored encrypted (AES-256-GCM, key derived from `KK_HMAC_SECRET`). Responses only include `urlMasked`, for example `https://hooks.slack.com/…a1B2`.
+
+### Events
+
+| Event | Sent when |
+|-------|-----------|
+| `cert.issued` | A new certificate was issued |
+| `cert.renewed` | A certificate was renewed |
+| `cert.failed` | Issuance or renewal failed after all retries |
+| `cert.expiring` | The daily expiry check found a certificate inside its renewal window |
+| `cert.revoked` | A certificate was revoked |
+| `cert.replacement_requested` | The CA asked for early replacement (ACME ARI) |
+| `domain.verification_failed` | A verified domain failed its daily TXT re-check |
+| `endpoint.scan_failed` | A monitored endpoint started failing: connection error, incomplete or untrusted chain, or expired certificate. Sent when a probe's result changes from healthy (or no previous result) to failing, not on every failing scan. |
+
+When `events` is left out, a new channel subscribes to everything except `cert.issued` and `cert.renewed`.
+
+### POST /notifications/channels
+
+**Request:**
+```json
+{
+  "type": "webhook",
+  "name": "SIEM",
+  "url": "https://hooks.example.com/krakenkey",
+  "events": ["cert.failed", "cert.expiring", "endpoint.scan_failed"]
+}
+```
+
+**Response (201):**
+```json
+{
+  "id": "3f0c9a4e-8d1b-4c55-9a8e-2b7d1c0e6f11",
+  "type": "webhook",
+  "name": "SIEM",
+  "urlMasked": "https://hooks.example.com/…okey",
+  "events": ["cert.failed", "cert.expiring", "endpoint.scan_failed"],
+  "enabled": true,
+  "hasSecret": true,
+  "lastDeliveryAt": null,
+  "lastDeliveryStatus": null,
+  "lastError": null,
+  "createdAt": "2026-10-05T12:00:00.000Z",
+  "updatedAt": "2026-10-05T12:00:00.000Z",
+  "secret": "whsec_6vQ2..."
+}
+```
+
+`secret` is only present for webhook channels and only in this response. Store it now; it cannot be read back. Use `rotate-secret` to get a new one, which also returns it once and replaces the old one immediately.
+
+### POST /notifications/channels/:id/test
+
+Sends a `test` event right away (no queue, no retries) and records the outcome on the channel.
+
+```json
+{ "ok": false, "status": 404, "error": "HTTP 404" }
+```
+
+### Delivery
+
+Alerts are queued on the `notifications` BullMQ queue, one job per channel. Each delivery is a `POST` with a 10 second timeout. Redirects are not followed. Network errors, timeouts, `408`, `429` and `5xx` are retried up to 5 attempts with exponential backoff starting at 30 seconds. Any other non-2xx status is recorded as failed and not retried. Every attempt updates `lastDeliveryAt`, `lastDeliveryStatus` (`ok` or `failed`) and `lastError`.
+
+### Webhook payload
+
+```http
+POST /krakenkey HTTP/1.1
+Content-Type: application/json
+User-Agent: KrakenKey-Webhooks/1
+X-KrakenKey-Event: cert.expiring
+X-KrakenKey-Delivery: 9b2e6f0a-41c7-4d8e-a1f3-6c0d2b7e9a55
+X-KrakenKey-Signature: t=1759665600,v1=5f1c...e9
+
+{
+  "id": "9b2e6f0a-41c7-4d8e-a1f3-6c0d2b7e9a55",
+  "type": "cert.expiring",
+  "createdAt": "2026-10-05T06:00:01.000Z",
+  "data": {
+    "title": "Certificate expiring soon",
+    "subject": "api.example.com",
+    "resource": { "type": "certificate", "id": 42 },
+    "details": {
+      "certificateId": 42,
+      "expiresAt": "2026-10-10T00:00:00.000Z",
+      "daysUntilExpiry": 5
+    },
+    "url": "https://app.krakenkey.io/dashboard/certificates"
+  }
+}
+```
+
+`id` is unique per delivery and repeats across retries of the same delivery, so you can use it to drop duplicates. `data.resource` is `null` for `test` events. `data.details` varies by event.
+
+### Verifying the signature
+
+`X-KrakenKey-Signature` is `t=<unix seconds>,v1=<hex>`, where `<hex>` is HMAC-SHA256 of `<t>.<raw request body>` keyed with the full secret string (including `whsec_`). Compute it over the raw bytes before parsing the JSON, compare in constant time, and reject old timestamps to stop replays.
+
+```js
+const crypto = require('node:crypto');
+
+function verifyKrakenKey(rawBody, header, secret, toleranceSec = 300) {
+  const parts = Object.fromEntries(header.split(',').map((p) => p.split('=')));
+  const t = Number(parts.t);
+  if (!t || Math.abs(Date.now() / 1000 - t) > toleranceSec) return false;
+  const expected = crypto
+    .createHmac('sha256', secret)
+    .update(`${t}.${rawBody}`)
+    .digest('hex');
+  const given = Buffer.from(parts.v1 ?? '', 'hex');
+  const want = Buffer.from(expected, 'hex');
+  return given.length === want.length && crypto.timingSafeEqual(given, want);
+}
+
+// Express: app.post('/krakenkey', express.raw({ type: 'application/json' }), (req, res) => {
+//   if (!verifyKrakenKey(req.body.toString('utf8'), req.get('X-KrakenKey-Signature'), process.env.KK_WEBHOOK_SECRET))
+//     return res.sendStatus(401);
+//   ...
+// });
+```
+
+---
+
+## Reports
+
+Portfolio TLS reports: scan a list of hosts once and get expiry, issuer, hostname coverage, chain problems and reachability for each, sorted by what needs attention first. Owner only: another account's report returns `404`, also for organization members. API keys limited to specific domains or certificates get `403` on every report route.
+
+### POST /reports
+
+Create a report. Scope: `account:write`. Rate limit category: expensive.
+
+**Request:**
+```json
+{
+  "name": "Client sites",
+  "hosts": ["example.com", "shop.example.com", "api.example.com:8443"]
+}
+```
+
+- `hosts`: one hostname per entry, optionally with `:port` (default `443`). A pasted URL such as `https://example.com/login` is reduced to its host and port. Entries are lowercased and duplicates (same host and port) dropped.
+- IP addresses, single-label names (`localhost`), wildcards and internal suffixes (`.local`, `.internal`, `.lan`, `.home.arpa`) are refused with `400`; `message` lists every rejected entry. Names that resolve to a private or internal address are refused at scan time and show up as a critical host.
+- Plan limit, counted after dedupe: Free 25 hosts per report, paid plans 250. Over the limit returns `403` with `code: "plan_limit_exceeded"`, `limit`, `current` and `plan`.
+
+Returns the report with `status: "pending"`. Hosts are scanned in the background, five at a time with a 20 second limit each, through the same scanner as `POST /public-scan`. Status moves `pending` -> `running` -> `complete` (or `failed`), and each host is stored as soon as it finishes, so poll `GET /reports/:id`.
+
+### GET /reports
+
+List your reports (newest first, up to 100). Scope: `account:read`. Each item has `id`, `name`, `status`, `hostCount`, `completedCount`, `counts` (`critical`, `warning`, `notice`, `ok`), `share` (`{ expiresAt, createdAt }` or `null`), `createdAt`, `completedAt` and `expiresAt`. No per-host results.
+
+### GET /reports/:id
+
+Full report. Scope: `account:read`.
+
+```json
+{
+  "id": "1f0c...",
+  "name": "Client sites",
+  "status": "complete",
+  "hostCount": 3,
+  "completedCount": 3,
+  "share": null,
+  "createdAt": "2026-10-05T10:00:00.000Z",
+  "completedAt": "2026-10-05T10:00:41.000Z",
+  "expiresAt": "2027-01-03T10:00:00.000Z",
+  "summary": {
+    "totalHosts": 3,
+    "scannedHosts": 3,
+    "counts": { "critical": 1, "warning": 0, "notice": 1, "ok": 1 },
+    "issuers": [{ "issuer": "Let's Encrypt", "count": 2 }],
+    "letsEncryptHosts": 2,
+    "earliestExpiry": { "host": "shop.example.com", "port": 443, "notAfter": "2026-10-28T09:12:00Z", "daysLeft": 22 }
+  },
+  "hosts": [
+    {
+      "host": "api.example.com",
+      "port": 8443,
+      "status": "complete",
+      "severity": "critical",
+      "problems": [{ "code": "unreachable", "severity": "critical", "message": "Could not connect: connection refused" }],
+      "reachable": false,
+      "daysLeft": null,
+      "issuerName": null,
+      "letsEncrypt": null
+    }
+  ]
+}
+```
+
+Each host also carries `tlsVersion`, `notAfter`, `issuer` (full DN), `subject`, `sans`, `hostnameCovered`, `trusted`, `chainDepth`, `keyType`, `keySize`, `error` and `scannedAt`. Hosts are sorted by severity, then fewest days left, then hostname. Hosts not scanned yet have `severity: null` and sort last.
+
+| Severity | Problems |
+|----------|----------|
+| `critical` | unreachable or scan failed, no certificate, expired, hostname not covered by any SAN (a wildcard covers exactly one label), untrusted chain, server sends no intermediates |
+| `warning` | expires within 14 days, TLS older than 1.2, RSA key under 2048 bits or EC key under 256 bits |
+| `notice` | expires within 30 days |
+| `ok` | none of the above |
+
+### GET /reports/:id/export?format=csv
+
+Download the report as CSV (sorted like the report). Scope: `account:read`. `format` defaults to `csv`; any other value returns `400`. Columns: `host, port, severity, status, reachable, days_left, not_after, issuer, lets_encrypt, tls_version, key, hostname_covered, trusted, problems`. Cells that start with `=`, `+`, `-` or `@` are prefixed with `'` so spreadsheets do not run them as formulas.
+
+### DELETE /reports/:id
+
+Delete a report, its results and its share link. Scope: `account:write`. Returns `204`.
+
+### POST /reports/:id/share
+
+Create a read-only share link. Scope: `account:write`. Replaces any existing link, so the old one stops working.
+
+```json
+{
+  "url": "https://app.krakenkey.io/r/3q2-7wEh...",
+  "token": "3q2-7wEh...",
+  "expiresAt": "2026-11-04T10:05:00.000Z"
+}
+```
+
+The token is 32 random bytes, base64url encoded. Only its SHA-256 hash is stored, so the link is shown once; create a new one to get it again. Links expire 30 days after creation.
+
+### DELETE /reports/:id/share
+
+Revoke the share link. Scope: `account:write`. Returns `204`.
+
+### GET /public/reports/:token
+
+The shared report. No authentication; rate limited per IP (public category). Returns `name`, `status`, `hostCount`, `completedCount`, `createdAt`, `completedAt`, `shareExpiresAt`, `summary` and `hosts`, with no report id, owner or account details. Unknown, revoked and expired tokens all return `404`. Responses carry `Cache-Control: no-store` and `X-Robots-Tag: noindex, nofollow`.
+
+### GET /public/reports/:token/export?format=csv
+
+CSV download of a shared report, same rules as above.
+
+### Retention
+
+Reports are deleted 90 days after creation by a daily job at 03:30, which also clears expired share links.
 
 ---
 

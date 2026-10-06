@@ -35,6 +35,13 @@ export class MetricsService implements OnModuleInit {
     registers: [this.registry],
   });
 
+  readonly ariChecksTotal = new Counter({
+    name: 'ari_checks_total',
+    help: 'ACME Renewal Information checks by result (ok, none, error, early_replacement)',
+    labelNames: ['result'] as const,
+    registers: [this.registry],
+  });
+
   readonly acmeChallengeDuration = new Histogram({
     name: 'acme_challenge_duration_seconds',
     help: 'Duration of ACME DNS-01 challenge flow',
@@ -103,6 +110,14 @@ export class MetricsService implements OnModuleInit {
     help: 'Endpoint scan latency by region in milliseconds',
     labelNames: ['host', 'port', 'region'] as const,
     buckets: [10, 25, 50, 100, 250, 500, 1000, 2500],
+    registers: [this.registry],
+  });
+
+  // --- Alert channels (Slack, Teams, webhooks) ---
+  readonly alertDeliveriesTotal = new Counter({
+    name: 'alert_deliveries_total',
+    help: 'Alert delivery attempts to notification channels',
+    labelNames: ['type', 'result'] as const,
     registers: [this.registry],
   });
 
