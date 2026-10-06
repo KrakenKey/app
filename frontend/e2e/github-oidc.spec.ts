@@ -43,7 +43,7 @@ test.describe('GitHub Actions trust policies', () => {
 
     const form = section.getByRole('form', { name: 'Add GitHub trust policy' });
     await form.getByLabel('Policy name').fill('api renewal');
-    await form.getByLabel('Repository').fill('octo/api');
+    await form.getByLabel('Repository', { exact: true }).fill('octo/api');
     await form.getByLabel(/branches or tags/i).fill('refs/heads/main');
     await form.getByRole('radio', { name: /certificate renewal/i }).check();
     await form.getByRole('button', { name: /add trust policy/i }).click();
@@ -52,7 +52,7 @@ test.describe('GitHub Actions trust policies', () => {
     await expect(snippet).toContainText('id-token: write');
     await expect(snippet).toContainText('krakenkey/cert-action@v1');
     await expect(snippet).not.toContainText('trust-id');
-    await expect(section.getByText('not used yet')).toBeVisible();
+    await expect(section.getByText('pins on its first run')).toBeVisible();
 
     expect(body).toMatchObject({
       name: 'api renewal',
