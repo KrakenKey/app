@@ -9,4 +9,5 @@ export * from './types/auth';
 export * from './types/subscription';
 export * from './types/endpoint';
 export * from './types/public-scan';
+export * from './types/notification-channel';
 export * from './constants/routes';

@@ -30,8 +30,13 @@ export class QueueMetricsService {
     metricsService: MetricsService,
     @InjectQueue('tlsCertIssuance') tlsCertQueue: Queue,
     @InjectQueue('orgDissolution') orgDissolutionQueue: Queue,
+    @InjectQueue('notifications') notificationsQueue?: Queue,
   ) {
-    const queues = [tlsCertQueue, orgDissolutionQueue];
+    const queues = [
+      tlsCertQueue,
+      orgDissolutionQueue,
+      notificationsQueue,
+    ].filter((q): q is Queue => Boolean(q));
     const logger = this.logger;
 
     this.queueJobs = new Gauge({

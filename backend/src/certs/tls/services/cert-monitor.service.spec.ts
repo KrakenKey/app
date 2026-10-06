@@ -7,9 +7,11 @@ import { User } from '../../../users/entities/user.entity';
 import { CertStatus } from '@krakenkey/shared';
 import { MetricsService } from '../../../metrics/metrics.service';
 import { EmailService } from '../../../notifications/email.service';
+import { AlertsService } from '../../../notifications/channels/alerts.service';
 import { BillingService } from '../../../billing/billing.service';
 
 describe('CertMonitorService', () => {
+  const mockAlerts = { emit: jest.fn().mockResolvedValue(0) };
   let service: CertMonitorService;
   let mockRepository: Record<string, jest.Mock>;
   let mockUserRepository: Record<string, jest.Mock>;
@@ -82,6 +84,7 @@ describe('CertMonitorService', () => {
             certExpiryDays: { set: jest.fn() },
           },
         },
+        { provide: AlertsService, useValue: mockAlerts },
         {
           provide: EmailService,
           useValue: {

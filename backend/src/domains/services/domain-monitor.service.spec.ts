@@ -4,8 +4,10 @@ import { DomainMonitorService } from './domain-monitor.service';
 import { DomainsService } from '../domains.service';
 import { Domain } from '../entities/domain.entity';
 import { EmailService } from '../../notifications/email.service';
+import { AlertsService } from '../../notifications/channels/alerts.service';
 
 describe('DomainMonitorService', () => {
+  const mockAlerts = { emit: jest.fn().mockResolvedValue(0) };
   let service: DomainMonitorService;
   let mockRepository: Record<string, jest.Mock>;
   let mockDomainsService: Record<string, jest.Mock>;
@@ -65,6 +67,7 @@ describe('DomainMonitorService', () => {
           provide: DomainsService,
           useValue: mockDomainsService,
         },
+        { provide: AlertsService, useValue: mockAlerts },
         {
           provide: EmailService,
           useValue: mockEmailService,
@@ -110,6 +113,14 @@ describe('DomainMonitorService', () => {
         hostname: 'example.com',
         verificationCode: 'krakenkey-site-verification=abc',
       });
+      expect(mockAlerts.emit).toHaveBeenCalledWith(
+        expect.anything(),
+        'domain.verification_failed',
+        expect.objectContaining({
+          subject: verifiedDomain.hostname,
+          resource: { type: 'domain', id: verifiedDomain.id },
+        }),
+      );
     });
 
     it('skips email when domain has no owner', async () => {
