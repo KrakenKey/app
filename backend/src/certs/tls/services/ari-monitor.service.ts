@@ -10,6 +10,7 @@ import { TlsService } from '../tls.service';
 import { AriService } from './ari.service';
 import { BillingService } from '../../../billing/billing.service';
 import { MetricsService } from '../../../metrics/metrics.service';
+import { AlertsService } from '../../../notifications/channels/alerts.service';
 import { ariCertId, isEarlyReplacement } from '../util/ari';
 
 type AriField =
@@ -50,6 +51,7 @@ export class AriMonitorService {
     private readonly ariService: AriService,
     private readonly billingService: BillingService,
     private readonly metricsService: MetricsService,
+    private readonly alerts: AlertsService,
   ) {}
 
   @Cron(CronExpression.EVERY_HOUR)
@@ -151,6 +153,17 @@ export class AriMonitorService {
         `CA asked for early replacement of certificate #${cert.id}: window ${window.start.toISOString()} to ${window.end.toISOString()}` +
           (window.explanationUrl ? ` (${window.explanationUrl})` : ''),
       );
+      await this.alerts.emit(cert.userId, 'cert.replacement_requested', {
+        subject: certName(leaf) ?? `cert #${cert.id}`,
+        resource: { type: 'certificate', id: cert.id },
+        details: {
+          certificateId: cert.id,
+          windowStart: window.start.toISOString(),
+          windowEnd: window.end.toISOString(),
+          explanationUrl: window.explanationUrl ?? null,
+          expiresAt: leaf.notAfter.toISOString(),
+        },
+      });
     }
     if (window.start > now) return;
 
@@ -199,4 +212,12 @@ function safe(pem: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** The certificate's subject CN, or its first DNS name when it has no CN. */
+function certName(leaf: x509.X509Certificate): string | null {
+  const cn = leaf.subjectName.getField('CN')[0];
+  if (cn) return cn;
+  const san = leaf.getExtension(x509.SubjectAlternativeNameExtension);
+  return san?.names.items.find((n) => n.type === 'dns')?.value ?? null;
 }
