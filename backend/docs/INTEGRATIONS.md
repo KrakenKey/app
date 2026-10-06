@@ -21,17 +21,18 @@ KrakenKey uses the ACME protocol to automate certificate issuance with Let's Enc
 
 | Variable | Description |
 |----------|-------------|
-| `ACME_ACCOUNT_KEY` | 4096-bit RSA private key in PEM format |
-| `ACME_CONTACT_EMAIL` | Contact email registered with Let's Encrypt |
-| `ACME_DIRECTORY_URL` | ACME directory (defaults to Let's Encrypt Staging) |
-| `ACME_AUTH_ZONE_DOMAIN` | DNS zone for challenge delegation |
+| `KK_ACME_ACCOUNT_KEY` | 4096-bit RSA private key in PEM format |
+| `KK_ACME_CONTACT_EMAIL` | Contact email registered with Let's Encrypt |
+| `KK_ACME_AUTH_ZONE_DOMAIN` | DNS zone for challenge delegation |
+| `KK_ACME_STAGING` | `true` to use Let's Encrypt Staging (default: production) |
+| `KK_ACME_DIRECTORY_URL` | Custom ACME directory; overrides `KK_ACME_STAGING` |
 
 ### Environments
 
 | Environment | Directory URL | Rate Limits |
 |-------------|--------------|-------------|
-| **Staging** (default) | `https://acme-staging-v02.api.letsencrypt.org/directory` | Generous limits, issues untrusted test certificates |
-| **Production** | `https://acme-v02.api.letsencrypt.org/directory` | 50 certs/domain/week, 300 new orders/account/3hrs |
+| **Staging** (`KK_ACME_STAGING=true`) | `https://acme-staging-v02.api.letsencrypt.org/directory` | Generous limits, issues untrusted test certificates |
+| **Production** (default) | `https://acme-v02.api.letsencrypt.org/directory` | 50 certs/domain/week, 300 new orders/account/3hrs |
 
 ### Setting Up an ACME Account
 
@@ -42,14 +43,14 @@ The ACME account is created automatically on first use. You only need to generat
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out acme-account.key
 
 # Copy to .env (replace newlines with \n)
-echo "ACME_ACCOUNT_KEY='$(cat acme-account.key | tr '\n' '~' | sed 's/~/\\n/g')'"
+echo "KK_ACME_ACCOUNT_KEY='$(cat acme-account.key | tr '\n' '~' | sed 's/~/\\n/g')'"
 ```
 
 ### Switching to Production
 
-When you're ready to issue real certificates:
+Production is the default. When you're ready to issue real certificates:
 
-1. Set `ACME_DIRECTORY_URL=https://acme-v02.api.letsencrypt.org/directory`
+1. Remove `KK_ACME_STAGING` (or set it to `false`) and leave `KK_ACME_DIRECTORY_URL` unset
 2. Optionally generate a new account key for production (recommended)
 3. Ensure your DNS provider is correctly configured
 4. Test with a single domain before bulk issuance
