@@ -57,6 +57,14 @@ export class UserApiKey {
   @Column({ type: 'text', array: true, nullable: true })
   allowedIps?: string[] | null;
 
+  /**
+   * How the key was created: null for keys made in the dashboard or by CLI
+   * login, 'github-oidc' for short-lived keys from a GitHub OIDC exchange
+   * (hidden from the key list and not counted toward the plan limit).
+   */
+  @Column({ type: 'text', nullable: true })
+  source?: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

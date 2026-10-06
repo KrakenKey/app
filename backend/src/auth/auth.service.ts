@@ -10,7 +10,7 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { In, IsNull, LessThan, MoreThan, Repository } from 'typeorm';
+import { In, IsNull, LessThan, MoreThan, Not, Repository } from 'typeorm';
 import { Cron } from '@nestjs/schedule';
 import { UserApiKey } from './entities/user-api-key.entity';
 import { ServiceApiKey } from './entities/service-api-key.entity';
@@ -342,7 +342,7 @@ export class AuthService implements OnModuleInit {
    * resources (restrictions only narrow access, but a foreign id would
    * still leak whether it exists).
    */
-  private async validateRestrictions(
+  async validateRestrictions(
     userId: string,
     r: ApiKeyRestrictions,
   ): Promise<{
@@ -417,8 +417,9 @@ export class AuthService implements OnModuleInit {
     if (limits.apiKeys !== Infinity) {
       const memberIds =
         await this.billingService.getResourceCountUserIds(userId);
+      // Short-lived keys from GitHub OIDC don't take a plan slot
       const count = await this.userApiKeyRepo.count({
-        where: { userId: In(memberIds), revokedAt: IsNull() },
+        where: { userId: In(memberIds), revokedAt: IsNull(), source: IsNull() },
       });
       if (count >= limits.apiKeys) {
         throw new HttpException(
@@ -443,12 +444,18 @@ export class AuthService implements OnModuleInit {
     userId: string,
     opts: { includeRevoked?: boolean } = {},
   ): Promise<ApiKey[]> {
+    // Short-lived GitHub OIDC keys are left out; their trust policy shows
+    // when it was last used.
     const where = opts.includeRevoked
       ? [
-          { userId, revokedAt: IsNull() },
-          { userId, revokedAt: MoreThan(revokedKeyCutoff()) },
+          { userId, revokedAt: IsNull(), source: IsNull() },
+          {
+            userId,
+            revokedAt: MoreThan(revokedKeyCutoff()),
+            source: IsNull(),
+          },
         ]
-      : { userId, revokedAt: IsNull() };
+      : { userId, revokedAt: IsNull(), source: IsNull() };
     const keys = await this.userApiKeyRepo.find({
       where,
       order: { createdAt: 'DESC' },
@@ -497,6 +504,51 @@ export class AuthService implements OnModuleInit {
     }
   }
 
+  /**
+   * Creates a short-lived key for a machine exchange such as GitHub OIDC.
+   * It isn't listed, doesn't count toward the plan's key limit, and expires
+   * after ttlSeconds. Restrictions must already be validated.
+   */
+  async createEphemeralApiKey(
+    userId: string,
+    name: string,
+    source: string,
+    ttlSeconds: number,
+    restrictions: {
+      scopes: ApiKeyScope[] | null;
+      allowedDomainIds: string[] | null;
+      allowedCertIds: number[] | null;
+    },
+  ): Promise<{ id: string; apiKey: string; expiresAt: Date }> {
+    const rawKey = `kk_${randomBytes(24).toString('hex')}`;
+    const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
+    const key = this.userApiKeyRepo.create({
+      name: name.slice(0, 100),
+      hash: this.hashKey(rawKey),
+      user: { id: userId },
+      expiresAt,
+      source,
+      scopes: restrictions.scopes,
+      allowedDomainIds: restrictions.allowedDomainIds,
+      allowedCertIds: restrictions.allowedCertIds,
+      allowedIps: null,
+    });
+    await this.userApiKeyRepo.save(key);
+    return { id: key.id, apiKey: rawKey, expiresAt };
+  }
+
+  /** Hourly: delete short-lived keys that expired more than an hour ago. */
+  @Cron('15 * * * *')
+  async purgeExpiredEphemeralKeys(): Promise<void> {
+    const result = await this.userApiKeyRepo.delete({
+      source: Not(IsNull()),
+      expiresAt: LessThan(new Date(Date.now() - 3600_000)),
+    });
+    if (result.affected) {
+      this.logger.log(`Purged ${result.affected} expired short-lived key(s)`);
+    }
+  }
+
   /** Daily: delete keys revoked more than REVOKED_KEY_RETENTION_DAYS ago. */
   @Cron('30 4 * * *')
   async purgeRevokedApiKeys(): Promise<void> {
@@ -529,7 +581,8 @@ export class AuthService implements OnModuleInit {
       return null;
     }
     if (record.expiresAt && record.expiresAt < new Date()) {
-      await this.notifyExpiredKeyUse(record, meta?.ip);
+      // Short-lived machine keys expire by design; don't email about them
+      if (!record.source) await this.notifyExpiredKeyUse(record, meta?.ip);
       return null;
     }
     // A valid key from the wrong address: 403, not 401, and not counted

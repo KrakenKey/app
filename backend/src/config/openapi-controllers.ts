@@ -1,6 +1,7 @@
 import type { Type } from '@nestjs/common';
 import { AppController } from '../app.controller';
 import { AuthController } from '../auth/auth.controller';
+import { GithubOidcController } from '../auth/oidc/github-oidc.controller';
 import { BillingController } from '../billing/billing.controller';
 import { TlsController } from '../certs/tls/tls.controller';
 import { DomainsController } from '../domains/domains.controller';
@@ -21,6 +22,7 @@ import { UsersController } from '../users/users.controller';
 export const OPENAPI_CONTROLLERS: Type<unknown>[] = [
   AppController,
   AuthController,
+  GithubOidcController,
   BillingController,
   TlsController,
   DomainsController,

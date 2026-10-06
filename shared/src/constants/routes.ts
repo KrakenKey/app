@@ -6,6 +6,9 @@ export const API_ROUTES = {
     CALLBACK: '/auth/callback',
     LOGOUT_URL: '/auth/logout-url',
     CONFIRM_AUTO_RENEWAL: '/auth/confirm-auto-renewal',
+    GITHUB_OIDC: '/auth/github-oidc',
+    GITHUB_OIDC_TRUSTS: '/auth/github-oidc/trusts',
+    GITHUB_OIDC_TRUST_BY_ID: (id: string) => `/auth/github-oidc/trusts/${id}`,
   },
   USERS: {
     BASE: '/users',

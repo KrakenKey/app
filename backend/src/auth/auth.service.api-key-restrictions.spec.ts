@@ -145,3 +145,72 @@ describe('AuthService API key scopes and restrictions', () => {
     });
   });
 });
+
+describe('AuthService short-lived keys', () => {
+  it('creates an ephemeral key with source, expiry and limits, outside the plan count', async () => {
+    const keyRepo = {
+      create: jest.fn((v) => ({ id: 'eph', ...v })),
+      save: jest.fn((v) => Promise.resolve(v)),
+    };
+    const service = new AuthService(
+      { get: jest.fn(() => 'secret') } as any,
+      keyRepo as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    const before = Date.now();
+    const res = await service.createEphemeralApiKey(
+      'u1',
+      'GitHub OIDC: o/r',
+      'github-oidc',
+      900,
+      {
+        scopes: ['certs:read'],
+        allowedDomainIds: null,
+        allowedCertIds: [3],
+      },
+    );
+    expect(res.apiKey).toMatch(/^kk_[0-9a-f]{48}$/);
+    expect(res.expiresAt.getTime()).toBeGreaterThanOrEqual(before + 900_000);
+    expect(keyRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'github-oidc',
+        scopes: ['certs:read'],
+        allowedCertIds: [3],
+        allowedIps: null,
+      }),
+    );
+  });
+
+  it('does not email about an expired short-lived key', async () => {
+    const keyRepo = {
+      findOne: jest.fn().mockResolvedValue({
+        id: 'eph',
+        source: 'github-oidc',
+        expiresAt: new Date(Date.now() - 1000),
+        user: { id: 'u1' },
+      }),
+    };
+    const security = { shouldNotifyExpiredKeyUse: jest.fn() };
+    const service = new AuthService(
+      { get: jest.fn(() => 'secret') } as any,
+      keyRepo as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      security as any,
+    );
+    await expect(
+      service.validateApiKey('kk_x', { ip: '1.2.3.4' }),
+    ).resolves.toBeNull();
+    expect(security.shouldNotifyExpiredKeyUse).not.toHaveBeenCalled();
+  });
+});

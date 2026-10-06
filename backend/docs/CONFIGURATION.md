@@ -78,6 +78,7 @@ Set `KK_DNS_PROVIDER` to select which provider handles DNS-01 ACME challenges. O
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `ACME_ACCOUNT_KEY` | Yes | — | RSA 4096-bit private key in PEM format for the ACME account. See [Generating an ACME Account Key](#generating-an-acme-account-key) |
+| `KK_GITHUB_OIDC_AUDIENCE` | No | `https://api.krakenkey.io` | Audience GitHub OIDC tokens must be issued for. Set it to this environment's API URL on dev and self-hosted installs, and use the same value as the Action's `oidc-audience` input |
 | `ACME_DIRECTORY_URL` | No | Let's Encrypt Staging | Custom ACME directory URL. Defaults to staging; set to `https://acme-v02.api.letsencrypt.org/directory` for production |
 
 ### Authentication (Authentik OIDC)

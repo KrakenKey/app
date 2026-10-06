@@ -131,6 +131,7 @@ describe('@RequireScope coverage', () => {
       'DELETE /endpoints/:id/probes/:probeId': 'endpoints:write',
       'DELETE /endpoints/:id/regions/:region': 'endpoints:write',
       'GET /auth/api-keys': 'account:read',
+      'GET /auth/github-oidc/trusts': 'account:read',
       'GET /auth/profile': 'account:read',
       'GET /billing/subscription': 'account:read',
       'GET /certs/tls': 'certs:read',
