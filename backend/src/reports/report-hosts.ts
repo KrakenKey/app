@@ -57,7 +57,10 @@ export function hostnameProblem(host: string): string | null {
 export function parseHostEntry(raw: string): ReportTarget | string {
   let value = raw.trim().toLowerCase();
   value = value.replace(/^[a-z][a-z0-9+.-]*:\/\//, ''); // scheme
-  value = value.replace(/[/?#].*$/, ''); // path, query, fragment
+  // Path, query, fragment. A single-character search stays linear on long
+  // input, unlike /[/?#].*$/.
+  const end = value.search(/[/?#]/);
+  if (end !== -1) value = value.slice(0, end);
   if (value.includes('@')) return 'credentials are not allowed';
 
   let host = value;

@@ -1,6 +1,24 @@
 import { hostnameProblem, parseHostEntry, parseHostList } from './report-hosts';
 
 describe('parseHostEntry', () => {
+  it('strips path, query and fragment', () => {
+    expect(parseHostEntry('https://example.com:8443/a?b#c')).toEqual({
+      host: 'example.com',
+      port: 8443,
+    });
+    expect(parseHostEntry('example.com#frag')).toEqual({
+      host: 'example.com',
+      port: 443,
+    });
+  });
+
+  it('handles long runs of # quickly', () => {
+    const input = 'example.com' + '#\n'.repeat(50_000);
+    const start = Date.now();
+    expect(parseHostEntry(input)).toEqual({ host: 'example.com', port: 443 });
+    expect(Date.now() - start).toBeLessThan(500);
+  });
+
   it('defaults to port 443 and lowercases', () => {
     expect(parseHostEntry('  Example.COM ')).toEqual({
       host: 'example.com',
