@@ -44,6 +44,7 @@ describe('AriMonitorService', () => {
   let ari: { isEnabled: jest.Mock; getRenewalInfo: jest.Mock };
   let billing: { resolveUserTier: jest.Mock };
   let metrics: { ariChecksTotal: { inc: jest.Mock } };
+  let alerts: { emit: jest.Mock };
   let svc: AriMonitorService;
 
   const cert = (over: Record<string, unknown> = {}) => ({
@@ -75,6 +76,7 @@ describe('AriMonitorService', () => {
     };
     billing = { resolveUserTier: jest.fn().mockResolvedValue('starter') };
     metrics = { ariChecksTotal: { inc: jest.fn() } };
+    alerts = { emit: jest.fn().mockResolvedValue(0) };
     svc = new AriMonitorService(
       repo as any,
       users as any,
@@ -82,6 +84,7 @@ describe('AriMonitorService', () => {
       ari as any,
       billing as any,
       metrics as any,
+      alerts as any,
     );
   });
 
@@ -106,6 +109,7 @@ describe('AriMonitorService', () => {
     });
     expect(tls.renewInternal).not.toHaveBeenCalled();
     expect(metrics.ariChecksTotal.inc).toHaveBeenCalledWith({ result: 'ok' });
+    expect(alerts.emit).not.toHaveBeenCalled();
   });
 
   it('renews right away when the CA moves an open window earlier', async () => {
@@ -118,6 +122,22 @@ describe('AriMonitorService', () => {
     expect(metrics.ariChecksTotal.inc).toHaveBeenCalledWith({
       result: 'early_replacement',
     });
+    expect(alerts.emit).toHaveBeenCalledTimes(1);
+    expect(alerts.emit).toHaveBeenCalledWith(
+      'u1',
+      'cert.replacement_requested',
+      {
+        subject: 'labxp.io',
+        resource: { type: 'certificate', id: 7 },
+        details: {
+          certificateId: 7,
+          windowStart: at(38).toISOString(),
+          windowEnd: at(39).toISOString(),
+          explanationUrl: null,
+          expiresAt: NOT_AFTER.toISOString(),
+        },
+      },
+    );
   });
 
   it('waits for an early window that has not opened, and checks again when it does', async () => {
@@ -148,6 +168,8 @@ describe('AriMonitorService', () => {
     await svc.checkRenewalInfo(NOW);
     expect(saved().ariReplacementRequestedAt).toEqual(at(35));
     expect(tls.renewInternal).toHaveBeenCalledWith(7);
+    // Already alerted when the request was first seen
+    expect(alerts.emit).not.toHaveBeenCalled();
   });
 
   it('does not renew early for a free owner whose auto-renewal lapsed', async () => {
@@ -158,6 +180,12 @@ describe('AriMonitorService', () => {
     await svc.checkRenewalInfo(NOW);
     expect(saved().ariReplacementRequestedAt).toEqual(NOW);
     expect(tls.renewInternal).not.toHaveBeenCalled();
+    // The owner still hears about it, since nothing will renew on its own
+    expect(alerts.emit).toHaveBeenCalledWith(
+      'u1',
+      'cert.replacement_requested',
+      expect.objectContaining({ subject: 'labxp.io' }),
+    );
   });
 
   it('backs off a day when the CA has no info, six hours after an error', async () => {
