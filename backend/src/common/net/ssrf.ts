@@ -95,3 +95,8 @@ export async function resolveToPublicIPs(hostname: string): Promise<string[]> {
 
   return addresses;
 }
+
+/** True when the string is an IP literal (bracketed IPv6 included). */
+export function isIpLiteral(value: string): boolean {
+  return isIP(value.replace(/^\[|\]$/g, '')) !== 0;
+}

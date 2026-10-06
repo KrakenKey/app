@@ -10,4 +10,5 @@ export * from './types/subscription';
 export * from './types/endpoint';
 export * from './types/public-scan';
 export * from './types/notification-channel';
+export * from './types/report';
 export * from './constants/routes';

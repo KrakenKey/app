@@ -10,13 +10,32 @@ import type { PublicScanResponse } from '@krakenkey/shared';
 import type { PublicScanRequestDto } from './dto/public-scan.dto';
 import { resolveToPublicIPs, SsrfError } from '../common/net/ssrf';
 
+export interface ScanHostOptions {
+  /** Overrides the HTTP client's default timeout for the scanner call. */
+  timeoutMs?: number;
+}
+
 @Injectable()
 export class PublicScanService {
   constructor(private readonly httpService: HttpService) {}
 
-  async scan(dto: PublicScanRequestDto): Promise<PublicScanResponse> {
+  scan(dto: PublicScanRequestDto): Promise<PublicScanResponse> {
     const { hostname, port = 443 } = dto;
+    return this.scanHost(hostname, port);
+  }
 
+  /**
+   * Scans one host through the internal probe scanner. Refuses IP literals
+   * and names that resolve to private addresses (BadRequestException), and
+   * reports scanner failures and timeouts as ServiceUnavailableException.
+   * A host that is resolvable but not reachable is not an error: the result
+   * has `connection.success: false`.
+   */
+  async scanHost(
+    hostname: string,
+    port: number,
+    options: ScanHostOptions = {},
+  ): Promise<PublicScanResponse> {
     if (isIP(hostname)) {
       throw new BadRequestException(
         'Raw IP addresses are not allowed — use a hostname',
@@ -26,13 +45,11 @@ export class PublicScanService {
     const resolved = await this.resolveToPublicIPs(hostname);
 
     try {
-      const { data } = await firstValueFrom(
-        this.httpService.post('/scan', {
-          host: resolved[0],
-          port,
-          sni: hostname,
-        }),
-      );
+      const body = { host: resolved[0], port, sni: hostname };
+      const request = options.timeoutMs
+        ? this.httpService.post('/scan', body, { timeout: options.timeoutMs })
+        : this.httpService.post('/scan', body);
+      const { data } = await firstValueFrom(request);
 
       data.endpoint = { host: hostname, port, sni: hostname };
 

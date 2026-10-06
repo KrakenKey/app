@@ -1,5 +1,6 @@
 import { promises as dns } from 'dns';
 import {
+  isIpLiteral,
   isPrivateIP,
   isPrivateIPv4,
   isPrivateIPv6,
@@ -9,6 +10,16 @@ import {
 
 describe('ssrf', () => {
   afterEach(() => jest.restoreAllMocks());
+
+  it('treats a public IPv6 address as public', () => {
+    expect(isPrivateIPv6('2606:4700:4700::1111')).toBe(false);
+  });
+
+  it('recognises IP literals, bracketed or not', () => {
+    expect(isIpLiteral('1.2.3.4')).toBe(true);
+    expect(isIpLiteral('[::1]')).toBe(true);
+    expect(isIpLiteral('example.com')).toBe(false);
+  });
 
   it.each([
     '0.0.0.0',

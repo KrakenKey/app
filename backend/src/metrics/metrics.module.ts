@@ -13,6 +13,7 @@ import { QueueMetricsService } from './queue-metrics.service';
       { name: 'tlsCertIssuance' },
       { name: 'orgDissolution' },
       { name: 'notifications' },
+      { name: 'reportScan' },
     ),
   ],
   controllers: [MetricsController],

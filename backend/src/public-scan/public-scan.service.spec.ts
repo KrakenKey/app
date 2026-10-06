@@ -36,6 +36,20 @@ describe('PublicScanService', () => {
     );
   });
 
+  it('passes a per-call timeout to the scanner when given', async () => {
+    jest.spyOn(dns, 'resolve4').mockResolvedValue(['93.184.216.34']);
+    jest.spyOn(dns, 'resolve6').mockResolvedValue([]);
+    post.mockReturnValue(of({ data: { endpoint: {} } }));
+
+    await service.scanHost('example.com', 8443, { timeoutMs: 5000 });
+
+    expect(post).toHaveBeenCalledWith(
+      '/scan',
+      { host: '93.184.216.34', port: 8443, sni: 'example.com' },
+      { timeout: 5000 },
+    );
+  });
+
   it('scans the first public address with the hostname as SNI', async () => {
     jest.spyOn(dns, 'resolve4').mockResolvedValue(['93.184.216.34']);
     jest.spyOn(dns, 'resolve6').mockResolvedValue([]);

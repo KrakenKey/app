@@ -80,4 +80,13 @@ export const API_ROUTES = {
   PUBLIC_SCAN: {
     SCAN: '/public-scan',
   },
+  REPORTS: {
+    BASE: '/reports',
+    BY_ID: (id: string) => `/reports/${id}`,
+    SHARE: (id: string) => `/reports/${id}/share`,
+    EXPORT: (id: string) => `/reports/${id}/export`,
+    PUBLIC: (token: string) => `/public/reports/${encodeURIComponent(token)}`,
+    PUBLIC_EXPORT: (token: string) =>
+      `/public/reports/${encodeURIComponent(token)}/export`,
+  },
 } as const;

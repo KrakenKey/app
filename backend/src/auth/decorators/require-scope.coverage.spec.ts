@@ -131,6 +131,8 @@ describe('@RequireScope coverage', () => {
       'DELETE /endpoints/:id/probes/:probeId': 'endpoints:write',
       'DELETE /endpoints/:id/regions/:region': 'endpoints:write',
       'DELETE /notifications/channels/:id': 'account:write',
+      'DELETE /reports/:id': 'account:write',
+      'DELETE /reports/:id/share': 'account:write',
       'GET /auth/api-keys': 'account:read',
       'GET /auth/profile': 'account:read',
       'GET /billing/subscription': 'account:read',
@@ -149,6 +151,9 @@ describe('@RequireScope coverage', () => {
       'GET /notifications/channels': 'account:read',
       'GET /organizations/:id': 'account:read',
       'GET /probes/:probeId/config': 'probes:report',
+      'GET /reports': 'account:read',
+      'GET /reports/:id': 'account:read',
+      'GET /reports/:id/export': 'account:read',
       'GET /users/:id': 'account:read',
       'PATCH /auth/profile': 'account:write',
       'PATCH /certs/tls/:id': 'certs:renew',
@@ -172,6 +177,8 @@ describe('@RequireScope coverage', () => {
       'POST /notifications/channels/:id/test': 'account:write',
       'POST /probes/register': 'probes:report',
       'POST /probes/report': 'probes:report',
+      'POST /reports': 'account:write',
+      'POST /reports/:id/share': 'account:write',
     });
   });
 });

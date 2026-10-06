@@ -11,6 +11,8 @@ import { NotificationChannelsController } from '../notifications/channels/notifi
 import { OrganizationsController } from '../organizations/organizations.controller';
 import { ProbesController } from '../probes/probes.controller';
 import { PublicScanController } from '../public-scan/public-scan.controller';
+import { PublicReportsController } from '../reports/public-reports.controller';
+import { ReportsController } from '../reports/reports.controller';
 import { UsersController } from '../users/users.controller';
 
 /**
@@ -32,5 +34,7 @@ export const OPENAPI_CONTROLLERS: Type<unknown>[] = [
   OrganizationsController,
   ProbesController,
   PublicScanController,
+  ReportsController,
+  PublicReportsController,
   UsersController,
 ];

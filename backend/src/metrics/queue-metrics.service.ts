@@ -31,11 +31,13 @@ export class QueueMetricsService {
     @InjectQueue('tlsCertIssuance') tlsCertQueue: Queue,
     @InjectQueue('orgDissolution') orgDissolutionQueue: Queue,
     @InjectQueue('notifications') notificationsQueue?: Queue,
+    @InjectQueue('reportScan') reportScanQueue?: Queue,
   ) {
     const queues = [
       tlsCertQueue,
       orgDissolutionQueue,
       notificationsQueue,
+      reportScanQueue,
     ].filter((q): q is Queue => Boolean(q));
     const logger = this.logger;
 

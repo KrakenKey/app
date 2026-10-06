@@ -310,6 +310,46 @@ CREATE TABLE "notification_channel" (
 CREATE INDEX "IDX_notification_channel_userId" ON "notification_channel" ("userId");
 ```
 
+### Report
+
+Portfolio TLS reports (#123). Deleted 90 days after creation.
+
+```sql
+CREATE TABLE "report" (
+  "id" UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  "userId" TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+  "name" VARCHAR(100),
+  "status" VARCHAR(16) NOT NULL DEFAULT 'pending', -- pending, running, complete, failed
+  "hostCount" INTEGER NOT NULL,
+  "shareTokenHash" VARCHAR(64) UNIQUE,            -- SHA-256 of the share token
+  "shareCreatedAt" TIMESTAMP,
+  "shareExpiresAt" TIMESTAMP,                     -- 30 days after creation
+  "createdAt" TIMESTAMP NOT NULL DEFAULT now(),
+  "startedAt" TIMESTAMP,
+  "completedAt" TIMESTAMP,
+  "expiresAt" TIMESTAMP NOT NULL                  -- createdAt + 90 days
+);
+```
+
+### ReportHost
+
+One row per host in a report, written as each scan finishes.
+
+```sql
+CREATE TABLE "report_host" (
+  "id" UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  "reportId" UUID NOT NULL REFERENCES "report"(id) ON DELETE CASCADE,
+  "position" INTEGER NOT NULL,                    -- order in the submitted list
+  "host" VARCHAR(253) NOT NULL,
+  "port" INTEGER NOT NULL DEFAULT 443,
+  "status" VARCHAR(16) NOT NULL DEFAULT 'pending', -- pending, complete, error
+  "severity" VARCHAR(16),                         -- critical, warning, notice, ok
+  "result" JSONB,                                 -- classified scan result
+  "scannedAt" TIMESTAMP,
+  UNIQUE ("reportId", "host", "port")
+);
+```
+
 ---
 
 ## Entity Relationship Diagram
