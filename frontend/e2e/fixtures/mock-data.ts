@@ -204,3 +204,22 @@ export const mockApiKeys = [
     lastUsedIp: '198.51.100.4',
   },
 ];
+
+/* ── GitHub Actions trust policies ─────────────────────────────────────── */
+
+export const mockGithubOidcTrusts = [
+  {
+    id: '6f0c1a2b-0000-4000-8000-000000000001',
+    name: 'website deploy',
+    repository: 'octo/website',
+    repositoryId: '123456',
+    allowedRefs: ['refs/heads/main'],
+    environment: 'production',
+    scopes: null,
+    allowedDomainIds: null,
+    allowedCertIds: null,
+    lastUsedAt: '2025-03-01T12:00:00.000Z',
+    lastUsedRef: 'refs/heads/main',
+    createdAt: '2025-02-01T00:00:00.000Z',
+  },
+];

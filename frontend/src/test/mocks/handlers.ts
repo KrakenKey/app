@@ -30,6 +30,10 @@ export const handlers = [
     });
   }),
 
+  http.get(`${API_URL}/auth/github-oidc/trusts`, () => {
+    return HttpResponse.json([]);
+  }),
+
   // Notification channels
   http.get(`${API_URL}/notifications/channels`, () => {
     return HttpResponse.json([]);

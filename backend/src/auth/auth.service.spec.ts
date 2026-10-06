@@ -687,7 +687,7 @@ describe('AuthService', () => {
       const result = await service.listApiKeys('user-1');
 
       expect(mockUserApiKeyRepo.find).toHaveBeenCalledWith({
-        where: { userId: 'user-1', revokedAt: IsNull() },
+        where: { userId: 'user-1', revokedAt: IsNull(), source: IsNull() },
         order: { createdAt: 'DESC' },
         select,
       });
@@ -740,8 +740,12 @@ describe('AuthService', () => {
 
       const { where } = mockUserApiKeyRepo.find.mock.calls[0][0];
       expect(where).toEqual([
-        { userId: 'user-1', revokedAt: IsNull() },
-        { userId: 'user-1', revokedAt: expect.anything() },
+        { userId: 'user-1', revokedAt: IsNull(), source: IsNull() },
+        {
+          userId: 'user-1',
+          revokedAt: expect.anything(),
+          source: IsNull(),
+        },
       ]);
       const cutoff = (where[1].revokedAt as { value: Date }).value;
       const days = (Date.now() - cutoff.getTime()) / 86_400_000;

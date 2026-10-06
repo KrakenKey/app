@@ -94,6 +94,7 @@ Set `KK_DNS_PROVIDER` to select which provider handles DNS-01 ACME challenges. O
 | `KK_AUTHENTIK_CLIENT_SECRET` | Yes | — | OAuth2 client secret from Authentik provider configuration |
 | `KK_AUTHENTIK_REDIRECT_URI` | Yes | — | OAuth2 callback URL pointing to your API (e.g. `https://api-dev.krakenkey.io/auth/callback`) |
 | `KK_AUTHENTIK_POST_ENROLLMENT_REDIRECT` | Yes | — | Where to redirect after user enrollment (e.g. `https://api-dev.krakenkey.io/auth/login`) |
+| `KK_GITHUB_OIDC_AUDIENCE` | No | `https://api.krakenkey.io` | Audience GitHub OIDC tokens must be issued for. Set it to this environment's API URL on dev and self-hosted installs, and use the same value as the Action's `oidc-audience` input |
 
 ### API Key Hashing
 

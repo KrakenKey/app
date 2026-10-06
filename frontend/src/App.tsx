@@ -11,7 +11,7 @@ import Overview from './pages/Overview';
 import Settings from './pages/Settings';
 import DomainManagement from './components/DomainManagement';
 import CertificateManagement from './components/CertificateManagement';
-import ApiKeyManagement from './components/ApiKeyManagement';
+import ApiKeys from './pages/ApiKeys';
 import EndpointManagement from './components/EndpointManagement';
 import Feedback from './components/Feedback';
 import Billing from './pages/Billing';
@@ -61,7 +61,7 @@ function AppRoutes() {
         <Route path="endpoints" element={<EndpointManagement />} />
         <Route path="reports" element={<Reports />} />
         <Route path="reports/:id" element={<ReportDetail />} />
-        <Route path="api-keys" element={<ApiKeyManagement />} />
+        <Route path="api-keys" element={<ApiKeys />} />
         <Route path="billing" element={<Billing />} />
         <Route path="organizations" element={<Organizations />} />
         <Route path="feedback" element={<Feedback />} />

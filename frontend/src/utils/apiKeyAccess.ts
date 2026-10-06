@@ -1,6 +1,9 @@
 import { API_KEY_PRESETS } from '@krakenkey/shared';
 import type { ApiKeyPreset, ApiKeyScope } from '@krakenkey/shared';
 
+export const plural = (n: number, word: string) =>
+  `${n} ${word}${n === 1 ? '' : 's'}`;
+
 export const API_KEY_PRESET_ORDER: ApiKeyPreset[] = [
   'full',
   'read-only',

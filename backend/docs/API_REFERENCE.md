@@ -254,6 +254,61 @@ Every field is optional. `name` defaults to `"default"` (max 100 chars). `expire
 
 The `apiKey` value is shown **only once**. Store it securely.
 
+### GitHub Actions OIDC
+
+Workflows can authenticate without a stored API key. The account owner creates a **trust policy** for a repository in the dashboard; a workflow job in that repository then exchanges its GitHub OIDC token for an API key that lasts 15 minutes and carries the policy's scopes and restrictions. The [GitHub Action](https://github.com/KrakenKey/cert-action) does this when no `api-key` input is set and the job has `permissions: id-token: write`.
+
+#### POST /auth/github-oidc
+
+No authentication. Rate-limited as a public route.
+
+```json
+{ "token": "<GitHub Actions OIDC JWT>", "trustId": "optional uuid" }
+```
+
+The token must be signed by GitHub (`https://token.actions.githubusercontent.com`, keys from its JWKS, RS256 only), unexpired, and issued for the audience `https://api.krakenkey.io` (`KK_GITHUB_OIDC_AUDIENCE` on other environments). Then it must match exactly one trust policy:
+
+- `repository` equals the token's `repository` (case-insensitive), and its numeric `repository_id` equals the one pinned on the policy. The id is pinned from the first token, so a repository deleted and re-created under the same name is refused.
+- If the policy has `allowedRefs`, the token's `ref` equals one of them, or starts with an entry ending in `*` (`refs/tags/v*`).
+- If the policy has `environment`, the job runs in that GitHub environment.
+
+**Response `200`:**
+```json
+{
+  "apiKey": "kk_...",
+  "expiresAt": "2026-10-06T00:15:00.000Z",
+  "trustId": "uuid",
+  "scopes": ["certs:read", "certs:renew", "account:read"]
+}
+```
+
+`401` for an invalid, expired or wrong-audience token; `403` when no policy matches; `409` with `trustIds` when several do (pass `trustId`). These keys are not listed under `GET /auth/api-keys`, don't count toward the plan's key limit, and are deleted an hour after they expire. Every exchange is logged with the repository, ref, commit, run id and actor; the policy records when it was last used and from which ref.
+
+#### GET /auth/github-oidc/trusts
+
+Lists trust policies (`account:read`). Each has `id`, `name`, `repository`, `repositoryId` (null until first use), `allowedRefs`, `environment`, `scopes`, `allowedDomainIds`, `allowedCertIds`, `lastUsedAt`, `lastUsedRef` and `createdAt`.
+
+#### POST /auth/github-oidc/trusts
+
+Creates a policy. Dashboard session only, like creating API keys.
+
+```json
+{
+  "name": "website deploy",
+  "repository": "octo/website",
+  "allowedRefs": ["refs/heads/main"],
+  "environment": "production",
+  "scopes": ["certs:read", "certs:renew", "account:read"],
+  "allowedDomainIds": ["3f1c2b9e-..."]
+}
+```
+
+Only `name` and `repository` are required. Scopes and restrictions work as for [API keys](#api-key-scopes-and-restrictions). Policies can't be edited; create a new one and delete the old. Up to 20 per account.
+
+#### DELETE /auth/github-oidc/trusts/:id
+
+Deletes a policy. Dashboard session only. Keys it already issued stay valid until they expire (at most 15 minutes).
+
 ### DELETE /auth/api-keys/:id
 
 Revoke an API key. It stops authenticating immediately and no longer counts toward the plan's API key limit. The row is kept, and listed with `includeRevoked=true`, for 30 days; a daily job deletes it after that. Returns `404` if the key doesn't exist, belongs to someone else, or is already revoked.

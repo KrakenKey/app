@@ -13,6 +13,9 @@ test.describe('API key management', () => {
       }
       return route.continue();
     });
+    await page.route(api('/auth/github-oidc/trusts'), (route) =>
+      route.fulfill({ status: 200, json: [] }),
+    );
   });
 
   test('lists existing API keys', async ({ page }) => {
@@ -118,11 +121,13 @@ test.describe('API key management', () => {
     });
 
     await page.goto('/dashboard/api-keys');
-    await page.getByLabel('Name', { exact: true }).fill('pfe-renewal');
-    await page.getByRole('radio', { name: /certificate renewal/i }).check();
-    await page.getByRole('button', { name: /restrictions/i }).click();
-    await page.getByLabel(/allowed ips/i).fill('203.0.113.7');
-    await page.getByRole('button', { name: /create/i }).click();
+    // The GitHub trust policy form on the same page has the same controls.
+    const form = page.getByRole('form', { name: 'Create API key' });
+    await form.getByLabel('Name', { exact: true }).fill('pfe-renewal');
+    await form.getByRole('radio', { name: /certificate renewal/i }).check();
+    await form.getByRole('button', { name: /restrictions/i }).click();
+    await form.getByLabel(/allowed ips/i).fill('203.0.113.7');
+    await form.getByRole('button', { name: /create/i }).click();
 
     await expect(page.getByText('kk_live_renewal_only')).toBeVisible();
     expect(body).toMatchObject({
