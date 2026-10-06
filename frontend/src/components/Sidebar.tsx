@@ -12,6 +12,7 @@ import {
   X,
   Building2,
   Activity,
+  FileBarChart,
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { PlanBadge } from './ui/PlanBadge';
@@ -21,6 +22,7 @@ const navItems = [
   { to: '/dashboard/domains', icon: Globe, label: 'Domains' },
   { to: '/dashboard/certificates', icon: Shield, label: 'Certificates' },
   { to: '/dashboard/endpoints', icon: Activity, label: 'Endpoints' },
+  { to: '/dashboard/reports', icon: FileBarChart, label: 'Reports' },
   { to: '/dashboard/api-keys', icon: Key, label: 'API Keys' },
   { to: '/dashboard/organizations', icon: Building2, label: 'Organization' },
   { to: '/dashboard/billing', icon: CreditCard, label: 'Billing' },

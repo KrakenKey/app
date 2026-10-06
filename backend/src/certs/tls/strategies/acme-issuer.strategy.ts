@@ -28,9 +28,9 @@ export class AcmeIssuerStrategy implements CertIssuerStrategy {
       ? resolvers.split(',').map((s) => s.trim())
       : ['172.64.35.65', '108.162.195.65'];
 
-    this.contactEmail =
-      this.configService.get<string>('KK_ACME_CONTACT_EMAIL') ||
-      'admin@cloudwalker.it';
+    this.contactEmail = (
+      this.configService.get<string>('KK_ACME_CONTACT_EMAIL') ?? ''
+    ).trim();
   }
   /**
    * Initializes an ACME client with the configured account key and directory,
@@ -43,6 +43,10 @@ export class AcmeIssuerStrategy implements CertIssuerStrategy {
 
     if (!rawLetsEncryptAccountKey) {
       throw new Error('Missing KK_ACME_ACCOUNT_KEY in configuration');
+    }
+
+    if (!this.contactEmail) {
+      throw new Error('Missing KK_ACME_CONTACT_EMAIL in configuration');
     }
 
     const letsEncryptAccountKey = this.normalizePrivateKeyPem(

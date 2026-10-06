@@ -113,6 +113,14 @@ export class MetricsService implements OnModuleInit {
     registers: [this.registry],
   });
 
+  // --- Alert channels (Slack, Teams, webhooks) ---
+  readonly alertDeliveriesTotal = new Counter({
+    name: 'alert_deliveries_total',
+    help: 'Alert delivery attempts to notification channels',
+    labelNames: ['type', 'result'] as const,
+    registers: [this.registry],
+  });
+
   onModuleInit() {
     collectDefaultMetrics({ register: this.registry });
   }

@@ -31,8 +31,10 @@ export const API_KEY_SCOPE_DESCRIPTIONS: Record<ApiKeyScope, string> = {
   'endpoints:write':
     'Add, change and delete monitored endpoints, request scans',
   'probes:report': 'Register a connected probe and report scan results',
-  'account:read': 'Show the profile, plan, organization and API key list',
-  'account:write': 'Change profile settings and send feedback',
+  'account:read':
+    'Show the profile, plan, organization, API key list and notification channels',
+  'account:write':
+    'Change profile settings, manage notification channels and send feedback',
 };
 
 export type ApiKeyPreset = 'full' | 'read-only' | 'cert-renewal' | 'probe';
@@ -40,12 +42,7 @@ export type ApiKeyPreset = 'full' | 'read-only' | 'cert-renewal' | 'probe';
 /** Scope sets offered by the dashboard and `krakenkey auth keys create`. */
 export const API_KEY_PRESETS: Record<ApiKeyPreset, ApiKeyScope[] | null> = {
   full: null,
-  'read-only': [
-    'certs:read',
-    'domains:read',
-    'endpoints:read',
-    'account:read',
-  ],
+  'read-only': ['certs:read', 'domains:read', 'endpoints:read', 'account:read'],
   'cert-renewal': ['certs:read', 'certs:renew', 'account:read'],
   probe: ['probes:report'],
 };

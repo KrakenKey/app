@@ -12,6 +12,8 @@ import { QueueMetricsService } from './queue-metrics.service';
     BullModule.registerQueue(
       { name: 'tlsCertIssuance' },
       { name: 'orgDissolution' },
+      { name: 'notifications' },
+      { name: 'reportScan' },
     ),
   ],
   controllers: [MetricsController],
