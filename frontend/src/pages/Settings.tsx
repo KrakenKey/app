@@ -15,6 +15,7 @@ import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { PageHeader } from '../components/ui/PageHeader';
+import AlertChannels from '../components/AlertChannels';
 
 const NOTIFICATION_OPTIONS = [
   {
@@ -242,6 +243,8 @@ const Settings: React.FC = () => {
           })}
         </div>
       </Card>
+
+      <AlertChannels />
 
       {/* Resource Summary */}
       <Card className="mb-6">

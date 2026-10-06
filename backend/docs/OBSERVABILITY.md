@@ -75,13 +75,19 @@ These are **declared in `MetricsService` but not populated**: nothing in `backen
 
 When they are, note that `endpoint_cert_expiry_days` and `endpoint_latency_by_region_ms` are labelled per monitored endpoint, so their cardinality will grow with the customer base, not with traffic.
 
+### Alert channels
+
+| Metric | Type | Labels | Notes |
+|--------|------|--------|-------|
+| `alert_deliveries_total` | Counter | `type`, `result` | One increment per delivery attempt to a Slack, Teams or webhook channel. `type`: `slack`, `teams`, `webhook`. `result`: `ok`, `retry` (failed, BullMQ will try again) or `failed` (no retry follows). The test-send button is not counted. |
+
 ### Queues
 
 | Metric | Type | Labels | Notes |
 |--------|------|--------|-------|
 | `bullmq_queue_jobs` | Gauge | `queue`, `state` | Job counts per BullMQ queue |
 
-Provided by `QueueMetricsService`. Queues covered: `tlsCertIssuance` and `orgDissolution`. States: `waiting`, `active`, `delayed`, `failed`, `completed`, `paused`.
+Provided by `QueueMetricsService`. Queues covered: `tlsCertIssuance`, `orgDissolution` and `notifications`. States: `waiting`, `active`, `delayed`, `failed`, `completed`, `paused`.
 
 Three behaviors matter when reading or changing this gauge:
 

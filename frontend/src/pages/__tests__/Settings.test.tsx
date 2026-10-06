@@ -50,7 +50,11 @@ const mockProfile = {
 describe('Settings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockApi.get.mockResolvedValue({ data: mockProfile });
+    mockApi.get.mockImplementation((url: string) =>
+      Promise.resolve({
+        data: url === '/auth/profile' ? mockProfile : [],
+      }),
+    );
   });
 
   it('shows loading state initially', () => {

@@ -23,5 +23,6 @@ import { PublicScanService } from './public-scan.service';
   ],
   controllers: [PublicScanController],
   providers: [PublicScanService],
+  exports: [PublicScanService],
 })
 export class PublicScanModule {}

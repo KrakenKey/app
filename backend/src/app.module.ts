@@ -21,6 +21,7 @@ import { OrganizationsModule } from './organizations/organizations.module';
 import { ProbesModule } from './probes/probes.module';
 import { EndpointsModule } from './endpoints/endpoints.module';
 import { PublicScanModule } from './public-scan/public-scan.module';
+import { ReportsModule } from './reports/reports.module';
 
 @Module({
   imports: [
@@ -78,6 +79,7 @@ import { PublicScanModule } from './public-scan/public-scan.module';
     ProbesModule,
     EndpointsModule,
     PublicScanModule,
+    ReportsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

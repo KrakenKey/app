@@ -16,6 +16,9 @@ import EndpointManagement from './components/EndpointManagement';
 import Feedback from './components/Feedback';
 import Billing from './pages/Billing';
 import Organizations from './pages/Organizations';
+import Reports from './pages/Reports';
+import ReportDetail from './pages/ReportDetail';
+import SharedReport from './pages/SharedReport';
 
 const ProtectedRoute = ({ children }: { children: {} & ReactNode }) => {
   const { isAuthenticated, isLoading } = useAuth();
@@ -41,6 +44,7 @@ function AppRoutes() {
       <Route path="/" element={<Home />} />
       <Route path="/auth/callback" element={<Callback />} />
       <Route path="/device" element={<Device />} />
+      <Route path="/r/:token" element={<SharedReport />} />
       <Route
         path="/dashboard"
         element={
@@ -55,6 +59,8 @@ function AppRoutes() {
         <Route path="domains" element={<DomainManagement />} />
         <Route path="certificates" element={<CertificateManagement />} />
         <Route path="endpoints" element={<EndpointManagement />} />
+        <Route path="reports" element={<Reports />} />
+        <Route path="reports/:id" element={<ReportDetail />} />
         <Route path="api-keys" element={<ApiKeyManagement />} />
         <Route path="billing" element={<Billing />} />
         <Route path="organizations" element={<Organizations />} />

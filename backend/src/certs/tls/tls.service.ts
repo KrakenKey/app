@@ -35,6 +35,7 @@ import type {
 } from '@krakenkey/shared';
 import { AcmeIssuerStrategy } from './strategies/acme-issuer.strategy';
 import { EmailService } from '../../notifications/email.service';
+import { AlertsService } from '../../notifications/channels/alerts.service';
 import { BillingService } from '../../billing/billing.service';
 import { PLAN_LIMITS } from '../../billing/constants/plan-limits';
 import type { SubscriptionPlan } from '@krakenkey/shared';
@@ -86,6 +87,7 @@ export class TlsService {
     private readonly acmeIssuerStrategy: AcmeIssuerStrategy,
     private readonly emailService: EmailService,
     private readonly billingService: BillingService,
+    private readonly alerts: AlertsService,
   ) {}
 
   /**
@@ -399,6 +401,11 @@ export class TlsService {
           email: cert.user.email,
           certId: cert.id,
           commonName,
+        });
+        await this.alerts.emit(cert.user.id, 'cert.revoked', {
+          subject: commonName,
+          resource: { type: 'certificate', id: cert.id },
+          details: { certificateId: cert.id, reason: reason ?? 0 },
         });
       }
     } catch (err) {
