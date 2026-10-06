@@ -293,6 +293,36 @@ describe('AcmeIssuerStrategy', () => {
       expect(mockClient.getCertificate).toHaveBeenCalled();
     });
 
+    it('sends replaces on a renewal order (RFC 9773)', async () => {
+      const promise = strategy.issue(FAKE_CSR_PEM, mockDnsProvider, {
+        replaces: 'aYhba4dGQEHhs3uEe6CuLN4ByNQ.AIdlQyE',
+      });
+      await jest.advanceTimersByTimeAsync(30000);
+      await promise;
+
+      expect(mockClient.createOrder).toHaveBeenCalledTimes(1);
+      expect(mockClient.createOrder).toHaveBeenCalledWith({
+        identifiers: [{ type: 'dns', value: 'example.com' }],
+        replaces: 'aYhba4dGQEHhs3uEe6CuLN4ByNQ.AIdlQyE',
+      });
+    });
+
+    it('orders without replaces when the CA refuses it', async () => {
+      mockClient.createOrder
+        .mockRejectedValueOnce(new Error('alreadyReplaced'))
+        .mockResolvedValueOnce(mockOrder);
+      const promise = strategy.issue(FAKE_CSR_PEM, mockDnsProvider, {
+        replaces: 'aYhba4dGQEHhs3uEe6CuLN4ByNQ.AIdlQyE',
+      });
+      await jest.advanceTimersByTimeAsync(30000);
+      await expect(promise).resolves.toBe(FAKE_CERT_PEM);
+
+      expect(mockClient.createOrder).toHaveBeenCalledTimes(2);
+      expect(mockClient.createOrder).toHaveBeenLastCalledWith({
+        identifiers: [{ type: 'dns', value: 'example.com' }],
+      });
+    });
+
     it('cleans up DNS records after successful issuance', async () => {
       const promise = strategy.issue(FAKE_CSR_PEM, mockDnsProvider);
       await jest.advanceTimersByTimeAsync(30000);

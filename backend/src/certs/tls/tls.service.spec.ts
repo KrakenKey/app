@@ -710,6 +710,20 @@ describe('TlsService', () => {
         expect(billingService.resolveUserTier).toHaveBeenCalledTimes(1); // limits only
       });
 
+      it('renews outside the window when the CA asked for early replacement', async () => {
+        mockRepository.findOneBy.mockResolvedValue({
+          ...issuedCert,
+          expiresAt: expiringIn(60),
+          ariReplacementRequestedAt: new Date(),
+        });
+        billingService.resolveUserTier.mockResolvedValue('starter');
+
+        const result = await service.renew(1, userId, { ifDue: true });
+
+        expect(result).toEqual({ id: 1, status: 'renewing', skipped: false });
+        expect(mockQueue.add).toHaveBeenCalled();
+      });
+
       it('skips without touching status, quota or queue when outside the window', async () => {
         const expiresAt = expiringIn(60);
         mockRepository.findOneBy.mockResolvedValue({

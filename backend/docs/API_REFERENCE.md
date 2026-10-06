@@ -437,6 +437,8 @@ Manually queue a renewal for an `issued` certificate. Creates a new ACME order u
 |------|------|---------|-------------|
 | `ifDue` | boolean | `false` | Only renew if the certificate is inside its plan's renewal window (Free: 5 days before expiry, paid plans: 30 days, the same window auto-renewal uses). Only the string `true` turns it on. |
 
+A certificate the CA has asked to replace early (`ariReplacementRequestedAt` set, see [ACME Renewal Information](CERTIFICATE_FLOW.md#acme-renewal-information-ari)) counts as due whatever the window.
+
 Use `ifDue=true` when calling renew on a schedule (cron, systemd timer, CI): it renews once the certificate is due and does nothing on the other days, so no quota is used. A certificate with no recorded expiry is always renewed. The status and CSR checks run first either way, so a certificate that is not `issued` still returns `400`.
 
 **Response `201` (renewal queued):**

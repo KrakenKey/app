@@ -310,6 +310,20 @@ KrakenKey automatically monitors and renews certificates.
 | Free | 5 days before expiry |
 | Starter, Team, Business, Enterprise | 30 days before expiry |
 
+### ACME Renewal Information (ARI)
+
+The renewal windows above decide normal timing. KrakenKey also asks the CA for its suggested renewal window ([RFC 9773](https://www.rfc-editor.org/rfc/rfc9773)) so it can replace a certificate early when the CA asks, for example before a mass revocation.
+
+- **AriMonitorService** runs hourly. For each `issued` certificate with `autoRenew: true` whose next check is due, it computes the certificate's ARI identifier (`base64url(AKI).base64url(serial)`), fetches `GET <renewalInfo>/<id>` from the ACME directory (no account needed), and stores `ariWindowStart`, `ariWindowEnd` and `ariExplanationUrl`. The next check follows the CA's `Retry-After`, clamped to 1-24 hours (default 6 hours); a certificate the CA has no info for is checked again after 24 hours, and a failed request after 6 hours.
+- The window only pulls a renewal earlier when the CA asks for **early replacement**:
+  - the window moved more than a day earlier than the one seen at the previous check (what a CA does before revoking in bulk), or
+  - the first window seen starts in the first half of the certificate's lifetime (a normal Let's Encrypt window starts about two thirds in), or
+  - the CA sent an `explanationURL`.
+- Then `ariReplacementRequestedAt` is set and the certificate is renewed as soon as the CA's window opens, whatever the plan's renewal window. Free-plan owners still need a current auto-renewal confirmation. `renew?ifDue=true` also treats such a certificate as due.
+- A normal window (Let's Encrypt suggests renewing about 30 days before expiry for a 90-day certificate) changes nothing: Free still renews 5 days before expiry and paid plans 30 days before.
+- Every renewal order sends `replaces: <ARI identifier of the old certificate>` so the CA links the two. If the CA refuses it (for example the certificate was already replaced), the order is retried without it.
+- Issuing a new certificate stores its identifier and clears the old window. Set `KK_ACME_ARI=false` to turn the checks off; `replaces` is still sent.
+
 ### Free Tier Confirmation
 
 Free tier users must confirm auto-renewal every 6 months by calling:

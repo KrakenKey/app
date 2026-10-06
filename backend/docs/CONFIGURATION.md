@@ -80,6 +80,7 @@ Set `KK_DNS_PROVIDER` to select which provider handles DNS-01 ACME challenges. O
 | `KK_ACME_CONTACT_EMAIL` | Yes | — | Email registered with the ACME account. Let's Encrypt uses it for account and policy notices |
 | `KK_ACME_STAGING` | No | `false` | Set to `true` to use Let's Encrypt Staging. Production is the default |
 | `KK_ACME_DIRECTORY_URL` | No | — | Custom ACME directory URL. Overrides `KK_ACME_STAGING` when set |
+| `KK_ACME_ARI` | No | `true` | Set to `false` to stop checking ACME Renewal Information (RFC 9773). See [CERTIFICATE_FLOW.md](CERTIFICATE_FLOW.md#acme-renewal-information-ari) |
 | `KK_ACME_DNS_RESOLVERS` | No | Cloudflare authoritative nameservers | Comma-separated resolver IPs used to check that the DNS-01 TXT record has propagated before asking the CA to validate |
 
 ### Authentication (Authentik OIDC)

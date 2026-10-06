@@ -63,6 +63,35 @@ export class TlsCrt {
   @Column({ type: 'timestamp', nullable: true })
   revokedAt: Date | null;
 
+  // --- ACME Renewal Information (RFC 9773) ----------------------------------
+
+  /** RFC 9773 identifier of the current leaf; sent as `replaces` on renewal. */
+  @Column({ type: 'text', nullable: true })
+  ariCertId: string | null;
+
+  /** The CA's suggested renewal window from the last check. */
+  @Column({ type: 'timestamp', nullable: true })
+  ariWindowStart: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  ariWindowEnd: Date | null;
+
+  /** Set by the CA when it explains why the window moved (e.g. an incident). */
+  @Column({ type: 'text', nullable: true })
+  ariExplanationUrl: string | null;
+
+  /** When to ask the CA again (from Retry-After). */
+  @Column({ type: 'timestamp', nullable: true })
+  ariNextCheckAt: Date | null;
+
+  /**
+   * Set when the CA asked for early replacement; the certificate is renewed
+   * outside its plan window and `renew?ifDue=true` treats it as due.
+   * Cleared when a new certificate is issued.
+   */
+  @Column({ type: 'timestamp', nullable: true })
+  ariReplacementRequestedAt: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

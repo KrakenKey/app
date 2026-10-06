@@ -121,6 +121,55 @@ describe('CertIssuerConsumer', () => {
       );
     });
 
+    it('tells the CA which certificate a renewal replaces', async () => {
+      mockTlsService.findOneInternal.mockResolvedValue({
+        ...mockCsrRecord,
+        ariCertId: 'aYhba4dGQEHhs3uEe6CuLN4ByNQ.AIdlQyE',
+      });
+      await processor.process({
+        name: 'tlsCertRenewal',
+        data: { certId: 1 },
+      } as any);
+      expect(mockAcme.issue).toHaveBeenCalledWith(
+        mockCsrRecord.rawCsr,
+        mockDns,
+        { replaces: 'aYhba4dGQEHhs3uEe6CuLN4ByNQ.AIdlQyE' },
+      );
+    });
+
+    it('does not send replaces for a first issuance', async () => {
+      mockTlsService.findOneInternal.mockResolvedValue({
+        ...mockCsrRecord,
+        ariCertId: 'stale.id',
+      });
+      await processor.process({
+        name: 'tlsCertIssuance',
+        data: { certId: 1 },
+      } as any);
+      expect(mockAcme.issue).toHaveBeenCalledWith(
+        mockCsrRecord.rawCsr,
+        mockDns,
+        { replaces: null },
+      );
+    });
+
+    it('resets ARI state for the new certificate', async () => {
+      await processor.process({
+        name: 'tlsCertRenewal',
+        data: { certId: 1 },
+      } as any);
+      expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          ariWindowStart: null,
+          ariWindowEnd: null,
+          ariNextCheckAt: null,
+          ariReplacementRequestedAt: null,
+        }),
+        'issued',
+      );
+    });
+
     it('stores leaf and chain separately when ACME returns full chain', async () => {
       mockAcme.issue.mockResolvedValue(
         '-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nintermediate\n-----END CERTIFICATE-----',

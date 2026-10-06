@@ -15,6 +15,8 @@ import { ConfigService } from '@nestjs/config';
 import { DnsProvider } from './interfaces/dns-provider.interface';
 import { DomainsModule } from '../../domains/domains.module';
 import { BillingModule } from '../../billing/billing.module';
+import { AriService } from './services/ari.service';
+import { AriMonitorService } from './services/ari-monitor.service';
 import { CertMonitorService } from './services/cert-monitor.service';
 
 @Module({
@@ -30,6 +32,8 @@ import { CertMonitorService } from './services/cert-monitor.service';
   providers: [
     TlsService,
     CertMonitorService,
+    AriService,
+    AriMonitorService,
     CsrUtilService,
     CertUtilService,
     CertIssuerConsumer,

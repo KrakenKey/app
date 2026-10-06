@@ -28,6 +28,16 @@ export interface TlsCert {
   /** Why the last issuance or renewal attempt failed; null otherwise. */
   failureReason: string | null;
   revokedAt: string | null;
+  /**
+   * The CA's suggested renewal window (ACME Renewal Information, RFC 9773)
+   * from the last check; null until checked or when the CA doesn't offer it.
+   */
+  ariWindowStart?: string | null;
+  ariWindowEnd?: string | null;
+  /** Set when the CA explained why it moved the window. */
+  ariExplanationUrl?: string | null;
+  /** Set when the CA asked for early replacement; renewal is queued outside the plan window. */
+  ariReplacementRequestedAt?: string | null;
   createdAt: string;
   userId: string;
 }
