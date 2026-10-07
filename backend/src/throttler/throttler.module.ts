@@ -8,10 +8,14 @@ import { TierAwareThrottlerGuard } from './guards/tier-aware-throttler.guard';
 import { SubscriptionTierResolver } from '../billing/services/subscription-tier-resolver.service';
 import { BillingModule } from '../billing/billing.module';
 import { TIER_RESOLVER } from './interfaces/tier-resolver.interface';
+import { API_KEY_USER_RESOLVER } from './interfaces/api-key-user-resolver.interface';
+import { AuthModule } from '../auth/auth.module';
+import { ApiKeyUserResolverService } from '../auth/services/api-key-user-resolver.service';
 
 @Module({
   imports: [
     BillingModule,
+    AuthModule,
     ThrottlerModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -39,6 +43,10 @@ import { TIER_RESOLVER } from './interfaces/tier-resolver.interface';
     {
       provide: TIER_RESOLVER,
       useClass: SubscriptionTierResolver,
+    },
+    {
+      provide: API_KEY_USER_RESOLVER,
+      useExisting: ApiKeyUserResolverService,
     },
     {
       provide: APP_GUARD,

@@ -5,6 +5,7 @@ import { PassportModule } from '@nestjs/passport';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { ApiKeyStrategy } from './strategies/api-key.strategy';
 import { ServiceKeyStrategy } from './strategies/service-key.strategy';
+import { ApiKeyUserResolverService } from './services/api-key-user-resolver.service';
 import { ApiKeySecurityService } from './services/api-key-security.service';
 import { DeviceAuthService } from './services/device-auth.service';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -44,7 +45,8 @@ import { GithubRepoLookup } from './oidc/github-repo-lookup';
     GithubOidcVerifier,
     GithubRepoLookup,
     GithubOidcService,
+    ApiKeyUserResolverService,
   ],
-  exports: [AuthService],
+  exports: [AuthService, ApiKeyUserResolverService],
 })
 export class AuthModule {}

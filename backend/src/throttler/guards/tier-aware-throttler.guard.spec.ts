@@ -5,6 +5,10 @@ import {
   RATE_LIMIT_TIERS,
   DEFAULT_TIER,
 } from '../config/rate-limit-tiers.config';
+import {
+  ApiKeyUserResolverService,
+  API_KEY_USER_CACHE_TTL_MS,
+} from '../../auth/services/api-key-user-resolver.service';
 
 describe('TierAwareThrottlerGuard', () => {
   let guard: TierAwareThrottlerGuard;
@@ -12,17 +16,27 @@ describe('TierAwareThrottlerGuard', () => {
   let mockReflector: Reflector;
   let mockStorageService: any;
   let parentHandleRequest: jest.SpyInstance;
+  // Stands in for the hashed-key database lookup in AuthService
+  let findApiKeyOwner: jest.Mock;
+  let isLockedOut: jest.Mock;
 
   beforeEach(() => {
     mockTierResolver = { resolve: jest.fn() };
     mockReflector = new Reflector();
     mockStorageService = {};
+    findApiKeyOwner = jest.fn().mockResolvedValue(null);
+    isLockedOut = jest.fn().mockResolvedValue(false);
+    const apiKeyUserResolver = new ApiKeyUserResolverService(
+      { findApiKeyOwner } as any,
+      { isLockedOut } as any,
+    );
 
     guard = new TierAwareThrottlerGuard(
       { throttlers: [{ ttl: 60000, limit: 10 }] } as any,
       mockStorageService,
       mockReflector,
       mockTierResolver,
+      apiKeyUserResolver,
     );
 
     // Spy on parent handleRequest to avoid actual throttle logic
@@ -71,7 +85,7 @@ describe('TierAwareThrottlerGuard', () => {
       expect(tracker).toBe('1.2.3.4');
     });
 
-    it('should fall back to IP for API key tokens', async () => {
+    it('should fall back to IP for unknown API key tokens', async () => {
       const req = {
         headers: { authorization: 'Bearer kk_abc123' },
         ip: '5.6.7.8',
@@ -254,6 +268,214 @@ describe('TierAwareThrottlerGuard', () => {
           limit: expectedLimits.limit,
         }),
       );
+    });
+  });
+
+  describe('API key requests', () => {
+    const STARTER_KEY = 'kk_starter0123456789';
+    const FREE_KEY = 'kk_free0123456789';
+
+    function apiKeyContext(
+      token: string,
+      category = RateLimitCategory.AUTHENTICATED_READ,
+      ip = '5.6.7.8',
+    ) {
+      const req = {
+        method: 'GET',
+        headers: { authorization: `Bearer ${token}` },
+        ip,
+      };
+      jest.spyOn(mockReflector, 'getAllAndOverride').mockReturnValue(category);
+      const context = {
+        switchToHttp: () => ({
+          getRequest: () => req,
+          getResponse: () => ({}),
+        }),
+        getHandler: () => () => {},
+        getClass: () => class {},
+      } as any;
+      return { req, context };
+    }
+
+    beforeEach(() => {
+      findApiKeyOwner.mockImplementation((key: string) => {
+        if (key === STARTER_KEY) {
+          return Promise.resolve({
+            userId: 'user-starter',
+            expiresAt: null,
+            allowedIps: null,
+          });
+        }
+        if (key === FREE_KEY) {
+          return Promise.resolve({
+            userId: 'user-free',
+            expiresAt: null,
+            allowedIps: null,
+          });
+        }
+        return Promise.resolve(null);
+      });
+      mockTierResolver.resolve.mockImplementation((userId: string) =>
+        Promise.resolve(userId === 'user-starter' ? 'starter' : 'free'),
+      );
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('applies the starter limit and tracks by user for a starter key', async () => {
+      const { req, context } = apiKeyContext(STARTER_KEY);
+
+      await (guard as any).handleRequest({ context });
+
+      expect(mockTierResolver.resolve).toHaveBeenCalledWith('user-starter');
+      expect(parentHandleRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          limit:
+            RATE_LIMIT_TIERS['starter'][RateLimitCategory.AUTHENTICATED_READ]
+              .limit,
+        }),
+      );
+      expect(await (guard as any).getTracker(req, context)).toBe(
+        'user:user-starter',
+      );
+    });
+
+    it('applies the free limit for a free user key', async () => {
+      const { req, context } = apiKeyContext(FREE_KEY);
+
+      await (guard as any).handleRequest({ context });
+
+      expect(parentHandleRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          limit:
+            RATE_LIMIT_TIERS['free'][RateLimitCategory.AUTHENTICATED_READ]
+              .limit,
+        }),
+      );
+      expect(await (guard as any).getTracker(req, context)).toBe(
+        'user:user-free',
+      );
+    });
+
+    it('falls back to IP and the default tier for an unknown key', async () => {
+      const { req, context } = apiKeyContext('kk_unknown');
+
+      await (guard as any).handleRequest({ context });
+
+      expect(mockTierResolver.resolve).not.toHaveBeenCalled();
+      expect(parentHandleRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          limit:
+            RATE_LIMIT_TIERS[DEFAULT_TIER][RateLimitCategory.AUTHENTICATED_READ]
+              .limit,
+        }),
+      );
+      expect(await (guard as any).getTracker(req, context)).toBe('5.6.7.8');
+    });
+
+    it('falls back to IP when the lookup fails', async () => {
+      findApiKeyOwner.mockRejectedValue(new Error('DB down'));
+      const { req, context } = apiKeyContext(STARTER_KEY);
+
+      expect(await (guard as any).getTracker(req, context)).toBe('5.6.7.8');
+    });
+
+    it('falls back to IP for a key used outside its IP allowlist', async () => {
+      findApiKeyOwner.mockResolvedValue({
+        userId: 'user-starter',
+        expiresAt: null,
+        allowedIps: ['10.0.0.0/8'],
+      });
+      const allowed = apiKeyContext(STARTER_KEY, undefined, '10.1.2.3');
+      expect(
+        await (guard as any).getTracker(allowed.req, allowed.context),
+      ).toBe('user:user-starter');
+
+      const denied = apiKeyContext(STARTER_KEY, undefined, '5.6.7.8');
+      expect(await (guard as any).getTracker(denied.req, denied.context)).toBe(
+        '5.6.7.8',
+      );
+    });
+
+    it('does no lookup while the client IP is locked out', async () => {
+      isLockedOut.mockResolvedValue(true);
+      const { req, context } = apiKeyContext(STARTER_KEY);
+
+      expect(await (guard as any).getTracker(req, context)).toBe('5.6.7.8');
+      expect(findApiKeyOwner).not.toHaveBeenCalled();
+    });
+
+    it('keeps service keys on IP tracking without a lookup', async () => {
+      const { req, context } = apiKeyContext('kk_svc_abc123');
+
+      await (guard as any).handleRequest({ context });
+
+      expect(findApiKeyOwner).not.toHaveBeenCalled();
+      expect(mockTierResolver.resolve).not.toHaveBeenCalled();
+      expect(await (guard as any).getTracker(req, context)).toBe('5.6.7.8');
+    });
+
+    it('never resolves a key on public routes', async () => {
+      const { req, context } = apiKeyContext(
+        STARTER_KEY,
+        RateLimitCategory.PUBLIC,
+      );
+
+      await (guard as any).handleRequest({ context });
+
+      expect(findApiKeyOwner).not.toHaveBeenCalled();
+      expect(parentHandleRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          limit: RATE_LIMIT_TIERS[DEFAULT_TIER][RateLimitCategory.PUBLIC].limit,
+        }),
+      );
+      expect(await (guard as any).getTracker(req, context)).toBe('5.6.7.8');
+    });
+
+    it('looks a key up once per request', async () => {
+      const { req, context } = apiKeyContext(STARTER_KEY);
+
+      await (guard as any).handleRequest({ context });
+      await (guard as any).getTracker(req, context);
+
+      expect(findApiKeyOwner).toHaveBeenCalledTimes(1);
+    });
+
+    it('reuses the lookup across requests within the TTL', async () => {
+      jest.useFakeTimers({ now: Date.now() });
+
+      const first = apiKeyContext(STARTER_KEY);
+      await (guard as any).handleRequest({ context: first.context });
+      const second = apiKeyContext(STARTER_KEY);
+      await (guard as any).handleRequest({ context: second.context });
+      expect(findApiKeyOwner).toHaveBeenCalledTimes(1);
+
+      jest.advanceTimersByTime(API_KEY_USER_CACHE_TTL_MS + 1);
+      const third = apiKeyContext(STARTER_KEY);
+      await (guard as any).handleRequest({ context: third.context });
+      expect(findApiKeyOwner).toHaveBeenCalledTimes(2);
+    });
+
+    it('drops a cached key once the key itself expires', async () => {
+      jest.useFakeTimers({ now: Date.now() });
+      findApiKeyOwner.mockResolvedValue({
+        userId: 'user-starter',
+        expiresAt: new Date(Date.now() + 5_000),
+        allowedIps: null,
+      });
+
+      const first = apiKeyContext(STARTER_KEY);
+      await (guard as any).getTracker(first.req, first.context);
+
+      jest.advanceTimersByTime(5_001);
+      findApiKeyOwner.mockResolvedValue(null);
+      const second = apiKeyContext(STARTER_KEY);
+      expect(await (guard as any).getTracker(second.req, second.context)).toBe(
+        '5.6.7.8',
+      );
+      expect(findApiKeyOwner).toHaveBeenCalledTimes(2);
     });
   });
 

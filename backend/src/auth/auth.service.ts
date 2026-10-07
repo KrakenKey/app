@@ -603,6 +603,33 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
+   * Looks up the owner of a user API key without any side effects: no
+   * last-used update, no expiry notification, no logging. Returns null for
+   * unknown, revoked or expired keys. The IP allowlist is returned rather
+   * than checked so callers can cache the result and check it per request.
+   *
+   * Used by the rate limiter, which runs before authentication; the auth
+   * guard still makes the real decision via validateApiKey.
+   */
+  async findApiKeyOwner(rawKey: string): Promise<{
+    userId: string;
+    expiresAt: Date | null;
+    allowedIps: string[] | null;
+  } | null> {
+    const record = await this.userApiKeyRepo.findOne({
+      where: { hash: this.hashKey(rawKey) },
+      select: ['id', 'userId', 'expiresAt', 'revokedAt', 'allowedIps'],
+    });
+    if (!record || record.revokedAt) return null;
+    if (record.expiresAt && record.expiresAt < new Date()) return null;
+    return {
+      userId: record.userId,
+      expiresAt: record.expiresAt ?? null,
+      allowedIps: record.allowedIps?.length ? record.allowedIps : null,
+    };
+  }
+
+  /**
    * Updates lastUsedAt/lastUsedIp, skipping the write when the key was used
    * from the same IP within the last minute. Never throws.
    */
