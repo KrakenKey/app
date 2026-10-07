@@ -5,6 +5,7 @@ import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { PlanBadge } from '../components/ui/PlanBadge';
+import { useAuth } from '../hooks/useAuth';
 import {
   fetchSubscription,
   createCheckout,
@@ -15,6 +16,7 @@ import {
 import type { Subscription, UpgradePreviewResponse } from '@krakenkey/shared';
 
 export default function Billing() {
+  const { user } = useAuth();
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
@@ -43,6 +45,9 @@ export default function Billing() {
   const isPaid = plan !== 'free';
   const isPastDue = subscription?.status === 'past_due';
   const isCanceling = subscription?.cancelAtPeriodEnd === true;
+  // The API only lets the owner manage an org's subscription, so other
+  // members get a read-only view instead of buttons that would return 403.
+  const canManageBilling = !user?.organizationId || user.role === 'owner';
 
   async function handleUpgrade(targetPlan: string) {
     setActionLoading(true);
@@ -157,7 +162,7 @@ export default function Billing() {
             </div>
           </div>
           <div>
-            {isPaid && (
+            {isPaid && canManageBilling && (
               <Button
                 variant="secondary"
                 icon={<ExternalLink className="w-4 h-4" />}
@@ -175,10 +180,16 @@ export default function Billing() {
             Current period ends {formatDate(subscription.currentPeriodEnd)}
           </p>
         )}
+
+        {!canManageBilling && (
+          <p className="text-sm text-zinc-500 mt-4">
+            Billing for your organization is managed by its owner.
+          </p>
+        )}
       </Card>
 
       {/* Plan Comparison */}
-      {!isPaid && (
+      {!isPaid && canManageBilling && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <Card>
             <h2 className="text-lg font-semibold text-zinc-100 mb-4">
@@ -239,7 +250,7 @@ export default function Billing() {
       )}
 
       {/* Upgrade from Starter to Team */}
-      {plan === 'starter' && (
+      {plan === 'starter' && canManageBilling && (
         <Card>
           <h2 className="text-lg font-semibold text-zinc-100 mb-4">
             Team — $79/mo
