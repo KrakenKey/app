@@ -12,16 +12,23 @@ test.describe('Billing — org member (read-only)', () => {
   test('shows plan badge but no manage/upgrade buttons', async ({ page }) => {
     await page.goto('/dashboard/billing');
 
-    // Plan badge should be visible
-    await expect(page.getByText(/team/i).first()).toBeVisible();
+    // Wait until the subscription has loaded and the member view rendered.
+    // Absence checks pass instantly while the page still shows "Loading...",
+    // so they only mean something after these positive checks.
+    await expect(page.getByText(/current period ends/i)).toBeVisible();
+    await expect(page.getByText(/managed by its owner/i)).toBeVisible();
+
+    // Plan badge in the Current Plan card shows the org's plan
+    const planCard = page
+      .getByRole('heading', { name: 'Current Plan' })
+      .locator('..');
+    await expect(planCard.getByText('Team', { exact: true })).toBeVisible();
 
     // No billing management buttons for non-owner members
     await expect(
       page.getByRole('button', { name: /manage subscription/i }),
-    ).not.toBeVisible();
-    await expect(
-      page.getByRole('button', { name: /upgrade/i }),
-    ).not.toBeVisible();
+    ).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /upgrade/i })).toHaveCount(0);
   });
 });
 
@@ -39,6 +46,7 @@ test.describe('Billing — org owner (full controls)', () => {
     await expect(
       page.getByRole('button', { name: /manage subscription/i }),
     ).toBeVisible();
+    await expect(page.getByText(/managed by its owner/i)).toHaveCount(0);
   });
 
   test('manage subscription opens Stripe portal', async ({ page }) => {
