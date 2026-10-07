@@ -368,6 +368,14 @@ describe('EmailService', () => {
       expect(sent().replyTo).toBe('support@krakenkey.io');
     });
 
+    it('links email addresses in body text in the brand color', async () => {
+      await service.sendWelcome(certCtx);
+
+      expect(sent().html).toContain(
+        '<a href="mailto:support@krakenkey.io" style="color:#0e7490',
+      );
+    });
+
     it('shows the postal address in the footer when configured', async () => {
       withConfig({ KK_MAIL_POSTAL_ADDRESS: '123 Example St, Springfield' });
 

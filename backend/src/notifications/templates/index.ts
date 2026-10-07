@@ -46,12 +46,20 @@ function escapeHtml(str: string): string {
     .replace(/'/g, '&#39;');
 }
 
-/** Escapes text and renders `backtick` spans as inline code. */
+/**
+ * Escapes text, renders `backtick` spans as inline code and links email
+ * addresses, so clients don't auto-link them in their own colors.
+ */
 function inline(text: string): string {
-  return escapeHtml(text).replace(
-    /`([^`]+)`/g,
-    `<code style="font-family:${MONO};font-size:13px;background:#f4f4f5;border:1px solid #e4e4e7;border-radius:4px;padding:1px 5px;color:#18181b">$1</code>`,
-  );
+  return escapeHtml(text)
+    .replace(
+      /`([^`]+)`/g,
+      `<code style="font-family:${MONO};font-size:13px;background:#f4f4f5;border:1px solid #e4e4e7;border-radius:4px;padding:1px 5px;color:#18181b">$1</code>`,
+    )
+    .replace(
+      /\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b/g,
+      '<a href="mailto:$&" style="color:#0e7490;text-decoration:underline">$&</a>',
+    );
 }
 
 function plain(text: string): string {
