@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { createHash } from 'crypto';
+import { createHmac, randomBytes } from 'crypto';
 import { AuthService } from '../auth.service';
 import { ApiKeySecurityService } from './api-key-security.service';
 import { ipAllowed } from '../api-key-restrictions';
@@ -28,13 +28,15 @@ interface CacheEntry {
  * in-process LRU cache so throttling doesn't add a scrypt hash and a database
  * query to every API key request.
  *
- * The cache is keyed by a SHA-256 digest of the key, never the key itself,
- * and lives only in this process's memory.
+ * The cache is keyed by an HMAC-SHA256 of the key under a random secret
+ * generated at startup, never the key itself, and lives only in this
+ * process's memory. Cache keys are useless outside the process.
  */
 @Injectable()
 export class ApiKeyUserResolverService implements ApiKeyUserResolver {
   private readonly logger = new Logger(ApiKeyUserResolverService.name);
   private readonly cache = new Map<string, CacheEntry>();
+  private readonly cacheSecret = randomBytes(32);
 
   constructor(
     private readonly authService: AuthService,
@@ -42,7 +44,9 @@ export class ApiKeyUserResolverService implements ApiKeyUserResolver {
   ) {}
 
   async resolve(rawKey: string, ip: string): Promise<string | null> {
-    const cacheKey = createHash('sha256').update(rawKey).digest('hex');
+    const cacheKey = createHmac('sha256', this.cacheSecret)
+      .update(rawKey)
+      .digest('hex');
     const now = Date.now();
 
     let entry = this.get(cacheKey, now);
