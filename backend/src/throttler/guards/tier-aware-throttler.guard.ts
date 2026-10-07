@@ -12,6 +12,8 @@ import type {
 import type { ThrottlerRequest } from '@nestjs/throttler/dist/throttler.guard.interface';
 import { TIER_RESOLVER } from '../interfaces/tier-resolver.interface';
 import type { TierResolver } from '../interfaces/tier-resolver.interface';
+import { API_KEY_USER_RESOLVER } from '../interfaces/api-key-user-resolver.interface';
+import type { ApiKeyUserResolver } from '../interfaces/api-key-user-resolver.interface';
 import { RateLimitCategory } from '../interfaces/rate-limit-category.enum';
 import {
   RATE_LIMIT_TIERS,
@@ -23,11 +25,16 @@ import { RATE_LIMIT_CATEGORY_KEY } from '../decorators/rate-limit-category.decor
 export class TierAwareThrottlerGuard extends ThrottlerGuard {
   private readonly logger = new Logger(TierAwareThrottlerGuard.name);
 
+  /** Per-request user ID, so getTracker and handleRequest share one lookup. */
+  private readonly userIds = new WeakMap<object, Promise<string | null>>();
+
   constructor(
     @InjectThrottlerOptions() options: ThrottlerModuleOptions,
     @InjectThrottlerStorage() storageService: ThrottlerStorage,
     reflector: Reflector,
     @Inject(TIER_RESOLVER) private readonly tierResolver: TierResolver,
+    @Inject(API_KEY_USER_RESOLVER)
+    private readonly apiKeyUserResolver: ApiKeyUserResolver,
   ) {
     super(options, storageService, reflector);
   }
@@ -41,14 +48,14 @@ export class TierAwareThrottlerGuard extends ThrottlerGuard {
     context?: ExecutionContext,
   ): Promise<string> {
     // Try to extract user ID from an already-populated req.user (unlikely
-    // since this guard runs as APP_GUARD before auth guards) or by peeking
-    // at the JWT in the Authorization header. Public routes never look at
-    // the token: it is unverified and nothing rejects it later, so a caller
-    // could mint a new bucket per request.
+    // since this guard runs as APP_GUARD before auth guards), by resolving
+    // a user API key, or by peeking at the JWT in the Authorization header.
+    // Public routes never look at the token: it is unverified and nothing
+    // rejects it later, so a caller could mint a new bucket per request.
     const userId =
       context && this.resolveCategory(context) === RateLimitCategory.PUBLIC
         ? null
-        : this.tryExtractUserId(req);
+        : await this.tryExtractUserId(req);
     if (userId) {
       return `user:${userId}`;
     }
@@ -76,7 +83,9 @@ export class TierAwareThrottlerGuard extends ThrottlerGuard {
     // 2. Determine user's subscription tier (public routes always use the
     //    default tier; see getTracker)
     const userId =
-      category === RateLimitCategory.PUBLIC ? null : this.tryExtractUserId(req);
+      category === RateLimitCategory.PUBLIC
+        ? null
+        : await this.tryExtractUserId(req);
     let tier = DEFAULT_TIER;
     if (userId) {
       try {
@@ -126,17 +135,33 @@ export class TierAwareThrottlerGuard extends ThrottlerGuard {
   }
 
   /**
-   * Attempts to extract a user ID without requiring full authentication.
+   * Attempts to extract a user ID before authentication has run.
    *
-   * Checks req.user first (in case auth already ran), then peeks at the
-   * JWT payload in the Authorization header. The payload is not verified, so
-   * only call this for routes behind JwtOrApiKeyGuard, which rejects a forged
-   * token after this guard runs. Never use it on PUBLIC routes.
+   * Checks req.user first (in case auth already ran), then the bearer token:
+   * - User API keys (kk_...) are resolved to their owner through
+   *   ApiKeyUserResolver (cached hashed-key lookup). Unknown, revoked or
+   *   expired keys resolve to null and fall back to IP + default tier.
+   * - Service keys (kk_svc_...) belong to hosted probe infrastructure, not a
+   *   user, so they stay on IP tracking.
+   * - Anything else is treated as a JWT whose payload is decoded without
+   *   verification, so only call this for routes behind an auth guard, which
+   *   rejects a forged token after this guard runs. Never use it on PUBLIC
+   *   routes.
    *
-   * API key requests (Bearer kk_...) fall back to IP tracking since we
-   * can't resolve the user without a DB lookup.
+   * The result is memoised per request object.
    */
-  private tryExtractUserId(req: Record<string, any>): string | null {
+  private tryExtractUserId(req: Record<string, any>): Promise<string | null> {
+    let pending = this.userIds.get(req);
+    if (!pending) {
+      pending = this.extractUserId(req);
+      this.userIds.set(req, pending);
+    }
+    return pending;
+  }
+
+  private async extractUserId(
+    req: Record<string, any>,
+  ): Promise<string | null> {
     // Already populated by auth guard
     if (req.user?.userId) {
       return req.user.userId;
@@ -149,9 +174,16 @@ export class TierAwareThrottlerGuard extends ThrottlerGuard {
 
     const token = authHeader.slice(7);
 
-    // Skip API key tokens — can't resolve user without DB
-    if (token.startsWith('kk_')) {
+    if (token.startsWith('kk_svc_')) {
       return null;
+    }
+
+    if (token.startsWith('kk_')) {
+      try {
+        return await this.apiKeyUserResolver.resolve(token, req.ip ?? '');
+      } catch {
+        return null;
+      }
     }
 
     // Decode JWT payload (no verification — just for tracking key)

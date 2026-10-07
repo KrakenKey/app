@@ -6,6 +6,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { DataSource } from 'typeorm';
 import { TierAwareThrottlerGuard } from '../src/throttler/guards/tier-aware-throttler.guard';
 import { TIER_RESOLVER } from '../src/throttler/interfaces/tier-resolver.interface';
+import { API_KEY_USER_RESOLVER } from '../src/throttler/interfaces/api-key-user-resolver.interface';
 import { TlsController } from '../src/certs/tls/tls.controller';
 import { TlsService } from '../src/certs/tls/tls.service';
 import { JwtOrApiKeyGuard } from '../src/auth/guards/jwt-or-api-key.guard';
@@ -37,6 +38,10 @@ describe('Rate Limiting (e2e)', () => {
         {
           provide: TIER_RESOLVER,
           useValue: { resolve: async () => 'free' },
+        },
+        {
+          provide: API_KEY_USER_RESOLVER,
+          useValue: { resolve: async () => null },
         },
         {
           // RoleGuard's org role lookup; a solo user passes @Roles()

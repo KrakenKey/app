@@ -455,6 +455,66 @@ describe('AuthService', () => {
   // ---------------------------------------------------------------------------
   // validateApiKey
   // ---------------------------------------------------------------------------
+  describe('findApiKeyOwner', () => {
+    it('looks up the scrypt hash and returns the owner', async () => {
+      mockUserApiKeyRepo.findOne.mockResolvedValue({
+        id: 'key-1',
+        userId: 'user-1',
+        expiresAt: null,
+        revokedAt: null,
+        allowedIps: [],
+      });
+
+      const owner = await service.findApiKeyOwner('kk_raw');
+
+      const expectedHash = scryptSync('kk_raw', HMAC_SECRET, 64).toString(
+        'hex',
+      );
+      expect(mockUserApiKeyRepo.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { hash: expectedHash } }),
+      );
+      expect(owner).toEqual({
+        userId: 'user-1',
+        expiresAt: null,
+        allowedIps: null,
+      });
+    });
+
+    it('returns null for unknown, revoked and expired keys', async () => {
+      mockUserApiKeyRepo.findOne.mockResolvedValueOnce(null);
+      expect(await service.findApiKeyOwner('kk_unknown')).toBeNull();
+
+      mockUserApiKeyRepo.findOne.mockResolvedValueOnce({
+        id: 'key-1',
+        userId: 'user-1',
+        revokedAt: new Date(Date.now() - 1000),
+      });
+      expect(await service.findApiKeyOwner('kk_revoked')).toBeNull();
+
+      mockUserApiKeyRepo.findOne.mockResolvedValueOnce({
+        id: 'key-1',
+        userId: 'user-1',
+        expiresAt: new Date(Date.now() - 1000),
+      });
+      expect(await service.findApiKeyOwner('kk_expired')).toBeNull();
+    });
+
+    it('has no side effects', async () => {
+      mockUserApiKeyRepo.findOne.mockResolvedValue({
+        id: 'key-1',
+        userId: 'user-1',
+        source: null,
+        expiresAt: new Date(Date.now() - 1000),
+        user: { id: 'user-1', email: 'a@example.com' },
+      });
+
+      await service.findApiKeyOwner('kk_expired');
+
+      expect(mockUserApiKeyRepo.update).not.toHaveBeenCalled();
+      expect(mockEmailService.sendApiKeyExpiredUse).not.toHaveBeenCalled();
+    });
+  });
+
   describe('validateApiKey', () => {
     it('looks up the scrypt hash of the raw key', async () => {
       mockUserApiKeyRepo.findOne.mockResolvedValue(null);
