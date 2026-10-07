@@ -305,6 +305,100 @@ describe('EmailService', () => {
     );
   });
 
+  describe('content and branding', () => {
+    const withConfig = (extra: Record<string, unknown>) => {
+      const base = mockConfigService.get.getMockImplementation()!;
+      mockConfigService.get.mockImplementation(
+        (key: string, defaultValue?: any) =>
+          key in extra ? extra[key] : base(key, defaultValue),
+      );
+    };
+    const sent = () =>
+      mockSendMail.mock.calls[0][0] as {
+        html: string;
+        text: string;
+        replyTo?: string;
+      };
+
+    beforeEach(() => {
+      mockUserRepo.findOne.mockResolvedValue({
+        id: 'u1',
+        notificationPreferences: {},
+      });
+    });
+
+    it('sends a plain-text part alongside the HTML', async () => {
+      await service.sendCertIssued(certCtx);
+
+      const { html, text } = sent();
+      expect(html).toContain('<!DOCTYPE html>');
+      expect(text).toContain('example.com');
+      expect(text).toContain('krakenkey cert download 42');
+      expect(text).not.toContain('<');
+    });
+
+    it('links to the dashboard on KK_APP_DOMAIN', async () => {
+      withConfig({ KK_APP_DOMAIN: 'dev-web.krakenkey.io' });
+
+      await service.sendCertIssued(certCtx);
+
+      expect(sent().html).toContain(
+        'https://dev-web.krakenkey.io/dashboard/certificates',
+      );
+      expect(sent().html).not.toContain('app.krakenkey.io');
+    });
+
+    it('escapes user-controlled values', async () => {
+      await service.sendCertIssued({
+        ...certCtx,
+        username: '<script>x</script>',
+      });
+
+      expect(sent().html).not.toContain('<script>');
+      expect(sent().html).toContain('&lt;script&gt;');
+    });
+
+    it('omits Reply-To unless KK_SMTP_REPLY_TO is set', async () => {
+      await service.sendWelcome(certCtx);
+      expect(sent().replyTo).toBeUndefined();
+
+      mockSendMail.mockClear();
+      withConfig({ KK_SMTP_REPLY_TO: 'support@krakenkey.io' });
+      await service.sendWelcome(certCtx);
+      expect(sent().replyTo).toBe('support@krakenkey.io');
+    });
+
+    it('links email addresses in body text in the brand color', async () => {
+      await service.sendWelcome(certCtx);
+
+      expect(sent().html).toContain(
+        '<a href="mailto:support@krakenkey.io" style="color:#0e7490',
+      );
+    });
+
+    it('shows the postal address in the footer when configured', async () => {
+      withConfig({ KK_MAIL_POSTAL_ADDRESS: '123 Example St, Springfield' });
+
+      await service.sendActivationReminder({ ...certCtx, userId: 'u1' });
+
+      expect(sent().html).toContain('123 Example St, Springfield');
+      expect(sent().text).toContain('123 Example St, Springfield');
+    });
+
+    it('links to notification settings except on security notices', async () => {
+      await service.sendCertIssued(certCtx);
+      expect(sent().html).toContain('Manage email notifications');
+
+      mockSendMail.mockClear();
+      await service.sendApiKeyExpiredUse({
+        ...certCtx,
+        keyId: 'k1',
+        keyName: 'ci',
+      });
+      expect(sent().html).not.toContain('Manage email notifications');
+    });
+  });
+
   describe('transport errors', () => {
     it('does not throw when sendMail fails', async () => {
       mockUserRepo.findOne.mockResolvedValue({

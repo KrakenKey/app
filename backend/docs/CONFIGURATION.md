@@ -115,6 +115,21 @@ Set `KK_DNS_PROVIDER` to select which provider handles DNS-01 ACME challenges. O
 
 *Required only if billing features are enabled
 
+### Email Notifications
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `KK_SMTP_HOST` | No | — | SMTP server. Email notifications are disabled when unset |
+| `KK_SMTP_PORT` | No | `587` | SMTP port. Port `465` uses implicit TLS |
+| `KK_SMTP_USER` | No | — | SMTP username |
+| `KK_SMTP_PASSWORD` | No | — | SMTP password |
+| `KK_SMTP_FROM` | No | `KrakenKey <noreply@krakenkey.io>` | Sender address |
+| `KK_SMTP_REPLY_TO` | No | — | Reply-To address. When unset, replies go to the sender address |
+| `KK_MAIL_LOGO_URL` | No | `https://krakenkey.io/email/logo.png` | Logo shown in the email header. Must be a PNG or JPEG at a public URL, since most mail clients don't show SVG |
+| `KK_MAIL_POSTAL_ADDRESS` | No | — | Postal address shown in the email footer |
+
+Links in emails point at `https://<KK_APP_DOMAIN>`.
+
 ### Probe Service Keys
 
 | Variable | Required | Default | Description |

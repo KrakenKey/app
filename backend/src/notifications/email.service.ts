@@ -17,6 +17,7 @@ import {
   activationReminderTemplate,
   apiKeyExpiredUseTemplate,
 } from './templates';
+import type { EmailBranding, EmailContent } from './templates';
 import { User } from '../users/entities/user.entity';
 import { NotificationType } from '@krakenkey/shared';
 
@@ -112,6 +113,26 @@ export class EmailService {
     );
   }
 
+  private get replyTo(): string | undefined {
+    return this.configService.get<string>('KK_SMTP_REPLY_TO') || undefined;
+  }
+
+  private get brand(): EmailBranding {
+    const appDomain = this.configService.get<string>(
+      'KK_APP_DOMAIN',
+      'app.krakenkey.io',
+    );
+    return {
+      appUrl: `https://${appDomain}`,
+      logoUrl: this.configService.get<string>(
+        'KK_MAIL_LOGO_URL',
+        'https://krakenkey.io/email/logo.png',
+      ),
+      postalAddress:
+        this.configService.get<string>('KK_MAIL_POSTAL_ADDRESS') || undefined,
+    };
+  }
+
   private async shouldSend(
     userId: string | undefined,
     type: NotificationType,
@@ -132,14 +153,25 @@ export class EmailService {
     }
   }
 
-  private async send(to: string, subject: string, html: string): Promise<void> {
+  private async send(
+    to: string,
+    subject: string,
+    content: EmailContent,
+  ): Promise<void> {
     if (!this.transporter) {
       this.logger.debug(`Email skipped (no SMTP): "${subject}" → ${to}`);
       return;
     }
 
     try {
-      await this.transporter.sendMail({ from: this.from, to, subject, html });
+      await this.transporter.sendMail({
+        from: this.from,
+        to,
+        subject,
+        html: content.html,
+        text: content.text,
+        ...(this.replyTo && { replyTo: this.replyTo }),
+      });
       this.logger.log(`Email sent: "${subject}" → ${to}`);
     } catch (err) {
       this.logger.error(
@@ -155,7 +187,7 @@ export class EmailService {
     await this.send(
       ctx.email,
       `Certificate issued for ${ctx.commonName}`,
-      certIssuedTemplate(ctx),
+      certIssuedTemplate(ctx, this.brand),
     );
   }
 
@@ -165,7 +197,7 @@ export class EmailService {
     await this.send(
       ctx.email,
       `Certificate renewed for ${ctx.commonName}`,
-      certRenewedTemplate(ctx),
+      certRenewedTemplate(ctx, this.brand),
     );
   }
 
@@ -177,7 +209,7 @@ export class EmailService {
     await this.send(
       ctx.email,
       `Certificate expiring soon: ${ctx.commonName}`,
-      certExpiryWarningTemplate(ctx),
+      certExpiryWarningTemplate(ctx, this.brand),
     );
   }
 
@@ -187,7 +219,7 @@ export class EmailService {
     await this.send(
       ctx.email,
       `Certificate issuance failed for ${ctx.commonName}`,
-      certFailedTemplate(ctx),
+      certFailedTemplate(ctx, this.brand),
     );
   }
 
@@ -197,7 +229,7 @@ export class EmailService {
     await this.send(
       ctx.email,
       `Certificate revoked: ${ctx.commonName}`,
-      certRevokedTemplate(ctx),
+      certRevokedTemplate(ctx, this.brand),
     );
   }
 
@@ -214,7 +246,7 @@ export class EmailService {
     await this.send(
       ctx.email,
       `Domain verification failed: ${ctx.hostname}`,
-      domainVerificationFailedTemplate(ctx),
+      domainVerificationFailedTemplate(ctx, this.brand),
     );
   }
 
@@ -225,14 +257,18 @@ export class EmailService {
       return;
     await this.send(
       ctx.email,
-      'KrakenKey auto-renewal paused — action required',
-      autoRenewalPausedTemplate(ctx),
+      'Action required: KrakenKey auto-renewal is paused',
+      autoRenewalPausedTemplate(ctx, this.brand),
     );
   }
 
   async sendWelcome(ctx: WelcomeContext): Promise<void> {
     if (!(await this.shouldSend(ctx.userId, NotificationType.WELCOME))) return;
-    await this.send(ctx.email, 'Welcome to KrakenKey', welcomeTemplate(ctx));
+    await this.send(
+      ctx.email,
+      'Welcome to KrakenKey',
+      welcomeTemplate(ctx, this.brand),
+    );
   }
 
   async sendActivationReminder(ctx: ActivationReminderContext): Promise<void> {
@@ -243,7 +279,7 @@ export class EmailService {
     await this.send(
       ctx.email,
       'Your KrakenKey account is waiting',
-      activationReminderTemplate(ctx),
+      activationReminderTemplate(ctx, this.brand),
     );
   }
 
@@ -255,7 +291,7 @@ export class EmailService {
     await this.send(
       ctx.email,
       `Plan limit reached: ${ctx.resourceType}`,
-      planLimitReachedTemplate(ctx),
+      planLimitReachedTemplate(ctx, this.brand),
     );
   }
 
@@ -267,7 +303,7 @@ export class EmailService {
     await this.send(
       ctx.email,
       `Security notice: expired API key "${ctx.keyName}" was used`,
-      apiKeyExpiredUseTemplate(ctx),
+      apiKeyExpiredUseTemplate(ctx, this.brand),
     );
   }
 }
