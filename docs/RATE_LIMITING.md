@@ -70,7 +70,9 @@ If the billing lookup throws, `SubscriptionTierResolver` logs a warning and retu
 |--------|---------|
 | Bearer JWT, non-`PUBLIC` route | `user:<sub>` |
 | Bearer JWT, `PUBLIC` route | client IP |
-| API key (`Bearer kk_...`) | client IP |
+| API key (`Bearer kk_...`), non-`PUBLIC` route | `user:<owner id>` |
+| Unknown, expired or locked-out API key | client IP |
+| Service key (`Bearer kk_svc_...`) | client IP |
 | Unauthenticated | client IP |
 
 The guard does not override `generateKey()`, so the library default applies: the stored key is a hash of the controller name, the handler name and the tracker. **Every route has its own bucket.** A free-tier user gets 5 issuances per hour *and* 5 renewals per hour *and* 5 domain verifications per hour, and being blocked on one route does not block the others.
@@ -79,7 +81,7 @@ Details that matter when changing this code:
 
 - **The guard runs as `APP_GUARD`, before the auth guards.** To key by user it decodes the JWT payload without verifying the signature, so the `sub` it uses is unauthenticated and must never be treated as identity.
 - **`PUBLIC` routes ignore the token entirely** and always key by IP at the default tier. Nothing on those routes rejects a forged token, so trusting its `sub` would let a caller send a different one per request and get a fresh bucket each time. On authenticated routes this is safe because `JwtOrApiKeyGuard` rejects a forged token after the throttler has counted it.
-- **API key requests key by IP**, because resolving the owning user from a `kk_` token needs a database lookup the guard does not perform. Several API keys behind one NAT therefore share a bucket. This is the main reason a customer may report limits stricter than their tier's table row.
+- **API key requests key by the key's owner**, and the owner's plan sets the tier, so all of a user's keys share one bucket and keys from different users behind one NAT don't. The owner comes from `ApiKeyUserResolverService` (`backend/src/auth/services/api-key-user-resolver.service.ts`), which caches lookups in process for 60 seconds (never past the key's `expiresAt`), checks the IP lockout before any hashing, and applies the key's IP allowlist on every request. A key it can't resolve falls back to client IP at the default tier. Service keys always key by IP.
 - `req.ip` is used, never `req.ips[0]`. `req.ip` resolves the client through the trusted proxy chain (`backend/src/config/trusted-proxies.ts`); the leftmost `X-Forwarded-For` entry is client-controlled and forgeable, so keying on it would let a caller mint unlimited buckets.
 
 ---
