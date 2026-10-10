@@ -6,6 +6,7 @@ import {
   buildWebhookBody,
   dashboardLink,
   signWebhookPayload,
+  teamsEscape,
   type AlertMessage,
 } from './alert-payloads';
 
@@ -112,6 +113,27 @@ describe('alert payloads', () => {
     expect(att.content.actions).toEqual([
       { type: 'Action.OpenUrl', title: 'Open in KrakenKey', url: link },
     ]);
+  });
+
+  it('escapes Markdown from payload text in Teams cards', () => {
+    const body = buildTeamsBody(
+      {
+        ...msg,
+        event: 'deploy.failed',
+        payload: {
+          subject: 'web.example.com on web-01/nginx',
+          details: { error: '[x](https://evil) **bold** `code`', label: 'a_b' },
+        },
+      },
+      link,
+    );
+    const texts = body.attachments[0].content.body.map((b) => b.text);
+    expect(texts).toContain(
+      '**Error:** \\[x\\]\\(https://evil\\) \\*\\*bold\\*\\* \\`code\\`',
+    );
+    expect(texts).toContain('**Label:** a\\_b');
+    expect(texts.join('\n')).not.toContain('[x](https://evil)');
+    expect(teamsEscape('plain v0.2.0 - ok')).toBe('plain v0.2.0 - ok');
   });
 
   it('builds the webhook envelope', () => {

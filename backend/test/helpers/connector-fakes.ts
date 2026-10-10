@@ -139,9 +139,10 @@ export class FakeDeploymentRepo {
       .map((r) => ({ ...r }));
   }
 
-  async delete(criteria: Row[]) {
+  async delete(criteria: Row | Row[]) {
+    const list = Array.isArray(criteria) ? criteria : [criteria];
     const before = this.rows.length;
-    this.rows = this.rows.filter((r) => !criteria.some((c) => matches(r, c)));
+    this.rows = this.rows.filter((r) => !list.some((c) => matches(r, c)));
     return { affected: before - this.rows.length };
   }
 
@@ -286,6 +287,31 @@ export class FakeAuthService {
     }
     if (k.revokedAt || expired) return null;
     return k;
+  }
+}
+
+/** ConnectorAlertGate in memory: cooldowns never expire during a test. */
+export class FakeAlertGate {
+  private readonly targets = new Set<string>();
+  private readonly emailed = new Set<string>();
+  private readonly held = new Map<string, number>();
+
+  async claimTargetAlert(c: string, certificateId: number, label: string) {
+    const key = `${c}\n${certificateId}\n${label}`;
+    if (this.targets.has(key)) return false;
+    this.targets.add(key);
+    return true;
+  }
+
+  async claimEmail(c: string, failures: number): Promise<number | null> {
+    if (this.emailed.has(c)) {
+      this.held.set(c, (this.held.get(c) ?? 0) + failures);
+      return null;
+    }
+    this.emailed.add(c);
+    const held = this.held.get(c) ?? 0;
+    this.held.delete(c);
+    return held;
   }
 }
 

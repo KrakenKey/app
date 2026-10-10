@@ -849,11 +849,11 @@ Connectors belong to the user who creates them, like API keys and GitHub trust p
 | PATCH | `/connectors/:id` | Dashboard session only | write | Change `name` or `clientLabel` |
 | DELETE | `/connectors/:id` | Dashboard session only | write | Revoke the connector and its keys (`204`) |
 | POST | `/connectors/enroll` | None (enrollment token in the body) | public-strict | Enroll with the token and a public key |
-| POST | `/connectors/token` | None (signed body) | public-strict | Get an API key that lasts one hour |
+| POST | `/connectors/token` | None (signed body) | connector-token | Get an API key that lasts one hour |
 | POST | `/connectors/rotate` | None (signed body) | public-strict | Replace the connector's public key |
-| POST | `/connectors/report` | Key issued to a connector | write | Report deployment status |
+| POST | `/connectors/report` | Key issued to a connector | connector-report | Report deployment status |
 
-The three connector routes are limited to 10 requests per minute per IP each (see [RATE_LIMITING.md](../../docs/RATE_LIMITING.md)). A connector belonging to someone else returns `404`.
+Enroll and rotate are limited to 10 requests per minute per IP each, token exchange to 60 per minute per IP (so a site with many connectors behind one address can restart them together), and reports to 60 per hour per connector. See [RATE_LIMITING.md](../../docs/RATE_LIMITING.md). A connector belonging to someone else returns `404`.
 
 ### Connector object
 
@@ -875,7 +875,7 @@ The three connector routes are limited to 10 requests per minute per IP each (se
 }
 ```
 
-`lastSeenAt` is the last enrollment, key exchange, rotation or status report. `version`, `os` and `arch` are what the connector last sent. `GET /connectors/:id` adds `deployments`, every target the connector last reported (see [below](#post-connectorsreport)); the list does not include it.
+`lastSeenAt` is the last enrollment, key exchange, rotation or status report. `version`, `os` and `arch` are what the connector last sent. `GET /connectors/:id` adds `deployments`, every target the connector last reported (see [below](#post-connectorsreport)) for certificates the caller can still see: the owner's or their current organization's, and within an API key's certificate and domain restrictions. The list does not include deployments.
 
 ### POST /connectors
 
@@ -982,7 +982,7 @@ A key issued to a connector that has been revoked or has expired gets `401` but 
 
 ### POST /connectors/report
 
-Sent by the connector with a key from `POST /connectors/token`. Any other credential, including a full-access key or a dashboard session, gets `403`. Rate limited as a write, counted against the owner like other keys.
+Sent by the connector with a key from `POST /connectors/token`. Any other credential, including a full-access key or a dashboard session, gets `403`. Limited to 60 reports per hour per connector, counted separately from the owner's other API requests.
 
 ```json
 {
@@ -1008,8 +1008,9 @@ Sent by the connector with a key from `POST /connectors/token`. Any other creden
 
 - `label`: `^[A-Za-z0-9._-]{1,64}$`, unique within a certificate.
 - `state`: `pending`, `staged`, `activated`, `verified`, `activated_unverifiable`, `failed` or `rolled_back`.
-- `serial`: optional, hex, at most 64 characters, stored lowercase. `error`: optional, at most 200 characters; control characters are replaced with spaces. `updatedAt`: RFC 3339 (second or millisecond precision, e.g. `2026-10-10T14:00:00.000Z`), when the target last changed.
-- Up to 500 certificates, 50 targets each, each certificate once. The body may be up to 2 MB on this route.
+- `serial`: optional, hex, at most 64 characters, stored lowercase. `error`: optional, at most 200 characters; control characters are replaced with spaces. `updatedAt`: RFC 3339 in UTC with a `Z` and a time part, seconds or fractional seconds (e.g. `2026-10-10T14:00:00.000Z`), when the target last changed. A value more than 5 minutes ahead of server time is a `400`.
+- Up to 500 certificates, 50 targets each, each certificate once. Certificate ids beyond a 32-bit integer can't exist and come back in `rejectedCertificateIds`.
+- The body may be up to 2 MB on this route, for requests with a `kk_` bearer token; other requests get the usual 100 kB. The key is checked after the body is read, so a made-up `kk_` token can still make the API read up to 2 MB before the `401`.
 
 Every certificate must belong to the connector's owner or their organization and fall within the connector's `allowedCertIds` and `allowedDomainIds`. Certificates that don't are skipped (nothing about them is stored) and listed in the response; the rest of the report is stored.
 
@@ -1023,11 +1024,11 @@ Each report replaces what the connector said before about the certificates in it
 
 `accepted` is the number of certificates stored. The only whole-report refusals are `400` for an invalid body and `403` when the bearer is not a key issued to a connector.
 
-A target entering `failed` or `rolled_back` from any other state (or appearing in one) sends a `deploy.failed` alert and email; reporting the same failure again does not, and moving between `failed` and `rolled_back` does not either. Channels get at most 20 `deploy.failed` alerts per report; the owner gets one email per report listing up to 10 failures and the total.
+A target entering `failed` or `rolled_back` from any other state (or appearing in one) sends a `deploy.failed` alert, unless that target (connector, certificate, label) already alerted in the last 6 hours. The cooldown holds whatever the target does in between, including recovering, flapping, or being left out of a report and listed again. Reporting the same failure again, or moving between `failed` and `rolled_back`, never alerts. Channels get at most 20 `deploy.failed` alerts per report. The owner gets at most one `deploy.failed` email per connector per hour, listing up to 10 failures and the total; failures held back in that hour are counted in the next email. The cooldowns live in Redis and are shared by all API instances; if Redis is unavailable, no `deploy.failed` alert or email is sent.
 
 ### GET /connectors/deployments
 
-`?certificateId=42` (required). Returns the certificate's deployments across the user's connectors that are not revoked, for the certificate page's "Deployed to" column:
+`?certificateId=42` (required, a positive 32-bit integer). Returns the certificate's deployments across the user's connectors that are not revoked, for the certificate page's "Deployed to" column. Returns `[]` when the caller can't see the certificate (another account, an organization they left, or outside their API key's restrictions):
 
 ```json
 [
@@ -1049,7 +1050,7 @@ A target entering `failed` or `rolled_back` from any other state (or appearing i
 
 ### Connector alerts
 
-- `deploy.failed`: as above. Details: `connectorId`, `connectorName`, `clientLabel`, `certificateId`, `label`, `state`, `error`, `serial`; the resource is the certificate.
+- `deploy.failed`: as above. Details: `connectorId`, `connectorName`, `clientLabel`, `certificateId`, `label`, `state`, `error`, `serial`; the resource is the certificate. Microsoft Teams cards backslash-escape Markdown characters in these values, so text from a connector can't add links or formatting.
 - `connector.stale`: an hourly job (at :45) finds enrolled, unrevoked connectors not seen for 24 hours and alerts once per connector. Any later contact (key exchange, rotation or report) re-arms it, so a connector that comes back and goes quiet again alerts again. Details: `connectorId`, `connectorName`, `clientLabel`, `lastSeenAt`, `version`; the resource is the connector. Emails are grouped, one per user per run.
 
 Both are also email notifications, on by default, that can be turned off in Settings (`deploy_failed`, `connector_stale`).

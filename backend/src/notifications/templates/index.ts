@@ -674,8 +674,15 @@ export function deployFailedTemplate(
       preheader: `The connector ${ctx.connectorName} reported a failed deployment.`,
       blocks: [
         ...blocks,
+        ...(ctx.heldBack
+          ? [
+              para(
+                `${ctx.heldBack} more failed deployment${ctx.heldBack === 1 ? '' : 's'} on this connector since the last email were not emailed separately. Deployment emails go out at most once an hour per connector.`,
+              ),
+            ]
+          : []),
         para(
-          'Check the connector logs on that machine for details. The connector retries on its next run; this alert is sent again only if a target fails again after recovering.',
+          'Check the connector logs on that machine for details. The connector retries on its next run. A target alerts at most once every 6 hours.',
         ),
         button('View certificates', `${brand.appUrl}/dashboard/certificates`),
       ],

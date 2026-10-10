@@ -18,12 +18,18 @@ async function bootstrap() {
   app.use(cookieParser());
 
   // Connector status reports can list up to 500 certificates with 50
-  // targets each, so this one route takes bodies up to 2 MB instead of the
-  // 100 kB default. Nest's own parser runs later and skips a body that is
-  // already read. The wrapper keeps the handler from being named
-  // `jsonParser`: Nest skips registering its global JSON parser when it
-  // finds a middleware with that name, which would leave every other
-  // route without a parsed body.
+  // targets each, so POST /connectors/report takes bodies up to 2 MB
+  // instead of the 100 kB default. Only requests carrying a user API key
+  // (the only credential the route accepts) get the larger parser; anything
+  // else falls through to Nest's own 100 kB parser and is then refused by
+  // the guard. The key itself is only checked after parsing (middleware
+  // runs before guards), so a request with a made-up `kk_` key can still
+  // make the API read and parse up to 2 MB before it is refused.
+  //
+  // Nest's parser runs later and skips a body that is already read. The
+  // named wrapper matters: Nest skips registering its global JSON parser
+  // when it finds a middleware named `jsonParser`, which would leave every
+  // other route without a parsed body.
   const reportBodyParser = json({ limit: '2mb' });
   app.use(
     '/connectors/report',
@@ -32,6 +38,15 @@ async function bootstrap() {
       res: Response,
       next: NextFunction,
     ) {
+      const auth = req.headers.authorization;
+      if (
+        req.method !== 'POST' ||
+        !auth?.startsWith('Bearer kk_') ||
+        auth.startsWith('Bearer kk_svc_')
+      ) {
+        next();
+        return;
+      }
       reportBodyParser(req, res, next);
     },
   );

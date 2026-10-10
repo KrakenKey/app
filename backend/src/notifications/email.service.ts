@@ -99,6 +99,8 @@ export interface DeployFailedContext {
   failures: DeployFailure[];
   /** Every target that failed in the report. */
   total: number;
+  /** Failures since the last email that weren't emailed (one per hour). */
+  heldBack?: number;
 }
 
 export interface StaleConnector {

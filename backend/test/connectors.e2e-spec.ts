@@ -17,6 +17,7 @@ import { ConnectorsService } from '../src/connectors/connectors.service';
 import { Connector } from '../src/connectors/entities/connector.entity';
 import { ConnectorDeployment } from '../src/connectors/entities/connector-deployment.entity';
 import { ConnectorReportsService } from '../src/connectors/connector-reports.service';
+import { ConnectorAlertGate } from '../src/connectors/connector-alert-gate';
 import { TlsCrt } from '../src/certs/tls/entities/tls-crt.entity';
 import { User } from '../src/users/entities/user.entity';
 import { AlertsService } from '../src/notifications/channels/alerts.service';
@@ -26,6 +27,7 @@ import { createTestApp } from './helpers/create-test-app';
 import {
   FakeAuthService,
   FakeConnectorRepo,
+  FakeAlertGate,
   FakeDeploymentRepo,
   fixedRepo,
   FakeNonceStore,
@@ -132,6 +134,7 @@ describe('Connectors (e2e)', () => {
       { provide: ConnectorNonceStore, useValue: nonces },
       { provide: AlertsService, useValue: alerts },
       { provide: EmailService, useValue: email },
+      { provide: ConnectorAlertGate, useValue: new FakeAlertGate() },
       {
         provide: BillingService,
         useValue: {
@@ -768,13 +771,71 @@ describe('Connectors (e2e)', () => {
       );
       expect(email.sendDeployFailed).toHaveBeenCalledTimes(1);
 
+      // Flapping, or dropping the target and listing it again, doesn't
+      // re-alert inside the target's 6-hour cooldown
+      for (const targets of [
+        [target('nginx-main', 'verified')],
+        [target('nginx-main', 'rolled_back')],
+        [],
+        [target('nginx-main', 'failed')],
+      ]) {
+        await report([{ certificateId: 7, targets }]).expect(200);
+      }
+      expect(alerts.emit).toHaveBeenCalledTimes(1);
+      expect(email.sendDeployFailed).toHaveBeenCalledTimes(1);
+
+      // Another target can still alert, but the email waits for the hour
       await report([
-        { certificateId: 7, targets: [target('nginx-main', 'verified')] },
-      ]).expect(200);
-      await report([
-        { certificateId: 7, targets: [target('nginx-main', 'rolled_back')] },
+        { certificateId: 7, targets: [target('haproxy', 'failed')] },
       ]).expect(200);
       expect(alerts.emit).toHaveBeenCalledTimes(2);
+      expect(email.sendDeployFailed).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects out-of-range ids in the list instead of failing', async () => {
+      const res = await report([
+        { certificateId: 2147483648, targets: [] },
+        { certificateId: 9007199254740991, targets: [] },
+      ]).expect(200);
+      expect(res.body).toEqual({
+        accepted: 0,
+        rejectedCertificateIds: [2147483648, 9007199254740991],
+      });
+      await session()
+        .get('/connectors/deployments?certificateId=2147483648')
+        .expect(400);
+    });
+
+    it('requires UTC updatedAt no more than 5 minutes ahead', async () => {
+      for (const updatedAt of [
+        '2026-10-10T14:00:00+01:00',
+        '2026-10-10',
+        new Date(Date.now() + 10 * 60_000).toISOString(),
+      ]) {
+        await report([
+          {
+            certificateId: 7,
+            targets: [target('x', 'verified', { updatedAt })],
+          },
+        ]).expect(400);
+      }
+    });
+
+    it('only shows deployments a restricted key may see', async () => {
+      auth.addKey('kk_reader_cert8', MOCK_USER.userId, {
+        scopes: ['account:read'],
+        allowedCertIds: [8],
+      });
+      const h = { Authorization: 'Bearer kk_reader_cert8' };
+      const one = await anon().get(`/connectors/${id}`).set(h).expect(200);
+      expect(one.body.deployments).toEqual([]);
+      const byCert = await anon()
+        .get('/connectors/deployments?certificateId=7')
+        .set(h)
+        .expect(200);
+      expect(byCert.body).toEqual([]);
+      const full = await session().get(`/connectors/${id}`).expect(200);
+      expect(full.body.deployments.length).toBeGreaterThan(0);
     });
 
     it('skips certificates outside the connector restrictions and stores the rest', async () => {

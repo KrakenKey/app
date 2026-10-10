@@ -190,6 +190,7 @@ Approve, deny and lookup require a dashboard (JWT) session; an API key gets 403,
 **Providers**:
 - `ConnectorsService` — Connector CRUD, enrollment, signed key exchange and key rotation, revocation
 - `ConnectorReportsService` — Stores deployment status reports, sends `deploy.failed` on transitions, and runs the hourly `connector.stale` check (at :45)
+- `ConnectorAlertGate` — Redis cooldowns for `deploy.failed`: one alert per target per 6 hours, one email per connector per hour (`connector-alert:` prefix); fails closed
 - `ConnectorNonceStore` — Remembers used nonces per connector in Redis (`connector-nonce:` prefix, 11 minutes); fails closed
 - `ConnectorsController` — REST endpoints
 

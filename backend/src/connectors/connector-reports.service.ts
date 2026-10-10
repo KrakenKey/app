@@ -29,6 +29,7 @@ import {
   type DeployFailure,
 } from '../notifications/email.service';
 import type { ConnectorReportDto } from './dto/connector-report.dto';
+import { ConnectorAlertGate } from './connector-alert-gate';
 
 /** deploy.failed alerts sent to channels for one report; the rest are logged. */
 export const MAX_DEPLOY_ALERTS_PER_REPORT = 20;
@@ -36,6 +37,12 @@ export const MAX_DEPLOY_ALERTS_PER_REPORT = 20;
 const MAX_FAILURES_PER_EMAIL = 10;
 /** Rows per INSERT when storing a report. */
 const UPSERT_CHUNK = 500;
+/** Ids per IN (...) list when reading certificates. */
+const ID_CHUNK = 1000;
+/** Largest id a Postgres INTEGER holds. */
+const MAX_INT4 = 2147483647;
+/** How far ahead of server time a reported updatedAt may be. */
+const MAX_FUTURE_UPDATED_AT_MS = 5 * 60_000;
 
 const FAILED = new Set<string>(CONNECTOR_FAILED_STATES);
 
@@ -76,17 +83,23 @@ export class ConnectorReportsService {
     private readonly keyAccess: ApiKeyAccessService,
     private readonly alerts: AlertsService,
     private readonly emailService: EmailService,
+    private readonly gate: ConnectorAlertGate,
   ) {}
 
   // --- Reads -----------------------------------------------------------------
 
-  /** Deployments of one certificate across the user's active connectors. */
+  /**
+   * Deployments of one certificate across the user's active connectors,
+   * if the caller can see that certificate.
+   */
   async forCertificate(
-    userId: string,
+    user: KeyUser & { userId: string },
     certificateId: number,
   ): Promise<ConnectorDeploymentDto[]> {
+    const visible = await this.visibleCertIds(user, [certificateId]);
+    if (!visible.has(certificateId)) return [];
     const connectors = await this.connectorRepo.find({
-      where: { userId, revokedAt: IsNull() },
+      where: { userId: user.userId, revokedAt: IsNull() },
       select: ['id', 'name'],
     });
     if (!connectors.length) return [];
@@ -98,16 +111,54 @@ export class ConnectorReportsService {
     return rows.map((d) => toDeploymentDto(d, names.get(d.connectorId)!));
   }
 
-  /** Every deployment one connector reported. */
-  async forConnector(connector: {
-    id: string;
-    name: string;
-  }): Promise<ConnectorDeploymentDto[]> {
+  /**
+   * Every deployment one connector reported, for certificates the caller
+   * can still see: the owner's or their current organization's, within a
+   * restricted API key's limits.
+   */
+  async forConnector(
+    user: KeyUser & { userId: string },
+    connector: { id: string; name: string },
+  ): Promise<ConnectorDeploymentDto[]> {
     const rows = await this.deploymentRepo.find({
       where: { connectorId: connector.id },
       order: { certificateId: 'ASC', label: 'ASC' },
     });
-    return rows.map((d) => toDeploymentDto(d, connector.name));
+    if (!rows.length) return [];
+    const visible = await this.visibleCertIds(user, [
+      ...new Set(rows.map((d) => d.certificateId)),
+    ]);
+    return rows
+      .filter((d) => visible.has(d.certificateId))
+      .map((d) => toDeploymentDto(d, connector.name));
+  }
+
+  /**
+   * The subset of certificate ids the caller may see now: owned by them or
+   * a member of their organization, and allowed by their API key.
+   */
+  private async visibleCertIds(
+    user: KeyUser & { userId: string },
+    ids: number[],
+  ): Promise<Set<number>> {
+    const inRange = ids.filter((id) => id >= 1 && id <= MAX_INT4);
+    if (!inRange.length) return new Set();
+    const memberIds = await this.billingService.getResourceCountUserIds(
+      user.userId,
+    );
+    const certs: TlsCrt[] = [];
+    for (let i = 0; i < inRange.length; i += ID_CHUNK) {
+      certs.push(
+        ...(await this.certRepo.find({
+          where: {
+            id: In(inRange.slice(i, i + ID_CHUNK)),
+            userId: In(memberIds),
+          },
+        })),
+      );
+    }
+    const allowed = await this.keyAccess.filterCerts(user, certs);
+    return new Set(allowed.map((c) => c.id));
   }
 
   // --- Report ----------------------------------------------------------------
@@ -136,7 +187,14 @@ export class ConnectorReportsService {
         `Certificate(s) listed more than once: ${[...new Set(dupCerts)].join(', ')}`,
       );
     }
+    const latest = Date.now() + MAX_FUTURE_UPDATED_AT_MS;
     for (const c of dto.certificates) {
+      const ahead = c.targets.find((t) => Date.parse(t.updatedAt) > latest);
+      if (ahead) {
+        throw new BadRequestException(
+          `updatedAt for target "${ahead.label}" of certificate ${c.certificateId} is more than 5 minutes in the future`,
+        );
+      }
       const labels = c.targets.map((t) => t.label);
       const dup = labels.find((l, i) => labels.indexOf(l) !== i);
       if (dup) {
@@ -147,12 +205,14 @@ export class ConnectorReportsService {
     }
 
     // Every certificate must belong to the connector's owner (or their
-    // organization) and pass the key's restrictions. Anything else is
-    // skipped, and the rest of the report is stored.
-    const certs = certIds.length
+    // organization) and pass the key's restrictions. Anything else,
+    // including ids that can't exist (beyond a 32-bit integer), is skipped,
+    // and the rest of the report is stored.
+    const inRange = certIds.filter((id) => id <= MAX_INT4);
+    const certs = inRange.length
       ? await this.certRepo.find({
           where: {
-            id: In(certIds),
+            id: In(inRange),
             userId: In(
               await this.billingService.getResourceCountUserIds(user.userId),
             ),
@@ -230,16 +290,22 @@ export class ConnectorReportsService {
           }
         }
 
-        // Whatever is left was deployed before but isn't any more
-        const gone = [...previous.values()];
-        if (gone.length) {
-          await deployments.delete(
-            gone.map((d) => ({
-              connectorId,
-              certificateId: d.certificateId,
-              label: d.label,
-            })),
-          );
+        // Whatever is left was deployed before but isn't any more. One
+        // DELETE per certificate (at most 50 labels each) keeps every
+        // statement far below Postgres' bind parameter limit.
+        const goneByCert = new Map<number, string[]>();
+        for (const d of previous.values()) {
+          goneByCert.set(d.certificateId, [
+            ...(goneByCert.get(d.certificateId) ?? []),
+            d.label,
+          ]);
+        }
+        for (const [certificateId, labels] of goneByCert) {
+          await deployments.delete({
+            connectorId,
+            certificateId,
+            label: In(labels),
+          });
         }
         for (let i = 0; i < rows.length; i += UPSERT_CHUNK) {
           await deployments.upsert(rows.slice(i, i + UPSERT_CHUNK), [
@@ -266,14 +332,33 @@ export class ConnectorReportsService {
     return { accepted: accepted.length, rejectedCertificateIds };
   }
 
+  /**
+   * Alerts for targets that entered a failed state. Each target alerts at
+   * most once per DEPLOY_ALERT_COOLDOWN_SECONDS, whatever it does in
+   * between, and the owner gets at most one deploy.failed email per
+   * connector per DEPLOY_EMAIL_INTERVAL_SECONDS; failures held back are
+   * counted in the next one.
+   */
   private async alertDeployFailures(
     connector: Connector,
     transitions: Transition[],
   ): Promise<void> {
+    const due: Transition[] = [];
+    for (let i = 0; i < transitions.length; i += 100) {
+      const batch = transitions.slice(i, i + 100);
+      const claimed = await Promise.all(
+        batch.map((t) =>
+          this.gate.claimTargetAlert(connector.id, t.certificateId, t.label),
+        ),
+      );
+      due.push(...batch.filter((_, j) => claimed[j]));
+    }
     this.logger.warn(
-      `Connector ${connector.id} reported ${transitions.length} failed deployment(s)`,
+      `Connector ${connector.id} reported ${transitions.length} failed deployment(s); ${transitions.length - due.length} still in their 6-hour alert cooldown`,
     );
-    for (const t of transitions.slice(0, MAX_DEPLOY_ALERTS_PER_REPORT)) {
+    if (!due.length) return;
+
+    for (const t of due.slice(0, MAX_DEPLOY_ALERTS_PER_REPORT)) {
       await this.alerts.emit(connector.userId, 'deploy.failed', {
         subject: `${t.commonName ?? `cert #${t.certificateId}`} on ${connector.name}/${t.label}`,
         resource: { type: 'certificate', id: t.certificateId },
@@ -289,13 +374,20 @@ export class ConnectorReportsService {
         },
       });
     }
-    if (transitions.length > MAX_DEPLOY_ALERTS_PER_REPORT) {
+    if (due.length > MAX_DEPLOY_ALERTS_PER_REPORT) {
       this.logger.warn(
-        `Connector ${connector.id}: ${transitions.length - MAX_DEPLOY_ALERTS_PER_REPORT} deploy.failed alert(s) over the per-report cap not sent to channels`,
+        `Connector ${connector.id}: ${due.length - MAX_DEPLOY_ALERTS_PER_REPORT} deploy.failed alert(s) over the per-report cap not sent to channels`,
       );
     }
 
     try {
+      const heldBack = await this.gate.claimEmail(connector.id, due.length);
+      if (heldBack === null) {
+        this.logger.log(
+          `Connector ${connector.id}: deploy.failed email held back (one per hour)`,
+        );
+        return;
+      }
       const owner = await this.userRepo.findOne({
         where: { id: connector.userId },
         select: ['id', 'username', 'email'],
@@ -307,8 +399,9 @@ export class ConnectorReportsService {
         email: owner.email,
         connectorName: connector.name,
         clientLabel: connector.clientLabel,
-        failures: transitions.slice(0, MAX_FAILURES_PER_EMAIL),
-        total: transitions.length,
+        failures: due.slice(0, MAX_FAILURES_PER_EMAIL),
+        total: due.length,
+        heldBack,
       });
     } catch (err) {
       this.logger.error(

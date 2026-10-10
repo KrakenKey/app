@@ -8,6 +8,11 @@
  */
 export interface ApiKeyUserResolver {
   resolve(rawKey: string, ip: string): Promise<string | null>;
+  /**
+   * The connector a short-lived key was issued to, or null for any other
+   * key (or one that wouldn't authenticate). Same rules as resolve().
+   */
+  resolveConnector?(rawKey: string, ip: string): Promise<string | null>;
 }
 
 export const API_KEY_USER_RESOLVER = Symbol('API_KEY_USER_RESOLVER');
