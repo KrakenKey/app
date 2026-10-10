@@ -1,9 +1,4 @@
-import {
-  createPublicKey,
-  generateKeyPairSync,
-  sign,
-  verify,
-} from 'node:crypto';
+import { generateKeyPairSync, sign } from 'node:crypto';
 import {
   isAcceptablePoint,
   parsePublicKey,
@@ -142,23 +137,13 @@ describe('small-order public keys', () => {
     expect(isAcceptablePoint(raw)).toBe(false);
   });
 
-  it('refuses the identity key, which verifies a forged signature for any message', () => {
-    const identity = 'AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
-    // Proof of the attack: OpenSSL accepts R = identity, S = 0 under it
-    const key = createPublicKey({
-      key: {
-        kty: 'OKP',
-        crv: 'Ed25519',
-        x: Buffer.from(identity, 'base64').toString('base64url'),
-      },
-      format: 'jwk',
-    });
-    const forged = Buffer.concat([
-      Buffer.from(identity, 'base64'),
-      Buffer.alloc(32),
-    ]);
-    expect(verify(null, Buffer.from('any message'), key, forged)).toBe(true);
-    expect(parsePublicKey(identity)).toBeNull();
+  it('refuses the identity and all-zero keys', () => {
+    // Under the identity key the signature R = identity, S = 0 verifies for
+    // every message on OpenSSL builds that don't reject small-order keys
+    // themselves (some do, some don't), so the check can't be left to them.
+    expect(
+      parsePublicKey('AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='),
+    ).toBeNull();
     expect(parsePublicKey(Buffer.alloc(32).toString('base64'))).toBeNull();
   });
 
