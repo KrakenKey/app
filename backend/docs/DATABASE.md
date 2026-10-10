@@ -86,10 +86,11 @@ Represents a TLS certificate request and its lifecycle from submission through i
 ```sql
 CREATE TABLE "tls_crt" (
   "id" SERIAL PRIMARY KEY,
-  "rawCsr" VARCHAR NOT NULL,                      -- Original CSR PEM (hidden from API)
-  "parsedCsr" JSONB NOT NULL,                     -- Parsed CSR metadata
+  "rawCsr" VARCHAR,                               -- Original CSR PEM (hidden from API); NULL while awaiting_csr
+  "parsedCsr" JSONB,                              -- Parsed CSR metadata; NULL while awaiting_csr
+  "requestedNames" TEXT[],                        -- Names a pending certificate was created with; NULL for CSR requests
   "crtPem" TEXT,                                  -- Issued certificate PEM
-  "status" VARCHAR DEFAULT 'pending',             -- pending/issuing/issued/failed/renewing/revoking/revoked
+  "status" VARCHAR DEFAULT 'pending',             -- awaiting_csr/pending/issuing/issued/failed/renewing/revoking/revoked
   "expiresAt" TIMESTAMP,                          -- Certificate expiration
   "lastRenewedAt" TIMESTAMP,
   "autoRenew" BOOLEAN DEFAULT TRUE,
@@ -110,6 +111,7 @@ CREATE INDEX idx_tls_crt_renewal ON tls_crt("status", "autoRenew", "expiresAt");
 
 | Status | Description |
 |--------|-------------|
+| `awaiting_csr` | Created from names; waiting for a connector's CSR (`rawCsr`, `parsedCsr` NULL) |
 | `pending` | CSR received, validated, job queued |
 | `issuing` | ACME workflow actively running |
 | `issued` | Certificate successfully issued |

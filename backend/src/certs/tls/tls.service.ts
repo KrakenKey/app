@@ -17,7 +17,7 @@ import {
 import { CsrUtilService } from './util/csr-util.service';
 import { CertUtilService } from './util/cert-util.service';
 import { TlsCrt } from './entities/tls-crt.entity';
-import { In, MoreThanOrEqual, Repository } from 'typeorm';
+import { In, MoreThanOrEqual, Not, Repository } from 'typeorm';
 import type { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -47,6 +47,12 @@ import {
   renewAfter,
 } from './util/renewal-window';
 import { certDnsNames, nameCovered } from '../../auth/api-key-restrictions';
+import {
+  certDisplayName,
+  normalizeRequestedNames,
+  normalizedNames,
+  sameNames,
+} from './util/cert-names';
 
 /** A certificate as the API returns it: the stored row plus computed fields. */
 export type TlsCrtResponse = TlsCrt & {
@@ -54,15 +60,11 @@ export type TlsCrtResponse = TlsCrt & {
   renewAfter: string | null;
 };
 
-/** Lowercased, deduplicated, sorted names, for comparing two name sets. */
-function normalizedNames(names: string[]): string[] {
-  return [...new Set(names.map((n) => n.toLowerCase()))].sort();
-}
-
 /**
  * Manages TLS certificate lifecycle through a job queue.
  *
  * Certificate states:
+ * - awaiting_csr: created from names; waiting for a connector's CSR
  * - pending: CSR validated, awaiting ACME issuance
  * - issuing: Background job processing ACME challenge
  * - issued: Certificate successfully issued
@@ -135,15 +137,105 @@ export class TlsService {
     userId: string,
     createTlsCrtDto: CreateTlsCrtDto,
     opts: { restrictToHostnames?: string[] } = {},
-  ) {
-    const csr = await this.csrUtilService.validateAndParse(
-      createTlsCrtDto.csrPem,
-    );
+  ): Promise<CreateTlsCertResponse> {
+    const { csrPem, names, managedBy } = createTlsCrtDto;
+    if ((csrPem === undefined) === (names === undefined)) {
+      throw new BadRequestException('Send exactly one of csrPem or names');
+    }
+    if (names !== undefined) {
+      if (managedBy !== 'connector') {
+        throw new BadRequestException(
+          "names needs managedBy: 'connector'. Certificates requested by name are issued by a connector with its own key.",
+        );
+      }
+      return this.createAwaitingCsr(userId, names, opts);
+    }
+    if (managedBy !== undefined) {
+      throw new BadRequestException(
+        'managedBy is only accepted with names. Use PATCH /certs/tls/:id to change it on a certificate.',
+      );
+    }
+
+    const csr = await this.csrUtilService.validateAndParse(csrPem!);
     if (!csr) {
       throw new Error('Invalid CSR PEM format');
     }
 
-    // Domain authorization check: Ensure user owns all domains in CSR
+    await this.authorizeNames(userId, csr.domains, opts.restrictToHostnames);
+
+    // Idempotency: a retried/duplicated request with the same CSR within the
+    // idempotency window returns the original cert instead of creating another.
+    return this.createOnce(
+      this.idempotencyKey(userId, csr.raw),
+      userId,
+      async () => {
+        // Plan-based limit checks
+        await this.enforceCertLimits(userId);
+
+        const savedCsr = await this.TlsCrtRepository.save({
+          rawCsr: csr.raw,
+          parsedCsr: csr.parsed,
+          status: CertStatus.PENDING,
+          userId,
+        });
+        // Queue background job for ACME issuance
+        const jobPayload: TlsCertJobPayload = { certId: savedCsr.id };
+        await this.tlsCertQueue.add('tlsCertIssuance', jobPayload, {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 5000 },
+        });
+        return savedCsr;
+      },
+    );
+  }
+
+  /**
+   * Creates a certificate from names alone, for a connector that will send
+   * a CSR made with its own key later (POST /certs/tls/:id/renew). Nothing
+   * is sent to the CA yet. The names get the same checks a CSR's names get,
+   * and the certificate counts toward the total active certificate and
+   * monthly limits, but not concurrent pending, since nothing is in flight.
+   */
+  private async createAwaitingCsr(
+    userId: string,
+    names: string[],
+    opts: { restrictToHostnames?: string[] },
+  ): Promise<CreateTlsCertResponse> {
+    const requestedNames = normalizeRequestedNames(names);
+    await this.authorizeNames(userId, requestedNames, opts.restrictToHostnames);
+
+    // Same retry safety as a CSR request, keyed on the set of names
+    const namesHash = createHash('sha256')
+      .update(normalizedNames(requestedNames).join('\n'))
+      .digest('hex');
+    return this.createOnce(
+      `tls:idem:${userId}:names:${namesHash}`,
+      userId,
+      async () => {
+        await this.enforceCertLimits(userId, { concurrentPending: false });
+        return this.TlsCrtRepository.save({
+          rawCsr: null,
+          parsedCsr: null,
+          requestedNames,
+          status: CertStatus.AWAITING_CSR,
+          managedBy: 'connector',
+          autoRenew: false,
+          userId,
+        });
+      },
+    );
+  }
+
+  /**
+   * Checks that the user may get a certificate for these names: each must
+   * be one of the user's (or their organization's) verified domains or a
+   * subdomain, and, for an API key limited to domains, under those domains.
+   */
+  private async authorizeNames(
+    userId: string,
+    names: string[],
+    restrictToHostnames?: string[],
+  ): Promise<void> {
     const userDomains = await this.domainsService.findAllVerified(userId);
     if (userDomains.length === 0) {
       throw new BadRequestException(
@@ -151,14 +243,16 @@ export class TlsService {
       );
     }
 
-    const allowedDomainNames = userDomains.map((d) => d.hostname);
-    this.csrUtilService.isAuthorized(csr.domains, allowedDomainNames);
-    // This throws BadRequestException if any domain is unauthorized
+    // Throws BadRequestException if any name is outside the verified domains
+    this.csrUtilService.isAuthorized(
+      names,
+      userDomains.map((d) => d.hostname),
+    );
 
     // An API key limited to specific domains may only request names under them.
-    if (opts.restrictToHostnames) {
-      const outside = csr.domains.filter(
-        (name) => !nameCovered(name, opts.restrictToHostnames!),
+    if (restrictToHostnames) {
+      const outside = names.filter(
+        (name) => !nameCovered(name, restrictToHostnames),
       );
       if (outside.length > 0) {
         throw new ForbiddenException(
@@ -166,10 +260,17 @@ export class TlsService {
         );
       }
     }
+  }
 
-    // Idempotency: a retried/duplicated request with the same CSR within the
-    // idempotency window returns the original cert instead of creating another.
-    const idemKey = this.idempotencyKey(userId, csr.raw);
+  /**
+   * Runs `create` at most once per idempotency key within the idempotency
+   * window: a repeat returns the original certificate instead.
+   */
+  private async createOnce(
+    idemKey: string,
+    userId: string,
+    create: () => Promise<{ id: number; status: CertStatus }>,
+  ): Promise<CreateTlsCertResponse> {
     const store = await this.getIdempotencyStore();
     if (store) {
       const replay = await this.claimOrReplay(store, idemKey, userId);
@@ -177,26 +278,12 @@ export class TlsService {
     }
 
     try {
-      // Plan-based limit checks
-      await this.enforceCertLimits(userId);
-
-      const savedCsr = await this.TlsCrtRepository.save({
-        rawCsr: csr.raw,
-        parsedCsr: csr.parsed,
-        status: CertStatus.PENDING,
-        userId,
-      });
-      // Queue background job for ACME issuance
-      const jobPayload: TlsCertJobPayload = { certId: savedCsr.id };
-      await this.tlsCertQueue.add('tlsCertIssuance', jobPayload, {
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 5000 },
-      });
+      const saved = await create();
 
       if (store) {
         // Replace the pending marker with the cert id for replay lookups.
         await store
-          .set(idemKey, String(savedCsr.id), 'EX', IDEMPOTENCY_TTL_SECONDS)
+          .set(idemKey, String(saved.id), 'EX', IDEMPOTENCY_TTL_SECONDS)
           .catch((err: unknown) =>
             this.logger.warn(
               `Failed to store idempotency result for ${idemKey}: ${err instanceof Error ? err.message : String(err)}`,
@@ -204,11 +291,7 @@ export class TlsService {
           );
       }
 
-      const response: CreateTlsCertResponse = {
-        id: savedCsr.id,
-        status: savedCsr.status,
-      };
-      return response;
+      return { id: saved.id, status: saved.status };
     } catch (err) {
       // Release the idempotency claim so a corrected retry isn't blocked.
       if (store) {
@@ -329,8 +412,14 @@ export class TlsService {
     };
     return Promise.all(
       certs.map(async (cert) => {
-        // Only issued certificates have a renewal time; skip the plan lookup
-        if (!cert.expiresAt) return { ...cert, renewAfter: null };
+        // Without an expiry there is no window to apply, so skip the plan
+        // lookup: null, or the creation time for an awaiting_csr certificate
+        if (!cert.expiresAt) {
+          return {
+            ...cert,
+            renewAfter: renewAfter(cert, 0)?.toISOString() ?? null,
+          };
+        }
         const windowDays = certRenewalWindowDays(
           await planOf(cert.userId),
           cert.managedBy,
@@ -394,14 +483,23 @@ export class TlsService {
     return this.certUtilService.getChainInfo(cert.crtPem, cert.chainPem);
   }
 
-  async update(
-    id: number,
-    userId: string,
-    updateTlsCrtDto: UpdateTlsCrtDto,
-    status?: CertStatus,
-  ) {
+  /**
+   * Applies a user's PATCH. Only the fields UpdateTlsCrtDto declares are
+   * copied, so anything else on the object (for example a csrPem from a
+   * caller that skipped validation) never reaches the repository.
+   */
+  async update(id: number, userId: string, updateTlsCrtDto: UpdateTlsCrtDto) {
     const cert = await this.findOne(id, userId); // Verifies ownership
-    await this.TlsCrtRepository.update(cert.id, { ...updateTlsCrtDto, status });
+    const changes: Partial<Pick<TlsCrt, 'autoRenew' | 'managedBy'>> = {};
+    if (updateTlsCrtDto.autoRenew !== undefined) {
+      changes.autoRenew = updateTlsCrtDto.autoRenew;
+    }
+    if (updateTlsCrtDto.managedBy !== undefined) {
+      changes.managedBy = updateTlsCrtDto.managedBy;
+    }
+    // Nothing to change: skip the write (TypeORM rejects an empty update)
+    if (Object.keys(changes).length === 0) return cert;
+    await this.TlsCrtRepository.update(cert.id, changes);
     return this.findOne(id, userId);
   }
 
@@ -442,11 +540,7 @@ export class TlsService {
       });
 
       if (cert.user) {
-        const commonName =
-          (cert.parsedCsr?.subject?.find((a) => a.shortName === 'CN')
-            ?.value as string) ??
-          cert.parsedCsr?.extensions?.[0]?.altNames?.[0]?.value ??
-          `cert #${cert.id}`;
+        const commonName = certDisplayName(cert);
         await this.emailService.sendCertRevoked({
           userId: cert.user.id,
           username: cert.user.username,
@@ -479,17 +573,19 @@ export class TlsService {
 
   /**
    * Deletes a certificate record.
-   * Only failed or revoked certificates can be deleted.
+   * Only failed, revoked or awaiting_csr certificates can be deleted; none of
+   * them has a valid certificate the CA would need to revoke.
    */
   async remove(id: number, userId: string) {
     const cert = await this.findOne(id, userId);
 
     if (
       cert.status !== CertStatus.FAILED &&
-      cert.status !== CertStatus.REVOKED
+      cert.status !== CertStatus.REVOKED &&
+      cert.status !== CertStatus.AWAITING_CSR
     ) {
       throw new BadRequestException(
-        `Only failed or revoked certificates can be deleted. Current status: ${cert.status}`,
+        `Only failed, revoked or awaiting_csr certificates can be deleted. Current status: ${cert.status}`,
       );
     }
 
@@ -516,6 +612,9 @@ export class TlsService {
    * `ifDue`, a cert that is not yet inside its plan's renewal window is left
    * alone: nothing is queued and no quota is used. This lets clients call
    * renew from a daily timer without re-issuing every day.
+   *
+   * An awaiting_csr certificate is issued for the first time instead; see
+   * completeAwaitingCsr.
    */
   async renew(
     id: number,
@@ -523,6 +622,11 @@ export class TlsService {
     options: { ifDue?: boolean; csrPem?: string } = {},
   ): Promise<RenewTlsCertResponse> {
     const cert = await this.findOne(id, userId);
+
+    if (cert.status === CertStatus.AWAITING_CSR) {
+      // Never issued, so it is always due: ifDue does not apply
+      return this.completeAwaitingCsr(cert, userId, options.csrPem);
+    }
 
     if (cert.status !== CertStatus.ISSUED) {
       throw new BadRequestException(
@@ -584,18 +688,66 @@ export class TlsService {
   }
 
   /**
+   * Issues an awaiting_csr certificate with the connector's CSR, like a new
+   * request: the CSR gets the checks a new request gets, its names must
+   * equal requestedNames, the names must still be under the account's
+   * verified domains, and the plan limits apply. The certificate already
+   * holds its place in the total active and monthly counts, so it is left
+   * out of them. Then status goes pending -> issuing -> issued.
+   */
+  private async completeAwaitingCsr(
+    cert: TlsCrt,
+    userId: string,
+    csrPem: string | undefined,
+  ): Promise<RenewTlsCertResponse> {
+    if (!csrPem) {
+      throw new BadRequestException('This certificate is waiting for a CSR');
+    }
+
+    const csr = await this.csrUtilService.validateAndParse(csrPem);
+    if (!sameNames(certDnsNames(csr.parsed), cert.requestedNames ?? [])) {
+      throw new BadRequestException('CSR names must match the certificate');
+    }
+
+    // A domain may have lost its verification since the certificate was created
+    await this.authorizeNames(userId, csr.domains);
+
+    await this.enforceCertLimits(userId, { excludeCertId: cert.id });
+
+    // Only one CSR can complete it, even if two arrive at once
+    const result = await this.TlsCrtRepository.update(
+      { id: cert.id, status: CertStatus.AWAITING_CSR },
+      {
+        rawCsr: csr.raw,
+        // ParsedCsr has `unknown` values, which QueryDeepPartialEntity rejects
+        parsedCsr: csr.parsed as QueryDeepPartialEntity<ParsedCsr>,
+        status: CertStatus.PENDING,
+        failureReason: null,
+      },
+    );
+    if (result?.affected === 0) {
+      throw new ConflictException(
+        'This certificate is no longer waiting for a CSR',
+      );
+    }
+
+    const jobPayload: TlsCertJobPayload = { certId: cert.id };
+    await this.tlsCertQueue.add('tlsCertIssuance', jobPayload, {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5000 },
+    });
+
+    return { id: cert.id, status: CertStatus.PENDING, skipped: false };
+  }
+
+  /**
    * Validates a CSR given for renewal: the checks a new request gets
    * (format, signature, key type and strength), and the same names as the
    * certificate. Names are compared lowercased, deduplicated and sorted.
    */
   private async validateRenewalCsr(cert: TlsCrt, csrPem: string) {
     const csr = await this.csrUtilService.validateAndParse(csrPem);
-    const current = normalizedNames(certDnsNames(cert.parsedCsr));
-    const requested = normalizedNames(certDnsNames(csr.parsed));
-    if (
-      current.length !== requested.length ||
-      current.some((name, i) => name !== requested[i])
-    ) {
+    if (!sameNames(certDnsNames(cert.parsedCsr), certDnsNames(csr.parsed))) {
       throw new BadRequestException('CSR names must match the certificate');
     }
     return csr;
@@ -773,16 +925,26 @@ export class TlsService {
    * Enforces all cert-related plan limits for a user.
    * Counts are pooled across org members when applicable.
    * Throws HttpException(402) if any limit is exceeded.
+   *
+   * `concurrentPending: false` skips the concurrent pending check, for a
+   * request that queues nothing. `excludeCertId` leaves a certificate out of
+   * the total active and monthly counts, for one that is already counted.
    */
-  private async enforceCertLimits(userId: string): Promise<void> {
+  private async enforceCertLimits(
+    userId: string,
+    opts: { concurrentPending?: boolean; excludeCertId?: number } = {},
+  ): Promise<void> {
     const plan = (await this.billingService.resolveUserTier(
       userId,
     )) as SubscriptionPlan;
     const limits = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
     const memberIds = await this.billingService.getResourceCountUserIds(userId);
 
-    // Concurrent pending check
-    if (limits.concurrentPending !== Infinity) {
+    // Concurrent pending check (awaiting_csr is not in flight, so not counted)
+    if (
+      opts.concurrentPending !== false &&
+      limits.concurrentPending !== Infinity
+    ) {
       const pendingCount = await this.TlsCrtRepository.count({
         where: {
           userId: In(memberIds),
@@ -806,10 +968,17 @@ export class TlsService {
       }
     }
 
-    // Total active certs check
+    // Total active certs check: issued, plus awaiting_csr, which hold a
+    // place until the connector completes or the user deletes them
     if (limits.totalActiveCerts !== Infinity) {
       const activeCount = await this.TlsCrtRepository.count({
-        where: { userId: In(memberIds), status: CertStatus.ISSUED },
+        where: {
+          userId: In(memberIds),
+          status: In([CertStatus.ISSUED, CertStatus.AWAITING_CSR]),
+          ...(opts.excludeCertId !== undefined
+            ? { id: Not(opts.excludeCertId) }
+            : {}),
+        },
       });
       if (activeCount >= limits.totalActiveCerts) {
         throw new HttpException(
@@ -826,7 +995,10 @@ export class TlsService {
 
     // Monthly cert count check
     if (limits.certsPerMonth !== Infinity) {
-      const monthlyCount = await this.countCertsThisMonth(memberIds);
+      const monthlyCount = await this.countCertsThisMonth(
+        memberIds,
+        opts.excludeCertId,
+      );
       if (monthlyCount >= limits.certsPerMonth) {
         throw new HttpException(
           {
@@ -854,7 +1026,10 @@ export class TlsService {
     return members.map((m) => m.id);
   }
 
-  private async countCertsThisMonth(userIds: string[]): Promise<number> {
+  private async countCertsThisMonth(
+    userIds: string[],
+    excludeCertId?: number,
+  ): Promise<number> {
     const startOfMonth = new Date();
     startOfMonth.setUTCDate(1);
     startOfMonth.setUTCHours(0, 0, 0, 0);
@@ -863,6 +1038,7 @@ export class TlsService {
       where: {
         userId: In(userIds),
         createdAt: MoreThanOrEqual(startOfMonth),
+        ...(excludeCertId !== undefined ? { id: Not(excludeCertId) } : {}),
       },
     });
   }

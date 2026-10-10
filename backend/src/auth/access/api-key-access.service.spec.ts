@@ -98,6 +98,28 @@ describe('ApiKeyAccessService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
+    it('judges an awaiting_csr certificate by its requested names', async () => {
+      const awaitingLab = {
+        id: 10,
+        parsedCsr: null,
+        requestedNames: ['app.labxp.io', 'labxp.io'],
+      };
+      const awaitingEx = {
+        id: 11,
+        parsedCsr: null,
+        requestedNames: ['labxp.io', 'example.com'],
+      };
+      await expect(
+        service.assertCert(user, awaitingLab),
+      ).resolves.toBeUndefined();
+      await expect(service.assertCert(user, awaitingEx)).rejects.toThrow(
+        NotFoundException,
+      );
+      await expect(
+        service.filterCerts(user, [awaitingLab, awaitingEx]),
+      ).resolves.toEqual([awaitingLab]);
+    });
+
     it('limits new certificates to that domain', async () => {
       await expect(service.issuanceHostnames(user)).resolves.toEqual([
         'labxp.io',
@@ -163,6 +185,24 @@ describe('ApiKeyAccessService', () => {
       await expect(service.issuanceHostnames(user)).rejects.toThrow(
         ForbiddenException,
       );
+    });
+
+    it('can use an awaiting_csr certificate it is limited to', async () => {
+      // So a connector's key can complete it through renew
+      await expect(
+        service.assertCert(user, {
+          id: 2,
+          parsedCsr: null,
+          requestedNames: ['www.example.com'],
+        }),
+      ).resolves.toBeUndefined();
+      await expect(
+        service.assertCert(user, {
+          id: 12,
+          parsedCsr: null,
+          requestedNames: ['www.example.com'],
+        }),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('does not limit domains or endpoints', async () => {

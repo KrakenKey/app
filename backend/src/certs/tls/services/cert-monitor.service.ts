@@ -12,6 +12,7 @@ import { AlertsService } from '../../../notifications/channels/alerts.service';
 import { BillingService } from '../../../billing/billing.service';
 import { daysUntilExpiry, renewalWindowDays } from '../util/renewal-window';
 import { User } from '../../../users/entities/user.entity';
+import { certDisplayName } from '../util/cert-names';
 
 @Injectable()
 export class CertMonitorService {
@@ -127,11 +128,7 @@ export class CertMonitorService {
       }
 
       if (cert.user) {
-        const commonName =
-          (cert.parsedCsr?.subject?.find((a) => a.shortName === 'CN')
-            ?.value as string) ??
-          cert.parsedCsr?.extensions?.[0]?.altNames?.[0]?.value ??
-          `cert #${cert.id}`;
+        const commonName = certDisplayName(cert);
         await this.emailService.sendCertExpiryWarning({
           userId: cert.user.id,
           username: cert.user.username,

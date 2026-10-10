@@ -1,6 +1,7 @@
 import { CertStatus } from '@krakenkey/shared';
 
 export const STATUS_LABEL: Record<CertStatus, string> = {
+  [CertStatus.AWAITING_CSR]: 'Awaiting CSR',
   [CertStatus.PENDING]: 'Pending',
   [CertStatus.ISSUING]: 'Issuing',
   [CertStatus.ISSUED]: 'Issued',
@@ -14,6 +15,7 @@ export const STATUS_BADGE_VARIANT: Record<
   CertStatus,
   'success' | 'warning' | 'danger' | 'info' | 'neutral'
 > = {
+  [CertStatus.AWAITING_CSR]: 'neutral',
   [CertStatus.PENDING]: 'neutral',
   [CertStatus.ISSUING]: 'info',
   [CertStatus.ISSUED]: 'success',
@@ -24,11 +26,12 @@ export const STATUS_BADGE_VARIANT: Record<
 };
 
 export const STATUS_ORDER: Record<string, number> = {
-  [CertStatus.PENDING]: 0,
-  [CertStatus.ISSUING]: 1,
-  [CertStatus.ISSUED]: 2,
-  [CertStatus.RENEWING]: 3,
-  [CertStatus.REVOKING]: 4,
-  [CertStatus.REVOKED]: 5,
-  [CertStatus.FAILED]: 6,
+  [CertStatus.AWAITING_CSR]: 0,
+  [CertStatus.PENDING]: 1,
+  [CertStatus.ISSUING]: 2,
+  [CertStatus.ISSUED]: 3,
+  [CertStatus.RENEWING]: 4,
+  [CertStatus.REVOKING]: 5,
+  [CertStatus.REVOKED]: 6,
+  [CertStatus.FAILED]: 7,
 };

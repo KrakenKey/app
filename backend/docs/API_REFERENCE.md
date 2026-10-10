@@ -391,9 +391,9 @@ All endpoints require authentication. Write operations require `owner`, `admin`,
 
 ### POST /certs/tls
 
-Submit a Certificate Signing Request for issuance.
+Submit a Certificate Signing Request for issuance, or create a [pending certificate](#pending-certificates) that a connector issues with its own key. Send exactly one of `csrPem` and `names`; both or neither return `400`.
 
-**Request:**
+**Request (CSR):**
 ```json
 {
   "csrPem": "-----BEGIN CERTIFICATE REQUEST-----\nMIIC...\n-----END CERTIFICATE REQUEST-----"
@@ -411,15 +411,40 @@ Submit a Certificate Signing Request for issuance.
 ```json
 {
   "id": 42,
-  "status": "pending",
-  "parsedCsr": {
-    "subject": [{"shortName": "CN", "value": "example.com"}],
-    "extensions": [{"name": "subjectAltName", "altNames": [...]}],
-    "publicKeyLength": 4096
-  },
-  "createdAt": "2026-03-27T10:00:00.000Z"
+  "status": "pending"
 }
 ```
+
+#### Pending certificates
+
+A connector keeps its private keys on its own machine, so it can't hand a CSR to the dashboard. Instead the certificate is created from its names, and the connector completes it later with a CSR made with its own key.
+
+**Request (names):**
+```json
+{
+  "names": ["example.com", "www.example.com"],
+  "managedBy": "connector"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `names` | string[] | 1 to 100 DNS names; a leading `*.` wildcard is allowed. IP addresses, trailing dots and other forms return `400`. Names are lowercased and duplicates dropped; the order is kept. |
+| `managedBy` | `"connector"` | Required with `names`. Any other value, or leaving it out, returns `400`. `managedBy` is not accepted with `csrPem`; use [PATCH](#patch-certstlsid) on an existing certificate. |
+
+The names get the same checks a CSR's names get: each must be one of the account's (or organization's) verified domains or a subdomain of one (`400` otherwise, and `400` when no domain is verified), and an API key limited to domains may only use names under them (`403`). An API key limited to certificates cannot create one (`403`).
+
+The certificate is created with status `awaiting_csr`, `rawCsr` and `parsedCsr` `null`, `requestedNames` set, `managedBy: "connector"` and `autoRenew: false`. Nothing is sent to the CA. It counts toward the total active certificate and monthly limits, but not the concurrent pending limit. A repeat of the same set of names within 15 minutes returns the original certificate, like a repeated CSR.
+
+**Response** (201):
+```json
+{
+  "id": 43,
+  "status": "awaiting_csr"
+}
+```
+
+The connector completes it with [`POST /certs/tls/:id/renew`](#post-certstlsidrenew) and a `csrPem` whose names equal `requestedNames`. Until then it can be deleted. See [CERTIFICATE_FLOW.md](CERTIFICATE_FLOW.md#pending-certificates) for the whole flow.
 
 ### GET /certs/tls
 
@@ -447,12 +472,14 @@ Get certificate details and status.
 
 `managedBy` is `"connector"` when a customer-hosted connector renews the certificate (see [PATCH /certs/tls/:id](#patch-certstlsid)), otherwise `null`.
 
+`requestedNames` is the list of names a [pending certificate](#pending-certificates) was created with, and stays set after the connector's CSR arrives. It is `null` for certificates requested with a CSR. While a certificate is `awaiting_csr`, `rawCsr` and `parsedCsr` are `null`, so read its names from `requestedNames`.
+
 `renewAfter` (ISO 8601) is when the certificate will be renewed:
 
 - **Connector-managed certificates:** the earlier of `expiresAt` minus the renewal window and the start of the CA's suggested window (`ariWindowStart`, see [ACME Renewal Information](CERTIFICATE_FLOW.md#acme-renewal-information-ari)), routine or early, since the connector follows the CA's suggestion. The renewal window is the owner's plan window but at least 30 days on every plan.
 - **Other certificates:** `expiresAt` minus the plan's renewal window (Free: 5 days, paid plans: 30 days). `ariWindowStart` only counts, when it is earlier, once the CA has asked for early replacement (`ariReplacementRequestedAt` set), because that is the only time KrakenKey renews early. A routine ARI window does not move it.
 
-It is computed on each read, and is `null` when the certificate has no expiry yet (not issued) or is revoked. `GET /certs/tls` and `PATCH /certs/tls/:id` return the same two fields.
+It is computed on each read, and is `null` when the certificate has no expiry yet (not issued) or is revoked. For an `awaiting_csr` certificate it is the creation time: the certificate is due now. `GET /certs/tls` and `PATCH /certs/tls/:id` return the same two fields.
 
 `rawCsr` and internal fields are excluded from API responses.
 
@@ -510,6 +537,8 @@ Update certificate metadata. Needs the `certs:renew` scope. Returns the updated 
 | `autoRenew` | boolean | Turn KrakenKey's automatic renewal on or off. |
 | `managedBy` | `"connector"` or `null` | `"connector"` hands renewal to a customer-hosted connector that keeps the private key and renews with a new CSR (see [renew](#post-certstlsidrenew)). KrakenKey then never renews the certificate on its own: the daily auto-renewal and ARI early replacement both skip it, whatever `autoRenew` says. Expiry warnings, `cert.expiring` and `cert.replacement_requested` alerts and ARI checks still run. `null` hands renewal back to KrakenKey. Any other value returns `400`. |
 
+Other fields are ignored and never stored, the same as on every other route. In particular a `csrPem` here does not change the certificate's CSR; to renew with a new CSR, send it to [`POST /certs/tls/:id/renew`](#post-certstlsidrenew).
+
 ### POST /certs/tls/:id/renew
 
 Manually queue a renewal for an `issued` certificate. Creates a new ACME order using the stored CSR, or a new one from the request body. By default the renewal always runs, whatever the expiry date, so it can be used to replace a certificate right away (for example after a key compromise). Each renewal counts against the monthly certificate limit.
@@ -528,6 +557,16 @@ Without a body, the CSR stored at first issuance is used again, so the key stays
 - Once the renewal is queued, the new CSR replaces the stored one, so later renewals (and a retry after a failed renewal) use it. When `ifDue=true` skips the renewal, or a plan limit refuses it, the stored CSR is left unchanged.
 
 Scope (`certs:renew`), roles, API key limits and rate limit category are the same with or without a body.
+
+**Completing a pending certificate.** For an `awaiting_csr` certificate (see [pending certificates](#pending-certificates)) the body is required: without `csrPem` the response is `400` `This certificate is waiting for a CSR`. The CSR gets the checks above, its names must equal `requestedNames` (same comparison, `400` `CSR names must match the certificate` otherwise), and they must still be under the account's verified domains. Then it is issued like a new request: the CSR is stored, the status goes `pending` -> `issuing` -> `issued`, a `cert.issued` alert is sent, and the concurrent pending and monthly limits apply (the certificate itself already holds its place in the total active and monthly counts). `ifDue=true` always treats it as due. `certs:renew` is enough, so an API key limited to that certificate (`allowedCertIds`) can complete it. If two requests race, one gets `409`.
+
+```json
+{
+  "id": 43,
+  "status": "pending",
+  "skipped": false
+}
+```
 
 **Query parameters:**
 
@@ -579,12 +618,13 @@ Revoke an issued certificate via ACME.
 
 ### DELETE /certs/tls/:id
 
-Delete a certificate record. Only `failed` or `revoked` certificates can be deleted.
+Delete a certificate record. Only `failed`, `revoked` or `awaiting_csr` certificates can be deleted.
 
 ### Certificate Status Values
 
 | Status | Description |
 |--------|-------------|
+| `awaiting_csr` | Created from names; waiting for a connector's CSR. Not sent to the CA. |
 | `pending` | CSR received, job queued |
 | `issuing` | ACME workflow running |
 | `issued` | Certificate issued successfully |
