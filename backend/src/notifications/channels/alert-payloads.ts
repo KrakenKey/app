@@ -3,13 +3,17 @@ import type { AlertEvent } from '@krakenkey/shared';
 
 export type AlertDeliveryEvent = AlertEvent | 'test';
 
-export type AlertResourceType = 'certificate' | 'domain' | 'endpoint';
+export type AlertResourceType =
+  | 'certificate'
+  | 'domain'
+  | 'endpoint'
+  | 'connector';
 
 export type AlertDetailValue = string | number | boolean | null;
 
 /** What a call site passes to AlertsService.emit. */
 export interface AlertPayload {
-  /** Cert common name, domain hostname or endpoint host:port. */
+  /** Cert common name, domain hostname, endpoint host:port or connector name. */
   subject: string;
   resource?: { type: AlertResourceType; id: string | number };
   /** Short facts, keyed in camelCase (rendered as labels for chat). */
@@ -34,6 +38,8 @@ export const ALERT_TITLES: Record<AlertDeliveryEvent, string> = {
   'cert.replacement_requested': 'Certificate replacement requested by the CA',
   'domain.verification_failed': 'Domain verification failed',
   'endpoint.scan_failed': 'Endpoint scan failing',
+  'deploy.failed': 'Certificate deployment failed',
+  'connector.stale': 'Connector not seen for 24 hours',
   test: 'Test notification from KrakenKey',
 };
 
@@ -41,6 +47,7 @@ const DASHBOARD_PATHS: Record<AlertResourceType, string> = {
   certificate: '/dashboard/certificates',
   domain: '/dashboard/domains',
   endpoint: '/dashboard/endpoints',
+  connector: '/dashboard/connectors',
 };
 
 /** Dashboard page for the alert's resource (same host as email links). */

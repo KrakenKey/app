@@ -8,6 +8,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -20,8 +21,10 @@ import {
 import type { Request } from 'express';
 import type {
   Connector,
+  ConnectorDeployment,
   ConnectorEnrolResponse,
   ConnectorEnrolmentTokenResponse,
+  ConnectorReportResponse,
   ConnectorTokenResponse,
   CreateConnectorResponse,
 } from '@krakenkey/shared';
@@ -32,6 +35,11 @@ import type { RequestWithUser } from '../auth/interfaces/request-with-user.inter
 import { RateLimitCategoryDecorator } from '../throttler/decorators/rate-limit-category.decorator';
 import { RateLimitCategory } from '../throttler/interfaces/rate-limit-category.enum';
 import { ConnectorsService } from './connectors.service';
+import { ConnectorReportsService } from './connector-reports.service';
+import {
+  ConnectorDeploymentsQueryDto,
+  ConnectorReportDto,
+} from './dto/connector-report.dto';
 import {
   ConnectorEnrolDto,
   ConnectorRotateDto,
@@ -43,7 +51,10 @@ import {
 @Controller('connectors')
 @ApiTags('Connectors')
 export class ConnectorsController {
-  constructor(private readonly connectors: ConnectorsService) {}
+  constructor(
+    private readonly connectors: ConnectorsService,
+    private readonly reports: ConnectorReportsService,
+  ) {}
 
   // --- Dashboard ------------------------------------------------------------
 
@@ -57,18 +68,39 @@ export class ConnectorsController {
     return this.connectors.list(req.user.userId);
   }
 
+  // Declared before :id so "deployments" isn't taken for an id
+  @Get('deployments')
+  @UseGuards(JwtOrApiKeyGuard)
+  @RequireScope('account:read')
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      "Where a certificate is deployed, across the user's active connectors",
+  })
+  @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
+  deployments(
+    @Req() req: RequestWithUser,
+    @Query() query: ConnectorDeploymentsQueryDto,
+  ): Promise<ConnectorDeployment[]> {
+    return this.reports.forCertificate(req.user.userId, query.certificateId);
+  }
+
   @Get(':id')
   @UseGuards(JwtOrApiKeyGuard)
   @RequireScope('account:read')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get a connector' })
+  @ApiOperation({ summary: 'Get a connector with its deployments' })
   @ApiResponse({ status: 404, description: 'Connector not found' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
-  get(
+  async get(
     @Req() req: RequestWithUser,
     @Param('id', new ParseUUIDPipe()) id: string,
   ): Promise<Connector> {
-    return this.connectors.get(req.user.userId, id);
+    const connector = await this.connectors.get(req.user.userId, id);
+    return {
+      ...connector,
+      deployments: await this.reports.forConnector(connector),
+    };
   }
 
   @Post()
@@ -146,6 +178,31 @@ export class ConnectorsController {
     @Param('id', new ParseUUIDPipe()) id: string,
   ): Promise<void> {
     await this.connectors.revoke(req.user.userId, id);
+  }
+
+  // --- Connector (connector-issued key) ---------------------------------------
+
+  @Post('report')
+  @UseGuards(JwtOrApiKeyGuard)
+  @RequireScope('certs:read')
+  @HttpCode(200)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Report where the connector deployed each certificate (connector-issued keys only)',
+  })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Stored; certificates outside the connector restrictions are skipped and listed in rejectedCertificateIds',
+  })
+  @ApiResponse({ status: 403, description: 'Not a connector-issued key' })
+  @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
+  report(
+    @Req() req: RequestWithUser,
+    @Body() dto: ConnectorReportDto,
+  ): Promise<ConnectorReportResponse> {
+    return this.reports.report(req.user, dto);
   }
 
   // --- Connector (no bearer token) -------------------------------------------

@@ -122,6 +122,8 @@ describe('Notification channels (e2e)', () => {
         'cert.replacement_requested',
         'domain.verification_failed',
         'endpoint.scan_failed',
+        'deploy.failed',
+        'connector.stale',
       ],
     });
     expect(res.body.secret).toBeUndefined();

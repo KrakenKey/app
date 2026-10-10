@@ -16,6 +16,8 @@ import {
   welcomeTemplate,
   activationReminderTemplate,
   apiKeyExpiredUseTemplate,
+  deployFailedTemplate,
+  connectorStaleTemplate,
 } from './templates';
 import type { EmailBranding, EmailContent } from './templates';
 import { User } from '../users/entities/user.entity';
@@ -75,6 +77,42 @@ export interface ApiKeyExpiredUseContext {
   keyId: string;
   keyName: string;
   ip?: string;
+}
+
+export interface DeployFailure {
+  certificateId: number;
+  /** Certificate common name, when known. */
+  commonName?: string;
+  label: string;
+  state: string;
+  error?: string | null;
+  serial?: string | null;
+}
+
+export interface DeployFailedContext {
+  userId?: string;
+  username: string;
+  email: string;
+  connectorName: string;
+  clientLabel?: string | null;
+  /** The failures to show; may be fewer than total. */
+  failures: DeployFailure[];
+  /** Every target that failed in the report. */
+  total: number;
+}
+
+export interface StaleConnector {
+  name: string;
+  clientLabel?: string | null;
+  lastSeenAt: Date | null;
+  version?: string | null;
+}
+
+export interface ConnectorStaleContext {
+  userId?: string;
+  username: string;
+  email: string;
+  connectors: StaleConnector[];
 }
 
 @Injectable()
@@ -292,6 +330,31 @@ export class EmailService {
       ctx.email,
       `Plan limit reached: ${ctx.resourceType}`,
       planLimitReachedTemplate(ctx, this.brand),
+    );
+  }
+
+  async sendDeployFailed(ctx: DeployFailedContext): Promise<void> {
+    if (!(await this.shouldSend(ctx.userId, NotificationType.DEPLOY_FAILED)))
+      return;
+    const first = ctx.failures[0];
+    const subject =
+      ctx.total === 1 && first
+        ? `Deployment failed: ${first.commonName ?? `certificate #${first.certificateId}`} on ${ctx.connectorName}`
+        : `Deployment failed on ${ctx.total} targets: ${ctx.connectorName}`;
+    await this.send(ctx.email, subject, deployFailedTemplate(ctx, this.brand));
+  }
+
+  async sendConnectorStale(ctx: ConnectorStaleContext): Promise<void> {
+    if (!(await this.shouldSend(ctx.userId, NotificationType.CONNECTOR_STALE)))
+      return;
+    const subject =
+      ctx.connectors.length === 1
+        ? `Connector not seen for 24 hours: ${ctx.connectors[0].name}`
+        : `${ctx.connectors.length} connectors not seen for 24 hours`;
+    await this.send(
+      ctx.email,
+      subject,
+      connectorStaleTemplate(ctx, this.brand),
     );
   }
 

@@ -25,6 +25,12 @@ export const CONNECTOR_KEY_TTL_SECONDS = 60 * 60;
 /** Largest accepted difference between a signed timestamp and server time. */
 export const CONNECTOR_MAX_CLOCK_SKEW_SECONDS = 300;
 
+/**
+ * An enrolled connector not seen for this long gets one `connector.stale`
+ * alert.
+ */
+export const CONNECTOR_STALE_AFTER_HOURS = 24;
+
 /** How long a used nonce is remembered, per connector. */
 export const CONNECTOR_NONCE_TTL_SECONDS = 600;
 
@@ -157,4 +163,60 @@ export interface ConnectorRotateRequest {
   timestamp: string;
   nonce: string;
   signature: string;
+}
+
+/** Upper bounds on `POST /connectors/report`. */
+export const CONNECTOR_REPORT_LIMITS = {
+  certificates: 500,
+  targetsPerCertificate: 50,
+  errorLength: 200,
+  serialLength: 64,
+  labelLength: 64,
+} as const;
+
+/** Target labels: letters, digits, `.`, `_` and `-`, 1 to 64 characters. */
+export const CONNECTOR_TARGET_LABEL_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+
+/** States that raise a `deploy.failed` alert when a target enters them. */
+export const CONNECTOR_FAILED_STATES: ConnectorDeploymentState[] = [
+  'failed',
+  'rolled_back',
+];
+
+export interface ConnectorReportTarget {
+  label: string;
+  state: ConnectorDeploymentState;
+  /** Hex, at most 64 characters. */
+  serial?: string | null;
+  /** Short, sanitised error code or message, at most 200 characters. */
+  error?: string | null;
+  /** RFC 3339, e.g. `2026-10-10T14:00:00.000Z`. */
+  updatedAt: string;
+}
+
+export interface ConnectorReportCertificate {
+  certificateId: number;
+  /**
+   * Every target the connector deploys this certificate to. Targets missing
+   * here are removed; an empty list removes them all.
+   */
+  targets: ConnectorReportTarget[];
+}
+
+/** `POST /connectors/report`, with a key issued to the connector. */
+export interface ConnectorReportRequest {
+  version: string;
+  os: string;
+  arch: string;
+  certificates: ConnectorReportCertificate[];
+}
+
+/**
+ * Response to `POST /connectors/report`. `accepted` counts the certificates
+ * stored; certificates the connector may not use (outside its restrictions
+ * or not owned by its user) are skipped and listed.
+ */
+export interface ConnectorReportResponse {
+  accepted: number;
+  rejectedCertificateIds: number[];
 }

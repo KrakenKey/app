@@ -6,6 +6,8 @@ import { EmailService } from './email.service';
 import type {
   CertEmailContext,
   DomainVerificationFailedContext,
+  DeployFailedContext,
+  ConnectorStaleContext,
 } from './email.service';
 import { User } from '../users/entities/user.entity';
 // Use string literals to avoid barrel re-export resolution issues in Jest
@@ -16,6 +18,8 @@ const NotificationType = {
   CERT_EXPIRY_WARNING: 'cert_expiry_warning',
   CERT_REVOKED: 'cert_revoked',
   DOMAIN_VERIFICATION_FAILED: 'domain_verification_failed',
+  DEPLOY_FAILED: 'deploy_failed',
+  CONNECTOR_STALE: 'connector_stale',
 } as const;
 
 jest.mock('nodemailer');
@@ -41,6 +45,39 @@ describe('EmailService', () => {
     email: 'test@example.com',
     hostname: 'example.com',
     verificationCode: 'krakenkey-site-verification=abc',
+  };
+
+  const deployCtx: DeployFailedContext = {
+    userId: 'u1',
+    username: 'testuser',
+    email: 'test@example.com',
+    connectorName: 'web-01',
+    clientLabel: 'Acme',
+    failures: [
+      {
+        certificateId: 7,
+        commonName: 'web.example.com',
+        label: 'nginx-main',
+        state: 'failed',
+        error: 'reload_failed',
+        serial: '04ab',
+      },
+    ],
+    total: 1,
+  };
+
+  const staleCtx: ConnectorStaleContext = {
+    userId: 'u1',
+    username: 'testuser',
+    email: 'test@example.com',
+    connectors: [
+      {
+        name: 'web-01',
+        clientLabel: null,
+        lastSeenAt: new Date(Date.now() - 30 * 3600_000 - 60_000),
+        version: '0.2.0',
+      },
+    ],
   };
 
   beforeEach(async () => {
@@ -288,6 +325,18 @@ describe('EmailService', () => {
         NotificationType.DOMAIN_VERIFICATION_FAILED,
         domainCtx,
       ],
+      [
+        'sendDeployFailed',
+        'sendDeployFailed',
+        NotificationType.DEPLOY_FAILED,
+        deployCtx,
+      ],
+      [
+        'sendConnectorStale',
+        'sendConnectorStale',
+        NotificationType.CONNECTOR_STALE,
+        staleCtx,
+      ],
     ];
 
     it.each(cases)(
@@ -303,6 +352,87 @@ describe('EmailService', () => {
         expect(mockSendMail).not.toHaveBeenCalled();
       },
     );
+  });
+
+  describe('connector emails', () => {
+    const sent = () =>
+      mockSendMail.mock.calls[0][0] as {
+        subject: string;
+        html: string;
+        text: string;
+      };
+
+    beforeEach(() => {
+      mockUserRepo.findOne.mockResolvedValue({
+        id: 'u1',
+        notificationPreferences: {},
+      });
+    });
+
+    it('describes a single failed deployment', async () => {
+      await service.sendDeployFailed(deployCtx);
+      const { subject, html, text } = sent();
+      expect(subject).toBe('Deployment failed: web.example.com on web-01');
+      for (const part of [
+        'web-01',
+        'Acme',
+        'web.example.com',
+        'nginx-main',
+        'reload_failed',
+        '04ab',
+      ]) {
+        expect(text).toContain(part);
+      }
+      expect(text).toContain('Failed');
+      expect(html).toContain('/dashboard/certificates');
+      expect(html).toContain('/settings');
+    });
+
+    it('summarises many failures and says how many are not shown', async () => {
+      await service.sendDeployFailed({
+        ...deployCtx,
+        failures: [
+          { ...deployCtx.failures[0], state: 'rolled_back' },
+          { ...deployCtx.failures[0], label: 'haproxy', commonName: undefined },
+        ],
+        total: 12,
+      });
+      const { subject, text } = sent();
+      expect(subject).toBe('Deployment failed on 12 targets: web-01');
+      expect(text).toContain('Rolled back');
+      expect(text).toContain('web.example.com (#7)');
+      expect(text).toContain('certificate #7');
+      expect(text).toContain('10 more not shown');
+    });
+
+    it('escapes connector-supplied values', async () => {
+      await service.sendDeployFailed({
+        ...deployCtx,
+        connectorName: '<b>x</b>',
+        failures: [{ ...deployCtx.failures[0], error: '<img src=x>' }],
+      });
+      expect(sent().html).not.toContain('<img src=x>');
+      expect(sent().html).not.toContain('<b>x</b>');
+    });
+
+    it('lists stale connectors with when they were last seen', async () => {
+      await service.sendConnectorStale(staleCtx);
+      expect(sent().subject).toBe('Connector not seen for 24 hours: web-01');
+      expect(sent().text).toContain('30 hours ago');
+      expect(sent().text).toContain('0.2.0');
+
+      mockSendMail.mockClear();
+      await service.sendConnectorStale({
+        ...staleCtx,
+        connectors: [
+          ...staleCtx.connectors,
+          { name: 'db-01', lastSeenAt: null, clientLabel: 'Acme' },
+        ],
+      });
+      expect(sent().subject).toBe('2 connectors not seen for 24 hours');
+      expect(sent().text).toContain('db-01');
+      expect(sent().text).toContain('never');
+    });
   });
 
   describe('content and branding', () => {

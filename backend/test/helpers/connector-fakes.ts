@@ -123,6 +123,47 @@ export class FakeConnectorRepo {
   }
 }
 
+/** connector_deployment, keyed by (connectorId, certificateId, label). */
+export class FakeDeploymentRepo {
+  rows: Row[] = [];
+
+  async find({ where }: { where: Row }): Promise<Row[]> {
+    return this.rows
+      .filter((r) => matches(r, where))
+      .sort(
+        (a, b) =>
+          a.connectorId.localeCompare(b.connectorId) ||
+          a.certificateId - b.certificateId ||
+          a.label.localeCompare(b.label),
+      )
+      .map((r) => ({ ...r }));
+  }
+
+  async delete(criteria: Row[]) {
+    const before = this.rows.length;
+    this.rows = this.rows.filter((r) => !criteria.some((c) => matches(r, c)));
+    return { affected: before - this.rows.length };
+  }
+
+  async upsert(rows: Row[], keys: string[]) {
+    for (const row of rows) {
+      const i = this.rows.findIndex((r) => keys.every((k) => r[k] === row[k]));
+      if (i >= 0) this.rows[i] = { ...row };
+      else this.rows.push({ ...row });
+    }
+  }
+}
+
+/** Any repository that only needs find() over fixed rows. */
+export function fixedRepo(rows: Row[]) {
+  return {
+    find: async ({ where }: { where: Row }) =>
+      rows.filter((r) => matches(r, where)).map((r) => ({ ...r })),
+    findOne: async ({ where }: { where: Row }) =>
+      rows.find((r) => matches(r, where)) ?? null,
+  };
+}
+
 export interface FakeKey {
   id: string;
   user: { id: string; groups: string[] };

@@ -5,6 +5,8 @@ import type {
   WelcomeContext,
   ActivationReminderContext,
   ApiKeyExpiredUseContext,
+  DeployFailedContext,
+  ConnectorStaleContext,
 } from '../email.service';
 
 export interface EmailContent {
@@ -243,6 +245,8 @@ function render(spec: EmailSpec, brand: EmailBranding): EmailContent {
 const CERT_REASON =
   'You received this because certificate notifications are on for your KrakenKey account.';
 const ACCOUNT_REASON = 'You received this email about your KrakenKey account.';
+const CONNECTOR_REASON =
+  'You received this because connector notifications are on for your KrakenKey account.';
 const SECURITY_REASON =
   'This is a security notice about your KrakenKey account and is always sent.';
 
@@ -587,6 +591,145 @@ export function apiKeyExpiredUseTemplate(
         button('Manage API keys', `${brand.appUrl}/dashboard/api-keys`),
       ],
       reason: SECURITY_REASON,
+    },
+    brand,
+  );
+}
+
+/** How long ago, in words: "3 days", "26 hours". */
+function ago(date: Date, now = new Date()): string {
+  const hours = Math.max(
+    1,
+    Math.floor((now.getTime() - date.getTime()) / 3_600_000),
+  );
+  if (hours < 48) return `${hours} hours`;
+  return `${Math.floor(hours / 24)} days`;
+}
+
+function stateLabel(state: string): string {
+  return state === 'rolled_back' ? 'Rolled back' : 'Failed';
+}
+
+export function deployFailedTemplate(
+  ctx: DeployFailedContext,
+  brand: EmailBranding,
+): EmailContent {
+  const one = ctx.total === 1 && ctx.failures.length === 1;
+  const first = ctx.failures[0];
+  const certName = (f: (typeof ctx.failures)[number]) =>
+    f.commonName ?? `certificate #${f.certificateId}`;
+  const blocks = one
+    ? [
+        para(
+          `Hi ${ctx.username}, the connector ${ctx.connectorName} could not install a certificate on one of its targets${first.state === 'rolled_back' ? ' and rolled the target back to its previous certificate' : ''}.`,
+        ),
+        details(
+          ['Connector', ctx.connectorName],
+          ['Client', ctx.clientLabel ?? undefined],
+          ['Certificate', certName(first), true],
+          ['Certificate ID', String(first.certificateId), true],
+          ['Target', first.label, true],
+          ['State', stateLabel(first.state)],
+          ['Error', first.error ?? undefined, true],
+          ['Serial', first.serial ?? undefined, true],
+        ),
+      ]
+    : [
+        para(
+          `Hi ${ctx.username}, the connector ${ctx.connectorName} could not install certificates on ${ctx.total} targets.`,
+        ),
+        details(
+          ['Connector', ctx.connectorName],
+          ['Client', ctx.clientLabel ?? undefined],
+        ),
+        ...ctx.failures.map((f) =>
+          details(
+            [
+              'Certificate',
+              f.commonName
+                ? `${f.commonName} (#${f.certificateId})`
+                : certName(f),
+              true,
+            ],
+            ['Target', f.label, true],
+            ['State', stateLabel(f.state)],
+            ['Error', f.error ?? undefined, true],
+          ),
+        ),
+        ...(ctx.total > ctx.failures.length
+          ? [
+              para(
+                `${ctx.total - ctx.failures.length} more not shown. Each certificate's page lists where it is deployed.`,
+              ),
+            ]
+          : []),
+      ];
+  return render(
+    {
+      tone: 'danger',
+      label: 'Deployment failed',
+      title: one
+        ? `${certName(first)} was not deployed to ${first.label}`
+        : `Deployment failed on ${ctx.total} targets`,
+      preheader: `The connector ${ctx.connectorName} reported a failed deployment.`,
+      blocks: [
+        ...blocks,
+        para(
+          'Check the connector logs on that machine for details. The connector retries on its next run; this alert is sent again only if a target fails again after recovering.',
+        ),
+        button('View certificates', `${brand.appUrl}/dashboard/certificates`),
+      ],
+      reason: CONNECTOR_REASON,
+      manageable: true,
+    },
+    brand,
+  );
+}
+
+export function connectorStaleTemplate(
+  ctx: ConnectorStaleContext,
+  brand: EmailBranding,
+): EmailContent {
+  const one = ctx.connectors.length === 1;
+  const c = ctx.connectors[0];
+  const rows = (x: (typeof ctx.connectors)[number]) =>
+    details(
+      ['Connector', x.name],
+      ['Client', x.clientLabel ?? undefined],
+      [
+        'Last seen',
+        x.lastSeenAt
+          ? `${formatDate(x.lastSeenAt)} (${ago(x.lastSeenAt)} ago)`
+          : 'never',
+      ],
+      ['Version', x.version ?? undefined, true],
+    );
+  return render(
+    {
+      tone: 'warning',
+      label: 'Connector offline',
+      title: one
+        ? `${c.name} hasn't checked in for a day`
+        : `${ctx.connectors.length} connectors haven't checked in for a day`,
+      preheader:
+        'Certificates it manages will not be renewed or installed until it is back.',
+      blocks: [
+        para(
+          one
+            ? `Hi ${ctx.username}, the connector ${c.name} hasn't contacted KrakenKey for more than 24 hours. While it is offline, the certificates it manages are not renewed or installed.`
+            : `Hi ${ctx.username}, these connectors haven't contacted KrakenKey for more than 24 hours. While they are offline, the certificates they manage are not renewed or installed.`,
+        ),
+        ...ctx.connectors.map(rows),
+        para(
+          'Check that the machine is running, that the connector service is started, and that it can reach the KrakenKey API. If you retired it, revoke it in the dashboard.',
+        ),
+        button('View connectors', `${brand.appUrl}/dashboard/connectors`),
+        para(
+          'You get this once per outage. It is sent again only if the connector comes back and then goes quiet again.',
+        ),
+      ],
+      reason: CONNECTOR_REASON,
+      manageable: true,
     },
     brand,
   );

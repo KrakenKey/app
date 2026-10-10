@@ -42,7 +42,7 @@ A key can be limited when it is created. None of the limits can be changed after
 
 | Scope | Routes |
 | --- | --- |
-| `certs:read` | `GET /certs/tls`, `GET /certs/tls/:id`, `/details`, `/chain` |
+| `certs:read` | `GET /certs/tls`, `GET /certs/tls/:id`, `/details`, `/chain`; `POST /connectors/report` (connector-issued keys only) |
 | `certs:issue` | `POST /certs/tls`, `POST /certs/tls/:id/retry` |
 | `certs:renew` | `POST /certs/tls/:id/renew`, `PATCH /certs/tls/:id` |
 | `certs:revoke` | `POST /certs/tls/:id/revoke`, `DELETE /certs/tls/:id` |
@@ -51,7 +51,7 @@ A key can be limited when it is created. None of the limits can be changed after
 | `endpoints:read` | `GET /endpoints`, `GET /endpoints/:id`, results, export, latest, `GET /endpoints/probes/mine` |
 | `endpoints:write` | every other `/endpoints` route (create, update, delete, probes, regions, scan) |
 | `probes:report` | `POST /probes/register`, `POST /probes/report`, `GET /probes/:probeId/config` |
-| `account:read` | `GET /auth/profile`, `GET /auth/api-keys`, `GET /users/:id`, `GET /billing/subscription`, `POST /billing/upgrade/preview`, `GET /organizations/:id`, `GET /connectors`, `GET /connectors/:id` |
+| `account:read` | `GET /auth/profile`, `GET /auth/api-keys`, `GET /users/:id`, `GET /billing/subscription`, `POST /billing/upgrade/preview`, `GET /organizations/:id`, `GET /connectors`, `GET /connectors/:id`, `GET /connectors/deployments` |
 | `account:write` | `PATCH /auth/profile`, `POST /auth/confirm-auto-renewal`, `POST /feedback` |
 
 The dashboard and CLI offer presets: **read-only** (`certs:read`, `domains:read`, `endpoints:read`, `account:read`), **cert renewal** (`certs:read`, `certs:renew`, `account:read`), **probe** (`probes:report`) and **full** (no scopes). The lists live in `API_KEY_SCOPES` and `API_KEY_PRESETS` in `@krakenkey/shared`. A new route is refused to scoped keys until it declares a scope with `@RequireScope()`, and `require-scope.coverage.spec.ts` fails if a route that accepts keys declares neither a scope nor `@SessionOnly()`.
@@ -802,7 +802,8 @@ Connectors belong to the user who creates them, like API keys and GitHub trust p
 | Method | Path | Auth | Rate limit | Description |
 |--------|------|------|------------|-------------|
 | GET | `/connectors` | JWT or key with `account:read` | read | List connectors, revoked ones included |
-| GET | `/connectors/:id` | JWT or key with `account:read` | read | Get one connector |
+| GET | `/connectors/:id` | JWT or key with `account:read` | read | Get one connector with its deployments |
+| GET | `/connectors/deployments?certificateId=` | JWT or key with `account:read` | read | Where one certificate is deployed |
 | POST | `/connectors` | Dashboard session only | write | Create a connector and its enrolment token |
 | POST | `/connectors/:id/enrolment-token` | Dashboard session only | write | New enrolment token for a connector that has not enrolled |
 | PATCH | `/connectors/:id` | Dashboard session only | write | Change `name` or `clientLabel` |
@@ -810,6 +811,7 @@ Connectors belong to the user who creates them, like API keys and GitHub trust p
 | POST | `/connectors/enrol` | None (enrolment token in the body) | public-strict | Enrol with the token and a public key |
 | POST | `/connectors/token` | None (signed body) | public-strict | Get an API key that lasts one hour |
 | POST | `/connectors/rotate` | None (signed body) | public-strict | Replace the connector's public key |
+| POST | `/connectors/report` | Key issued to a connector | write | Report deployment status |
 
 The three connector routes are limited to 10 requests per minute per IP each (see [RATE_LIMITING.md](../../docs/RATE_LIMITING.md)). A connector belonging to someone else returns `404`.
 
@@ -833,7 +835,7 @@ The three connector routes are limited to 10 requests per minute per IP each (se
 }
 ```
 
-`lastSeenAt` is the last enrolment, key exchange or rotation. `version`, `os` and `arch` are what the connector sent when it enrolled.
+`lastSeenAt` is the last enrolment, key exchange, rotation or status report. `version`, `os` and `arch` are what the connector last sent. `GET /connectors/:id` adds `deployments`, every target the connector last reported (see [below](#post-connectorsreport)); the list does not include it.
 
 ### POST /connectors
 
@@ -936,6 +938,80 @@ KRAKENKEY-CONNECTOR-ROTATE-V1
 
 Returns `204`. From then on only the new key is accepted. Keys already issued stay valid until they expire.
 
+### POST /connectors/report
+
+Sent by the connector with a key from `POST /connectors/token`. Any other credential, including a full-access key or a dashboard session, gets `403`. Rate limited as a write, counted against the owner like other keys.
+
+```json
+{
+  "version": "0.2.0",
+  "os": "linux",
+  "arch": "amd64",
+  "certificates": [
+    {
+      "certificateId": 42,
+      "targets": [
+        {
+          "label": "nginx-main",
+          "state": "verified",
+          "serial": "04a1b2...",
+          "error": null,
+          "updatedAt": "2026-10-10T14:00:00Z"
+        }
+      ]
+    }
+  ]
+}
+```
+
+- `label`: `^[A-Za-z0-9._-]{1,64}$`, unique within a certificate.
+- `state`: `pending`, `staged`, `activated`, `verified`, `activated_unverifiable`, `failed` or `rolled_back`.
+- `serial`: optional, hex, at most 64 characters, stored lowercase. `error`: optional, at most 200 characters; control characters are replaced with spaces. `updatedAt`: RFC 3339 (second or millisecond precision, e.g. `2026-10-10T14:00:00.000Z`), when the target last changed.
+- Up to 500 certificates, 50 targets each, each certificate once. The body may be up to 2 MB on this route.
+
+Every certificate must belong to the connector's owner or their organization and fall within the connector's `allowedCertIds` and `allowedDomainIds`. Certificates that don't are skipped (nothing about them is stored) and listed in the response; the rest of the report is stored.
+
+Each report replaces what the connector said before about the certificates in it: targets are upserted, and targets it no longer lists for a certificate in the report are deleted. Certificates not in the report are left alone, and an empty `targets` list removes all of a certificate's targets. The connector's `lastSeenAt`, `version`, `os` and `arch` are updated, even when every certificate is skipped.
+
+**Response `200`:**
+
+```json
+{ "accepted": 1, "rejectedCertificateIds": [43] }
+```
+
+`accepted` is the number of certificates stored. The only whole-report refusals are `400` for an invalid body and `403` when the bearer is not a key issued to a connector.
+
+A target entering `failed` or `rolled_back` from any other state (or appearing in one) sends a `deploy.failed` alert and email; reporting the same failure again does not, and moving between `failed` and `rolled_back` does not either. Channels get at most 20 `deploy.failed` alerts per report; the owner gets one email per report listing up to 10 failures and the total.
+
+### GET /connectors/deployments
+
+`?certificateId=42` (required). Returns the certificate's deployments across the user's connectors that are not revoked, for the certificate page's "Deployed to" column:
+
+```json
+[
+  {
+    "connectorId": "uuid",
+    "connectorName": "web-01",
+    "certificateId": 42,
+    "label": "nginx-main",
+    "state": "verified",
+    "serial": "04a1b2...",
+    "error": null,
+    "updatedAt": "2026-10-10T14:00:00.000Z",
+    "reportedAt": "2026-10-10T14:00:05.000Z"
+  }
+]
+```
+
+`updatedAt` is the connector's time for the last change on the target; `reportedAt` is when KrakenKey last received it.
+
+### Connector alerts
+
+- `deploy.failed`: as above. Details: `connectorId`, `connectorName`, `clientLabel`, `certificateId`, `label`, `state`, `error`, `serial`; the resource is the certificate.
+- `connector.stale`: an hourly job (at :45) finds enrolled, unrevoked connectors not seen for 24 hours and alerts once per connector. Any later contact (key exchange, rotation or report) re-arms it, so a connector that comes back and goes quiet again alerts again. Details: `connectorId`, `connectorName`, `clientLabel`, `lastSeenAt`, `version`; the resource is the connector. Emails are grouped, one per user per run.
+
+Both are also email notifications, on by default, that can be turned off in Settings (`deploy_failed`, `connector_stale`).
+
 ---
 
 ## Notification Channels
@@ -975,6 +1051,8 @@ URLs and webhook secrets are stored encrypted (AES-256-GCM, key derived from `KK
 | `cert.replacement_requested` | The CA asked for early replacement (ACME ARI) |
 | `domain.verification_failed` | A verified domain failed its daily TXT re-check |
 | `endpoint.scan_failed` | A monitored endpoint started failing: connection error, incomplete or untrusted chain, or expired certificate. Sent when a probe's result changes from healthy (or no previous result) to failing, not on every failing scan. |
+| `deploy.failed` | A connector reported a target entering `failed` or `rolled_back` (see [Connector alerts](#connector-alerts)) |
+| `connector.stale` | A connector has not been seen for 24 hours; once per outage |
 
 When `events` is left out, a new channel subscribes to everything except `cert.issued` and `cert.renewed`.
 
