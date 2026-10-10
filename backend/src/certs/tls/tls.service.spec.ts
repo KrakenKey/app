@@ -656,8 +656,38 @@ describe('TlsService', () => {
 
       expect(mockRepository.update).toHaveBeenCalledWith(1, {
         autoRenew: false,
-        status: undefined,
       });
+      expect(result).toEqual(cert);
+    });
+
+    it('copies only autoRenew and managedBy, never csrPem or other fields', async () => {
+      const cert = { id: 1, userId, status: 'issued' };
+      mockRepository.findOneBy.mockResolvedValue(cert);
+
+      await service.update(1, userId, {
+        managedBy: 'connector',
+        csrPem:
+          '-----BEGIN CERTIFICATE REQUEST-----\nMIIB\n-----END CERTIFICATE REQUEST-----',
+        status: 'issued',
+        crtPem: 'x',
+      } as any);
+
+      expect(mockRepository.update).toHaveBeenCalledTimes(1);
+      expect(mockRepository.update).toHaveBeenCalledWith(1, {
+        managedBy: 'connector',
+      });
+    });
+
+    it('skips the write when nothing updatable is given', async () => {
+      const cert = { id: 1, userId, status: 'issued' };
+      mockRepository.findOneBy.mockResolvedValue(cert);
+
+      const result = await service.update(1, userId, {
+        csrPem:
+          '-----BEGIN CERTIFICATE REQUEST-----\nMIIB\n-----END CERTIFICATE REQUEST-----',
+      } as any);
+
+      expect(mockRepository.update).not.toHaveBeenCalled();
       expect(result).toEqual(cert);
     });
   });

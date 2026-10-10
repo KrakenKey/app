@@ -1,17 +1,17 @@
-import { PartialType, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsBoolean, IsIn, IsOptional } from 'class-validator';
 import { CERT_MANAGERS } from '@krakenkey/shared';
 import type { CertManagedBy } from '@krakenkey/shared';
-import { CreateTlsCrtDto } from './create-tls-crt.dto';
 
 /**
- * User-facing update DTO.
+ * Body for PATCH /certs/tls/:id: only the settings a user can change.
  *
- * NOTE: crtPem is intentionally excluded from the user-facing DTO.
- * Certificate PEM data is only set by internal system methods (updateInternal)
- * via background jobs after ACME issuance completes.
+ * Declared field by field on purpose. The global ValidationPipe strips any
+ * property not declared here, so the CSR, the certificate PEM and status
+ * fields can never be set through this route. To renew with a new CSR, use
+ * POST /certs/tls/:id/renew with a `csrPem` body.
  */
-export class UpdateTlsCrtDto extends PartialType(CreateTlsCrtDto) {
+export class UpdateTlsCrtDto {
   @ApiPropertyOptional({ description: 'Enable or disable automatic renewal' })
   @IsOptional()
   @IsBoolean()

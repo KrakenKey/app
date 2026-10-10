@@ -40,6 +40,34 @@ describe('UpdateTlsCrtDto', () => {
       pipe.transform({ autoRenew: false, managedBy: 'connector' }, meta),
     ).resolves.toEqual({ autoRenew: false, managedBy: 'connector' });
   });
+
+  it('strips csrPem and other undeclared fields', async () => {
+    await expect(
+      pipe.transform(
+        { csrPem: CSR, autoRenew: true, status: 'issued', crtPem: 'x' },
+        meta,
+      ),
+    ).resolves.toEqual({ autoRenew: true });
+    await expect(pipe.transform({ csrPem: CSR }, meta)).resolves.toEqual({});
+  });
+
+  it('lists only autoRenew and managedBy in the OpenAPI schema', () => {
+    const props = Reflect.getMetadata(
+      'swagger/apiModelPropertiesArray',
+      UpdateTlsCrtDto.prototype,
+    ) as string[];
+    expect(props.map((p) => p.replace(/^:/, '')).sort()).toEqual([
+      'autoRenew',
+      'managedBy',
+    ]);
+  });
+
+  it('does not validate csrPem, since it is not a field', async () => {
+    // A malformed csrPem is stripped too, not reported as a CSR error
+    await expect(
+      pipe.transform({ csrPem: 'not a csr', autoRenew: false }, meta),
+    ).resolves.toEqual({ autoRenew: false });
+  });
 });
 
 describe('RenewTlsCrtDto', () => {
