@@ -866,6 +866,7 @@ Enroll and rotate are limited to 10 requests per minute per IP each, token excha
   "allowedCertIds": [42],
   "allowedDomainIds": null,
   "enrolledAt": "2026-10-10T14:00:00.000Z",
+  "enrollmentTokenExpiresAt": null,
   "revokedAt": null,
   "lastSeenAt": "2026-10-10T15:00:00.000Z",
   "version": "0.2.0",
@@ -896,18 +897,36 @@ Enroll and rotate are limited to 10 requests per minute per IP each, token excha
 **Response `201`:**
 
 ```json
-{ "connector": { "...": "connector object" }, "enrollmentToken": "kkce_..." }
+{
+  "connector": { "...": "connector object" },
+  "enrollmentToken": "kkce_...",
+  "expiresAt": "2026-10-11T13:55:00.000Z"
+}
 ```
+
+`expiresAt` is when the token stops working. The connector object carries the same time in `enrollmentTokenExpiresAt` until the connector enrolls or is revoked; after that it is `null`.
 
 The token is shown once. It is `kkce_` followed by 32 random bytes (base64url), stored only as an HMAC-SHA256 keyed with `KK_HMAC_SECRET`, works once, and expires after 24 hours. `name` and `clientLabel` may not contain control or invisible format characters (newlines, bidi overrides); `allowedCertIds` entries must fit a 32-bit integer.
 
 ### POST /connectors/:id/enrollment-token
 
-Issues a new token for a connector that hasn't enrolled yet, for example because the first one expired. The previous token stops working. Returns `201` `{ "enrollmentToken": "kkce_..." }`, or `409` once the connector has enrolled or been revoked.
+Issues a new token for a connector that hasn't enrolled yet, for example because the first one expired. The previous token stops working. Returns `201` `{ "enrollmentToken": "kkce_...", "expiresAt": "..." }`, or `409` once the connector has enrolled or been revoked.
 
 ### PATCH /connectors/:id
 
-`{ "name": "web-02", "clientLabel": null }`. Both fields are optional; `clientLabel: null` clears the label. Scopes and restrictions can't be changed; create a new connector instead. A revoked connector can't be changed (`409`).
+```json
+{
+  "name": "web-02",
+  "clientLabel": null,
+  "scopes": ["certs:read"],
+  "allowedCertIds": [42, 43],
+  "allowedDomainIds": null
+}
+```
+
+Every field is optional; send only what changes. `clientLabel: null` clears the label. `scopes`, `allowedCertIds` and `allowedDomainIds` get the same checks as at creation: scopes from `certs:read` and `certs:renew` with `certs:read` included, ids that belong to the account or its organization, and at least one of the two restrictions left after the change. A list replaces the current one; `[]` or `null` clears that restriction.
+
+Changing scopes or either restriction revokes every live key the connector was issued, so its next key exchange carries the new limits (the connector's key pair is unchanged). Renaming doesn't touch keys. A revoked connector can't be changed (`409`).
 
 ### DELETE /connectors/:id
 

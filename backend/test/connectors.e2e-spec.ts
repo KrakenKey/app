@@ -223,8 +223,13 @@ describe('Connectors (e2e)', () => {
 
   describe('dashboard', () => {
     it('creates a connector and shows the token once', async () => {
-      const { connector, enrollmentToken } = await createConnector();
+      const res = await session().post('/connectors').send(BODY).expect(201);
+      const { connector, enrollmentToken, expiresAt } = res.body;
       expect(enrollmentToken).toMatch(/^kkce_[A-Za-z0-9_-]{43}$/);
+      expect(Date.parse(expiresAt) - Date.now()).toBeGreaterThan(
+        24 * 3600_000 - 10_000,
+      );
+      expect(connector.enrollmentTokenExpiresAt).toBe(expiresAt);
       expect(connector).toMatchObject({
         name: 'web-01',
         clientLabel: 'Acme',
@@ -392,6 +397,7 @@ describe('Connectors (e2e)', () => {
         .expect(201);
       const second = res.body.enrollmentToken as string;
       expect(second).not.toBe(first);
+      expect(res.body.expiresAt).toEqual(expect.any(String));
       await anon()
         .post('/connectors/enroll')
         .send(enrollBody(first))
@@ -585,6 +591,62 @@ describe('Connectors (e2e)', () => {
         .post('/connectors/rotate')
         .send({ ...body, newPublicKey: connectorKey().publicB64 })
         .expect(401);
+    });
+  });
+
+  describe('editing restrictions', () => {
+    it('applies new limits by revoking live keys; the next key carries them', async () => {
+      const { id, key } = await enrolled();
+      const shown = await session().get(`/connectors/${id}`).expect(200);
+      expect(shown.body.enrollmentTokenExpiresAt).toBeNull();
+      const first = await anon()
+        .post('/connectors/token')
+        .send(tokenRequest(key, id))
+        .expect(200);
+      const oldKey = `Bearer ${first.body.apiKey}`;
+      await anon().get('/certs/tls/7').set('Authorization', oldKey).expect(200);
+
+      const res = await session()
+        .patch(`/connectors/${id}`)
+        .send({ allowedCertIds: [8], scopes: ['certs:read'] })
+        .expect(200);
+      expect(res.body).toMatchObject({
+        allowedCertIds: [8],
+        scopes: ['certs:read'],
+      });
+      await anon().get('/certs/tls/7').set('Authorization', oldKey).expect(401);
+
+      const second = await anon()
+        .post('/connectors/token')
+        .send(tokenRequest(key, id))
+        .expect(200);
+      const newKey = `Bearer ${second.body.apiKey}`;
+      await anon().get('/certs/tls/7').set('Authorization', newKey).expect(404);
+      await anon().get('/certs/tls/8').set('Authorization', newKey).expect(200);
+      expect(auth.keys.get(second.body.apiKey)).toMatchObject({
+        scopes: ['certs:read'],
+        allowedCertIds: [8],
+      });
+    });
+
+    it('validates new limits like creation', async () => {
+      const { id } = await enrolled();
+      for (const body of [
+        { allowedCertIds: [] },
+        { allowedCertIds: null, allowedDomainIds: null },
+        { allowedCertIds: [99] },
+        { allowedCertIds: [2147483648] },
+        { allowedDomainIds: ['x'] },
+        { scopes: ['certs:renew'] },
+        { scopes: ['certs:read', 'certs:issue'] },
+        { scopes: [] },
+      ]) {
+        await session().patch(`/connectors/${id}`).send(body).expect(400);
+      }
+      await session()
+        .patch(`/connectors/${id}`)
+        .send({ allowedCertIds: null, allowedDomainIds: [DOMAIN_ID] })
+        .expect(200);
     });
   });
 
