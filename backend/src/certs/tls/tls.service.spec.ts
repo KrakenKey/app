@@ -220,11 +220,35 @@ describe('TlsService', () => {
       );
     });
 
-    it('uses the ARI window start when it is earlier than the plan window', async () => {
+    it('uses a routine ARI window start for a connector-managed cert', async () => {
       billingService.resolveUserTier.mockResolvedValue('starter');
       const ariWindowStart = new Date(expiresAt.getTime() - 45 * DAY);
 
+      const [res] = await service.toResponses([
+        issued({ managedBy: 'connector', ariWindowStart }),
+      ]);
+
+      expect(res.renewAfter).toBe(ariWindowStart.toISOString());
+    });
+
+    it('ignores a routine ARI window for other certs, as the server does', async () => {
+      billingService.resolveUserTier.mockResolvedValue('free');
+      const ariWindowStart = new Date(expiresAt.getTime() - 30 * DAY);
+
       const [res] = await service.toResponses([issued({ ariWindowStart })]);
+
+      expect(res.renewAfter).toBe(
+        new Date(expiresAt.getTime() - 5 * DAY).toISOString(),
+      );
+    });
+
+    it('uses the ARI window start for other certs once the CA asked for early replacement', async () => {
+      billingService.resolveUserTier.mockResolvedValue('starter');
+      const ariWindowStart = new Date(expiresAt.getTime() - 45 * DAY);
+
+      const [res] = await service.toResponses([
+        issued({ ariWindowStart, ariReplacementRequestedAt: new Date() }),
+      ]);
 
       expect(res.renewAfter).toBe(ariWindowStart.toISOString());
     });
@@ -233,7 +257,9 @@ describe('TlsService', () => {
       billingService.resolveUserTier.mockResolvedValue('starter');
       const ariWindowStart = new Date(expiresAt.getTime() - 10 * DAY);
 
-      const [res] = await service.toResponses([issued({ ariWindowStart })]);
+      const [res] = await service.toResponses([
+        issued({ managedBy: 'connector', ariWindowStart }),
+      ]);
 
       expect(res.renewAfter).toBe(
         new Date(expiresAt.getTime() - 30 * DAY).toISOString(),
@@ -1115,7 +1141,33 @@ describe('TlsService', () => {
         expect(mockQueue.add).not.toHaveBeenCalled();
       });
 
-      it('is due once the ARI window has opened', async () => {
+      it('is not due before a routine ARI window opens', async () => {
+        mockRepository.findOneBy.mockResolvedValue(
+          connectorCert(40, { ariWindowStart: new Date(Date.now() + DAY) }),
+        );
+        billingService.resolveUserTier.mockResolvedValue('starter');
+
+        const result = await service.renew(1, userId, { ifDue: true });
+
+        expect(result).toMatchObject({ skipped: true });
+        expect(mockQueue.add).not.toHaveBeenCalled();
+      });
+
+      it('follows renewAfter when an early-replacement window has not opened', async () => {
+        mockRepository.findOneBy.mockResolvedValue(
+          connectorCert(40, {
+            ariWindowStart: new Date(Date.now() + DAY),
+            ariReplacementRequestedAt: new Date(),
+          }),
+        );
+        billingService.resolveUserTier.mockResolvedValue('starter');
+
+        const result = await service.renew(1, userId, { ifDue: true });
+
+        expect(result).toMatchObject({ skipped: true });
+      });
+
+      it('is due once a routine ARI window has opened', async () => {
         mockRepository.findOneBy.mockResolvedValue(
           connectorCert(40, { ariWindowStart: new Date(Date.now() - DAY) }),
         );

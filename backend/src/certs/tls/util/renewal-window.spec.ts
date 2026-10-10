@@ -39,20 +39,79 @@ describe('renewal window', () => {
       );
     });
 
-    it('takes the ARI window start when it is earlier', () => {
-      const ariWindowStart = daysBefore(40);
-      expect(
-        renewAfter({ status: 'issued', expiresAt, ariWindowStart }, 30),
-      ).toEqual(ariWindowStart);
+    describe('connector-managed certificates', () => {
+      const connector = {
+        status: 'issued' as const,
+        expiresAt,
+        managedBy: 'connector' as const,
+      };
+
+      it('take a routine ARI window start when it is earlier', () => {
+        const ariWindowStart = daysBefore(40);
+        expect(renewAfter({ ...connector, ariWindowStart }, 30)).toEqual(
+          ariWindowStart,
+        );
+      });
+
+      it('take an early-replacement ARI window start too', () => {
+        const ariWindowStart = daysBefore(60);
+        expect(
+          renewAfter(
+            {
+              ...connector,
+              ariWindowStart,
+              ariReplacementRequestedAt: daysBefore(61),
+            },
+            30,
+          ),
+        ).toEqual(ariWindowStart);
+      });
+
+      it('keep the window when the ARI window starts later', () => {
+        expect(
+          renewAfter({ ...connector, ariWindowStart: daysBefore(20) }, 30),
+        ).toEqual(daysBefore(30));
+      });
     });
 
-    it('ignores an ARI window that starts later than the plan window', () => {
-      expect(
-        renewAfter(
-          { status: 'issued', expiresAt, ariWindowStart: daysBefore(20) },
-          30,
-        ),
-      ).toEqual(daysBefore(30));
+    describe('certificates KrakenKey renews', () => {
+      it('ignore a routine ARI window, which the server does not act on', () => {
+        expect(
+          renewAfter(
+            { status: 'issued', expiresAt, ariWindowStart: daysBefore(30) },
+            5,
+          ),
+        ).toEqual(daysBefore(5));
+      });
+
+      it('take the ARI window start once the CA asked for early replacement', () => {
+        const ariWindowStart = daysBefore(50);
+        expect(
+          renewAfter(
+            {
+              status: 'issued',
+              expiresAt,
+              ariWindowStart,
+              ariReplacementRequestedAt: daysBefore(51),
+            },
+            30,
+          ),
+        ).toEqual(ariWindowStart);
+      });
+
+      it('keep the window when an early-replacement window starts later', () => {
+        expect(
+          renewAfter(
+            {
+              status: 'issued',
+              expiresAt,
+              ariWindowStart: daysBefore(3),
+              ariReplacementRequestedAt: daysBefore(4),
+            },
+            5,
+          ),
+        ).toEqual(daysBefore(5));
+      });
     });
 
     it('accepts ISO strings', () => {
@@ -61,6 +120,7 @@ describe('renewal window', () => {
           {
             expiresAt: expiresAt.toISOString(),
             ariWindowStart: daysBefore(40).toISOString(),
+            ariReplacementRequestedAt: daysBefore(41).toISOString(),
           },
           30,
         ),

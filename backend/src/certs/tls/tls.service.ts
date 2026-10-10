@@ -542,8 +542,14 @@ export class TlsService {
       ? await this.validateRenewalCsr(cert, options.csrPem)
       : null;
 
-    // A CA request for early replacement (ARI) makes the cert due regardless
-    if (options.ifDue && cert.expiresAt && !cert.ariReplacementRequestedAt) {
+    // A CA request for early replacement (ARI) makes the cert due regardless.
+    // Connector-managed certs follow renewAfter alone, which already takes
+    // the CA's window into account.
+    if (
+      options.ifDue &&
+      cert.expiresAt &&
+      (cert.managedBy === 'connector' || !cert.ariReplacementRequestedAt)
+    ) {
       const skip = await this.notDue(cert, cert.expiresAt);
       if (skip) return skip;
     }

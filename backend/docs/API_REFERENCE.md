@@ -446,7 +446,12 @@ Get certificate details and status.
 
 `managedBy` is `"connector"` when a customer-hosted connector renews the certificate (see [PATCH /certs/tls/:id](#patch-certstlsid)), otherwise `null`.
 
-`renewAfter` (ISO 8601) is when the certificate should be renewed: the earlier of `expiresAt` minus the renewal window and the start of the CA's suggested window (`ariWindowStart`, see [ACME Renewal Information](CERTIFICATE_FLOW.md#acme-renewal-information-ari)) when one is stored. The renewal window is the owner's plan window (Free: 5 days, paid plans: 30 days); for connector-managed certificates it is at least 30 days on every plan. It is computed on each read, and is `null` when the certificate has no expiry yet (not issued) or is revoked. `GET /certs/tls` and `PATCH /certs/tls/:id` return the same two fields.
+`renewAfter` (ISO 8601) is when the certificate will be renewed:
+
+- **Connector-managed certificates:** the earlier of `expiresAt` minus the renewal window and the start of the CA's suggested window (`ariWindowStart`, see [ACME Renewal Information](CERTIFICATE_FLOW.md#acme-renewal-information-ari)), routine or early, since the connector follows the CA's suggestion. The renewal window is the owner's plan window but at least 30 days on every plan.
+- **Other certificates:** `expiresAt` minus the plan's renewal window (Free: 5 days, paid plans: 30 days). `ariWindowStart` only counts, when it is earlier, once the CA has asked for early replacement (`ariReplacementRequestedAt` set), because that is the only time KrakenKey renews early. A routine ARI window does not move it.
+
+It is computed on each read, and is `null` when the certificate has no expiry yet (not issued) or is revoked. `GET /certs/tls` and `PATCH /certs/tls/:id` return the same two fields.
 
 `rawCsr` and internal fields are excluded from API responses.
 
@@ -527,7 +532,7 @@ Scope (`certs:renew`), roles, API key limits and rate limit category are the sam
 
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
-| `ifDue` | boolean | `false` | Only renew if the certificate is inside its plan's renewal window (Free: 5 days before expiry, paid plans: 30 days, the same window auto-renewal uses). A connector-managed certificate is due once its `renewAfter` has passed (at least 30 days before expiry, earlier when the CA's ARI window opens sooner). Only the string `true` turns it on. |
+| `ifDue` | boolean | `false` | Only renew if the certificate is inside its plan's renewal window (Free: 5 days before expiry, paid plans: 30 days, the same window auto-renewal uses). A connector-managed certificate is due once its `renewAfter` has passed (at least 30 days before expiry, earlier when the CA's ARI window opens sooner), and only then, even when the CA has asked for early replacement. Only the string `true` turns it on. |
 
 A certificate the CA has asked to replace early (`ariReplacementRequestedAt` set, see [ACME Renewal Information](CERTIFICATE_FLOW.md#acme-renewal-information-ari)) counts as due whatever the window.
 

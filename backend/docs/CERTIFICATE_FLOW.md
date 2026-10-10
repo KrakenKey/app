@@ -332,7 +332,8 @@ A customer-hosted connector can renew a certificate itself, so the private key n
 - KrakenKey never renews the certificate on its own. The daily auto-renewal and ARI early replacement skip it, whatever `autoRenew` says.
 - Expiry warnings and `cert.expiring` alerts still fire inside the plan's renewal window, and `cert.replacement_requested` when the CA asks for early replacement, so the owner hears about a connector that stopped renewing. The free-plan confirmation below does not apply to them.
 - ARI checks still run and store the CA's window.
-- The certificate's `renewAfter` tells the connector when to renew: the earlier of `expiresAt` minus the renewal window and `ariWindowStart`. For these certificates the window is the plan's window but at least 30 days, so on the Free plan too they are renewed 30 days before expiry.
+- The certificate's `renewAfter` tells the connector when to renew: the earlier of `expiresAt` minus the renewal window and `ariWindowStart`, whether the CA's window is routine or an early-replacement request, since the connector follows the CA's suggestion (RFC 9773). For these certificates the window is the plan's window but at least 30 days, so on the Free plan too they are renewed 30 days before expiry at the latest.
+- For certificates KrakenKey renews, `renewAfter` is `expiresAt` minus the plan window, and only moves to `ariWindowStart` once `ariReplacementRequestedAt` is set, matching when the server actually renews.
 - The connector renews with `POST /certs/tls/:id/renew` and a body of `{"csrPem": "..."}` holding a CSR for a new key with the same names. The new CSR replaces the stored one. `?ifDue=true` treats the certificate as due once `renewAfter` has passed.
 
 `{"managedBy": null}` hands renewal back to KrakenKey, which then renews with the last CSR it stored.

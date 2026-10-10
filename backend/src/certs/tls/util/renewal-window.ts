@@ -37,12 +37,21 @@ export interface RenewAfterInput {
   status?: CertStatus | null;
   expiresAt: Date | string | null;
   ariWindowStart?: Date | string | null;
+  ariReplacementRequestedAt?: Date | string | null;
+  managedBy?: CertManagedBy | null;
 }
 
 /**
- * When a certificate should be renewed: the earlier of expiry minus the
- * renewal window and the start of the CA's suggested ARI window, when one is
- * stored. Null when there is no expiry yet, or the certificate is revoked.
+ * When a certificate will be renewed: expiry minus the renewal window
+ * (`windowDays`, see certRenewalWindowDays), or the start of the CA's
+ * suggested ARI window when that is earlier and applies:
+ *
+ * - connector-managed: any stored window, routine or early, since the
+ *   connector follows the CA's suggestion (RFC 9773);
+ * - everything else: only when the CA asked for early replacement
+ *   (ariReplacementRequestedAt), the one case the server renews early.
+ *
+ * Null when there is no expiry yet, or the certificate is revoked.
  */
 export function renewAfter(
   cert: RenewAfterInput,
@@ -56,9 +65,12 @@ export function renewAfter(
     return null;
   }
   const byWindow = new Date(cert.expiresAt).getTime() - windowDays * MS_PER_DAY;
-  const ariStart = cert.ariWindowStart
-    ? new Date(cert.ariWindowStart).getTime()
-    : NaN;
+  const ariApplies =
+    cert.managedBy === 'connector' || Boolean(cert.ariReplacementRequestedAt);
+  const ariStart =
+    ariApplies && cert.ariWindowStart
+      ? new Date(cert.ariWindowStart).getTime()
+      : NaN;
   return new Date(
     Number.isNaN(ariStart) ? byWindow : Math.min(byWindow, ariStart),
   );

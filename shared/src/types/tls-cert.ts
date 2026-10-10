@@ -54,11 +54,12 @@ export interface TlsCert {
   /** `connector` when a customer-hosted connector renews it; null otherwise. */
   managedBy: CertManagedBy | null;
   /**
-   * When the certificate should be renewed (ISO 8601): the earlier of expiry
-   * minus the renewal window and the start of the CA's suggested ARI window.
-   * The window is the owner's plan window, at least 30 days for
-   * connector-managed certificates. Null when the certificate has no expiry
-   * yet (not issued) or is revoked.
+   * When the certificate will be renewed (ISO 8601): expiry minus the
+   * renewal window, or the start of the CA's suggested ARI window when that
+   * is earlier. Connector-managed certificates use any ARI window and a
+   * window of at least 30 days; other certificates use the plan window and
+   * only an early-replacement ARI window (ariReplacementRequestedAt set).
+   * Null when the certificate has no expiry yet (not issued) or is revoked.
    */
   renewAfter: string | null;
   createdAt: string;
