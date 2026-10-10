@@ -64,6 +64,8 @@ describe('Rate Limiting (e2e)', () => {
             revoke: jest.fn().mockResolvedValue({}),
             renew: jest.fn().mockResolvedValue({}),
             retry: jest.fn().mockResolvedValue({}),
+            toResponses: jest.fn((certs: unknown[]) => Promise.resolve(certs)),
+            toResponse: jest.fn((cert: unknown) => Promise.resolve(cert)),
           },
         },
       ],

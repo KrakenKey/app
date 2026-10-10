@@ -97,6 +97,7 @@ CREATE TABLE "tls_crt" (
   "lastRenewalAttemptAt" TIMESTAMP,
   "revocationReason" INTEGER,                     -- RFC 5280 reason code (0-10)
   "revokedAt" TIMESTAMP,
+  "managedBy" TEXT,                               -- 'connector' or NULL (KrakenKey renews)
   "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   "userId" TEXT NOT NULL REFERENCES "user"(id)
 );

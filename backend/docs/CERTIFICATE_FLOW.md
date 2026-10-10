@@ -302,6 +302,7 @@ KrakenKey automatically monitors and renews certificates.
 - Finds all `issued` certificates with `autoRenew: true` that are expiring within the renewal window
 - Queues renewal jobs to the `tlsCertRenewal` BullMQ queue
 - Sends expiry warning emails for certificates approaching expiration
+- Connector-managed certificates (`managedBy: "connector"`) get the warning but are never renewed here; see [Connector-Managed Certificates](#connector-managed-certificates)
 
 ### Renewal Windows
 
@@ -314,15 +315,28 @@ KrakenKey automatically monitors and renews certificates.
 
 The renewal windows above decide normal timing. KrakenKey also asks the CA for its suggested renewal window ([RFC 9773](https://www.rfc-editor.org/rfc/rfc9773)) so it can replace a certificate early when the CA asks, for example before a mass revocation.
 
-- **AriMonitorService** runs hourly. For each `issued` certificate with `autoRenew: true` whose next check is due, it computes the certificate's ARI identifier (`base64url(AKI).base64url(serial)`), fetches `GET <renewalInfo>/<id>` from the ACME directory (no account needed), and stores `ariWindowStart`, `ariWindowEnd` and `ariExplanationUrl`. The next check follows the CA's `Retry-After`, clamped to 1-24 hours (default 6 hours); a certificate the CA has no info for is checked again after 24 hours, and a failed request after 6 hours.
+- **AriMonitorService** runs hourly. For each `issued` certificate with `autoRenew: true` or `managedBy: "connector"` whose next check is due, it computes the certificate's ARI identifier (`base64url(AKI).base64url(serial)`), fetches `GET <renewalInfo>/<id>` from the ACME directory (no account needed), and stores `ariWindowStart`, `ariWindowEnd` and `ariExplanationUrl`. The next check follows the CA's `Retry-After`, clamped to 1-24 hours (default 6 hours); a certificate the CA has no info for is checked again after 24 hours, and a failed request after 6 hours.
 - The window only pulls a renewal earlier when the CA asks for **early replacement**:
   - the window moved more than a day earlier than the one seen at the previous check (what a CA does before revoking in bulk), or
   - the first window seen starts in the first half of the certificate's lifetime (a normal Let's Encrypt window starts about two thirds in), or
   - the CA sent an `explanationURL`.
-- Then `ariReplacementRequestedAt` is set and the certificate is renewed as soon as the CA's window opens, whatever the plan's renewal window. Free-plan owners still need a current auto-renewal confirmation. `renew?ifDue=true` also treats such a certificate as due.
+- Then `ariReplacementRequestedAt` is set and the certificate is renewed as soon as the CA's window opens, whatever the plan's renewal window. Free-plan owners still need a current auto-renewal confirmation. `renew?ifDue=true` also treats such a certificate as due. Connector-managed certificates are not renewed here; the owner gets the `cert.replacement_requested` alert and the connector sees the earlier window through `renewAfter`.
 - A normal window (Let's Encrypt suggests renewing about 30 days before expiry for a 90-day certificate) changes nothing: Free still renews 5 days before expiry and paid plans 30 days before.
 - Every renewal order sends `replaces: <ARI identifier of the old certificate>` so the CA links the two. If the CA refuses it (for example the certificate was already replaced), the order is retried without it.
 - Issuing a new certificate stores its identifier and clears the old window. Set `KK_ACME_ARI=false` to turn the checks off; `replaces` is still sent.
+
+### Connector-Managed Certificates
+
+A customer-hosted connector can renew a certificate itself, so the private key never leaves the customer's machine and is replaced on every renewal. It marks the certificate with `PATCH /certs/tls/:id` and `{"managedBy": "connector"}`. From then on:
+
+- KrakenKey never renews the certificate on its own. The daily auto-renewal and ARI early replacement skip it, whatever `autoRenew` says.
+- Expiry warnings and `cert.expiring` alerts still fire inside the plan's renewal window, and `cert.replacement_requested` when the CA asks for early replacement, so the owner hears about a connector that stopped renewing. The free-plan confirmation below does not apply to them.
+- ARI checks still run and store the CA's window.
+- The certificate's `renewAfter` tells the connector when to renew: the earlier of `expiresAt` minus the renewal window and `ariWindowStart`, whether the CA's window is routine or an early-replacement request, since the connector follows the CA's suggestion (RFC 9773). For these certificates the window is the plan's window but at least 30 days, so on the Free plan too they are renewed 30 days before expiry at the latest.
+- For certificates KrakenKey renews, `renewAfter` is `expiresAt` minus the plan window, and only moves to `ariWindowStart` once `ariReplacementRequestedAt` is set, matching when the server actually renews.
+- The connector renews with `POST /certs/tls/:id/renew` and a body of `{"csrPem": "..."}` holding a CSR for a new key with the same names. The new CSR replaces the stored one. `?ifDue=true` treats the certificate as due once `renewAfter` has passed.
+
+`{"managedBy": null}` hands renewal back to KrakenKey, which then renews with the last CSR it stored.
 
 ### Free Tier Confirmation
 
@@ -342,7 +356,7 @@ curl -X POST https://api.example.com/certs/tls/42/renew \
   -H "Authorization: Bearer $API_KEY"
 ```
 
-A manual renewal always runs and counts against the monthly certificate limit. To renew from a scheduled job without re-issuing every day, add `?ifDue=true`: the request only renews once the certificate is inside the renewal window above, and otherwise returns `200` with `"skipped": true` and queues nothing. See [API_REFERENCE.md](API_REFERENCE.md#post-certstlsidrenew).
+A manual renewal always runs and counts against the monthly certificate limit. Without a body it reuses the stored CSR (the same key); send `{"csrPem": "..."}` to renew with a new CSR for the same names. To renew from a scheduled job without re-issuing every day, add `?ifDue=true`: the request only renews once the certificate is inside the renewal window above, and otherwise returns `200` with `"skipped": true` and queues nothing. See [API_REFERENCE.md](API_REFERENCE.md#post-certstlsidrenew).
 
 ### Disabling Auto-Renewal
 

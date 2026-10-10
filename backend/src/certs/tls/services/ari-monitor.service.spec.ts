@@ -188,6 +188,49 @@ describe('AriMonitorService', () => {
     );
   });
 
+  it('also checks connector-managed certificates', async () => {
+    repo.find.mockResolvedValue([]);
+    await svc.checkRenewalInfo(NOW);
+    const where = repo.find.mock.calls[0][0].where;
+    expect(where).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ autoRenew: true }),
+        expect.objectContaining({ managedBy: 'connector' }),
+      ]),
+    );
+  });
+
+  it('stores the window for a connector-managed cert', async () => {
+    repo.find.mockResolvedValue([cert({ managedBy: 'connector' })]);
+    ari.getRenewalInfo.mockResolvedValue(window(60, 62));
+    await svc.checkRenewalInfo(NOW);
+
+    expect(saved()).toMatchObject({
+      ariWindowStart: at(60),
+      ariWindowEnd: at(62),
+    });
+    expect(tls.renewInternal).not.toHaveBeenCalled();
+  });
+
+  it('never renews a connector-managed cert early, but still alerts', async () => {
+    repo.find.mockResolvedValue([
+      cert({ managedBy: 'connector', ariWindowStart: at(60) }),
+    ]);
+    ari.getRenewalInfo.mockResolvedValue(window(38, 39));
+    await svc.checkRenewalInfo(NOW);
+
+    expect(saved()).toMatchObject({
+      ariWindowStart: at(38),
+      ariReplacementRequestedAt: NOW,
+    });
+    expect(tls.renewInternal).not.toHaveBeenCalled();
+    expect(alerts.emit).toHaveBeenCalledWith(
+      'u1',
+      'cert.replacement_requested',
+      expect.objectContaining({ subject: 'labxp.io' }),
+    );
+  });
+
   it('backs off a day when the CA has no info, six hours after an error', async () => {
     repo.find.mockResolvedValue([cert()]);
     ari.getRenewalInfo.mockResolvedValueOnce(null);

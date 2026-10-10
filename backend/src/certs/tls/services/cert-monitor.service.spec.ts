@@ -116,18 +116,70 @@ describe('CertMonitorService', () => {
       expect(mockTlsService.renewInternal).toHaveBeenCalledWith(1);
     });
 
-    it('queries for issued, auto-renew certs expiring within 30 days', async () => {
+    it('queries for issued auto-renew or connector-managed certs expiring within 30 days', async () => {
       mockRepository.find.mockResolvedValue([]);
 
       await service.checkExpiringCertificates();
 
       expect(mockRepository.find).toHaveBeenCalledWith({
-        where: {
-          status: CertStatus.ISSUED,
-          autoRenew: true,
-          expiresAt: expect.any(Object), // LessThan(threshold)
-        },
+        where: [
+          {
+            status: CertStatus.ISSUED,
+            autoRenew: true,
+            expiresAt: expect.any(Object), // LessThan(threshold)
+          },
+          {
+            status: CertStatus.ISSUED,
+            managedBy: 'connector',
+            expiresAt: expect.any(Object),
+          },
+        ],
         relations: ['user'],
+      });
+    });
+
+    describe('connector-managed certs', () => {
+      const connectorCert = {
+        ...expiringCert,
+        id: 5,
+        managedBy: 'connector',
+      } as TlsCrt;
+
+      it('sends the expiry warning but never queues a renewal', async () => {
+        mockRepository.find.mockResolvedValue([connectorCert, expiringCert]);
+        const email = (service as any).emailService;
+
+        await service.checkExpiringCertificates();
+
+        expect(mockTlsService.renewInternal).toHaveBeenCalledTimes(1);
+        expect(mockTlsService.renewInternal).toHaveBeenCalledWith(1);
+        expect(email.sendCertExpiryWarning).toHaveBeenCalledWith(
+          expect.objectContaining({ certId: 5 }),
+        );
+        expect(mockAlerts.emit).toHaveBeenCalledWith(
+          'user-123',
+          'cert.expiring',
+          expect.objectContaining({
+            resource: { type: 'certificate', id: 5 },
+          }),
+        );
+      });
+
+      it('still warns when a free owner has not confirmed auto-renewal', async () => {
+        const lapsedUser = { ...mockUser, autoRenewalConfirmedAt: null };
+        mockRepository.find.mockResolvedValue([
+          { ...connectorCert, user: lapsedUser },
+        ]);
+        const email = (service as any).emailService;
+
+        await service.checkExpiringCertificates();
+
+        expect(email.sendCertExpiryWarning).toHaveBeenCalledWith(
+          expect.objectContaining({ certId: 5 }),
+        );
+        // The confirmation only gates server-side renewal
+        expect(email.sendAutoRenewalPaused).not.toHaveBeenCalled();
+        expect(mockTlsService.renewInternal).not.toHaveBeenCalled();
       });
     });
 

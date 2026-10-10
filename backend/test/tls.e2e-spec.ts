@@ -35,6 +35,12 @@ describe('TLS Certificates (e2e)', () => {
       retry: jest
         .fn()
         .mockResolvedValue({ ...MOCK_TLS_CERT, status: 'pending' }),
+      toResponses: jest.fn((certs: object[]) =>
+        Promise.resolve(certs.map((c) => ({ ...c, renewAfter: null }))),
+      ),
+      toResponse: jest.fn((cert: object) =>
+        Promise.resolve({ ...cert, renewAfter: null }),
+      ),
     };
 
     ({ app } = await createTestApp({
@@ -171,6 +177,46 @@ describe('TLS Certificates (e2e)', () => {
             {},
           );
         }));
+
+    it('accepts managedBy: connector and returns renewAfter', async () => {
+      const res = await request(app.getHttpServer())
+        .patch('/certs/tls/1')
+        .send({ managedBy: 'connector' })
+        .expect(200);
+
+      expect(mockTlsService.update).toHaveBeenLastCalledWith(
+        1,
+        MOCK_USER.userId,
+        { managedBy: 'connector' },
+      );
+      expect(res.body).toHaveProperty('renewAfter');
+    });
+
+    it('accepts managedBy: null to hand renewal back to KrakenKey', async () => {
+      await request(app.getHttpServer())
+        .patch('/certs/tls/1')
+        .send({ managedBy: null })
+        .expect(200);
+
+      expect(mockTlsService.update).toHaveBeenLastCalledWith(
+        1,
+        MOCK_USER.userId,
+        { managedBy: null },
+      );
+    });
+
+    it('returns 400 for any other managedBy value', async () => {
+      mockTlsService.update.mockClear();
+      const res = await request(app.getHttpServer())
+        .patch('/certs/tls/1')
+        .send({ managedBy: 'server' })
+        .expect(400);
+
+      expect(res.body.message).toContain(
+        "managedBy must be 'connector' or null",
+      );
+      expect(mockTlsService.update).not.toHaveBeenCalled();
+    });
   });
 
   // ─── POST /certs/tls/:id/revoke ──────────────────────────────────────────
@@ -282,6 +328,29 @@ describe('TLS Certificates (e2e)', () => {
         expect.any(String),
         { ifDue: true },
       );
+    });
+
+    it('passes a new CSR from the body to the service', async () => {
+      await request(app.getHttpServer())
+        .post('/certs/tls/1/renew?ifDue=true')
+        .send({ csrPem: MOCK_CSR_PEM })
+        .expect(201);
+
+      expect(mockTlsService.renew).toHaveBeenLastCalledWith(
+        1,
+        MOCK_USER.userId,
+        { ifDue: true, csrPem: MOCK_CSR_PEM },
+      );
+    });
+
+    it('returns 400 for a body CSR that is not PEM', async () => {
+      mockTlsService.renew.mockClear();
+      await request(app.getHttpServer())
+        .post('/certs/tls/1/renew')
+        .send({ csrPem: 'not a csr' })
+        .expect(400);
+
+      expect(mockTlsService.renew).not.toHaveBeenCalled();
     });
 
     it('returns 400 when cert not in issued state', async () => {

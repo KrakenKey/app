@@ -20,12 +20,14 @@ import {
   ApiResponse,
   ApiParam,
   ApiQuery,
+  ApiBody,
 } from '@nestjs/swagger';
 import { TlsService } from './tls.service';
 import { ApiKeyAccessService } from '../../auth/access/api-key-access.service';
 import { CreateTlsCrtDto } from './dto/create-tls-crt.dto';
 import { UpdateTlsCrtDto } from './dto/update-tls-crt.dto';
 import { RevokeTlsCrtDto } from './dto/revoke-tls-crt.dto';
+import { RenewTlsCrtDto } from './dto/renew-tls-crt.dto';
 import { JwtOrApiKeyGuard } from '../../auth/guards/jwt-or-api-key.guard';
 import { RoleGuard } from '../../auth/guards/role.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
@@ -65,7 +67,9 @@ export class TlsController {
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
   async findAll(@Request() req: RequestWithUser) {
     const certs = await this.tlsService.findAll(req.user.userId);
-    return this.keyAccess.filterCerts(req.user, certs);
+    return this.tlsService.toResponses(
+      await this.keyAccess.filterCerts(req.user, certs),
+    );
   }
 
   @Post()
@@ -139,7 +143,7 @@ export class TlsController {
   async findOne(@Request() req: RequestWithUser, @Param('id') id: string) {
     const cert = await this.tlsService.findOne(+id, req.user.userId);
     await this.keyAccess.assertCert(req.user, cert);
-    return cert;
+    return this.tlsService.toResponse(cert);
   }
 
   @Patch(':id')
@@ -147,6 +151,11 @@ export class TlsController {
   @ApiOperation({ summary: 'Update a certificate' })
   @ApiParam({ name: 'id', description: 'Certificate ID' })
   @ApiResponse({ status: 200, description: 'Certificate updated' })
+  @ApiResponse({
+    status: 400,
+    description:
+      "Validation failed, for example managedBy not 'connector' or null",
+  })
   @ApiResponse({
     status: 403,
     description: 'Viewers cannot update certificates',
@@ -160,7 +169,9 @@ export class TlsController {
     @Body() updateTlsCrtDto: UpdateTlsCrtDto,
   ) {
     await this.checkKeyAccess(req, +id);
-    return this.tlsService.update(+id, req.user.userId, updateTlsCrtDto);
+    return this.tlsService.toResponse(
+      await this.tlsService.update(+id, req.user.userId, updateTlsCrtDto),
+    );
   }
 
   @Post(':id/revoke')
@@ -208,17 +219,26 @@ export class TlsController {
 
   @Post(':id/renew')
   @RequireScope('certs:renew')
-  @ApiOperation({ summary: 'Renew a certificate' })
+  @ApiOperation({
+    summary: 'Renew a certificate',
+    description:
+      'Queues a renewal. Without a body the CSR stored at first issuance is ' +
+      'used again. With { csrPem } the certificate is renewed with that CSR ' +
+      '(for example a new key) and it replaces the stored CSR.',
+  })
   @ApiParam({ name: 'id', description: 'Certificate ID' })
   @ApiQuery({
     name: 'ifDue',
     required: false,
     type: Boolean,
     description:
-      'Only renew if the certificate is inside its plan renewal window ' +
-      '(free: 5 days, paid: 30 days before expiry). Otherwise nothing is ' +
-      'queued and the response has skipped: true. Default: false (always renew).',
+      'Only renew if the certificate is inside its renewal window ' +
+      '(free: 5 days, paid: 30 days before expiry; at least 30 days for ' +
+      'connector-managed certificates, which are due once their renewAfter ' +
+      'has passed). Otherwise nothing is queued and the response has ' +
+      'skipped: true. Default: false (always renew).',
   })
+  @ApiBody({ type: RenewTlsCrtDto, required: false })
   @ApiResponse({
     status: 201,
     description: 'Certificate renewal initiated (skipped: false)',
@@ -231,7 +251,9 @@ export class TlsController {
   })
   @ApiResponse({
     status: 400,
-    description: 'Certificate not issued or missing CSR data',
+    description:
+      'Certificate not issued or missing CSR data, invalid CSR, or ' +
+      "'CSR names must match the certificate'",
   })
   @ApiResponse({
     status: 403,
@@ -245,10 +267,12 @@ export class TlsController {
     @Param('id') id: string,
     @Res({ passthrough: true }) res: Response,
     @Query('ifDue') ifDue?: string,
+    @Body() body?: RenewTlsCrtDto,
   ) {
     await this.checkKeyAccess(req, +id);
     const result = await this.tlsService.renew(+id, req.user.userId, {
       ifDue: ifDue === 'true',
+      csrPem: body?.csrPem,
     });
     // Nothing was created, so a skip is a plain 200 rather than 201
     if (result.skipped) res.status(HttpStatus.OK);

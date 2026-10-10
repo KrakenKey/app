@@ -1,5 +1,7 @@
 import { PartialType, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsOptional } from 'class-validator';
+import { IsBoolean, IsIn, IsOptional } from 'class-validator';
+import { CERT_MANAGERS } from '@krakenkey/shared';
+import type { CertManagedBy } from '@krakenkey/shared';
 import { CreateTlsCrtDto } from './create-tls-crt.dto';
 
 /**
@@ -14,6 +16,18 @@ export class UpdateTlsCrtDto extends PartialType(CreateTlsCrtDto) {
   @IsOptional()
   @IsBoolean()
   autoRenew?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      "Who renews the certificate. 'connector': a customer-hosted connector " +
+      'renews it with its own keys and KrakenKey never renews it on its own ' +
+      '(expiry alerts and ARI checks still run). null: KrakenKey renews it as usual.',
+    enum: CERT_MANAGERS,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsIn(CERT_MANAGERS, { message: "managedBy must be 'connector' or null" })
+  managedBy?: CertManagedBy | null;
 }
 
 /**

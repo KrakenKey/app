@@ -438,9 +438,20 @@ Get certificate details and status.
   "expiresAt": "2026-06-25T10:00:00.000Z",
   "autoRenew": true,
   "renewalCount": 0,
+  "managedBy": null,
+  "renewAfter": "2026-05-26T10:00:00.000Z",
   "createdAt": "2026-03-27T10:00:00.000Z"
 }
 ```
+
+`managedBy` is `"connector"` when a customer-hosted connector renews the certificate (see [PATCH /certs/tls/:id](#patch-certstlsid)), otherwise `null`.
+
+`renewAfter` (ISO 8601) is when the certificate will be renewed:
+
+- **Connector-managed certificates:** the earlier of `expiresAt` minus the renewal window and the start of the CA's suggested window (`ariWindowStart`, see [ACME Renewal Information](CERTIFICATE_FLOW.md#acme-renewal-information-ari)), routine or early, since the connector follows the CA's suggestion. The renewal window is the owner's plan window but at least 30 days on every plan.
+- **Other certificates:** `expiresAt` minus the plan's renewal window (Free: 5 days, paid plans: 30 days). `ariWindowStart` only counts, when it is earlier, once the CA has asked for early replacement (`ariReplacementRequestedAt` set), because that is the only time KrakenKey renews early. A routine ARI window does not move it.
+
+It is computed on each read, and is `null` when the certificate has no expiry yet (not issued) or is revoked. `GET /certs/tls` and `PATCH /certs/tls/:id` return the same two fields.
 
 `rawCsr` and internal fields are excluded from API responses.
 
@@ -483,24 +494,45 @@ Returns `400` if the certificate has not yet been issued.
 
 ### PATCH /certs/tls/:id
 
-Update certificate metadata.
+Update certificate metadata. Needs the `certs:renew` scope. Returns the updated certificate.
 
 **Request:**
 ```json
 {
-  "autoRenew": false
+  "autoRenew": false,
+  "managedBy": "connector"
 }
 ```
 
+| Field | Type | Description |
+|-------|------|-------------|
+| `autoRenew` | boolean | Turn KrakenKey's automatic renewal on or off. |
+| `managedBy` | `"connector"` or `null` | `"connector"` hands renewal to a customer-hosted connector that keeps the private key and renews with a new CSR (see [renew](#post-certstlsidrenew)). KrakenKey then never renews the certificate on its own: the daily auto-renewal and ARI early replacement both skip it, whatever `autoRenew` says. Expiry warnings, `cert.expiring` and `cert.replacement_requested` alerts and ARI checks still run. `null` hands renewal back to KrakenKey. Any other value returns `400`. |
+
 ### POST /certs/tls/:id/renew
 
-Manually queue a renewal for an `issued` certificate. Creates a new ACME order using the original CSR. By default the renewal always runs, whatever the expiry date, so it can be used to replace a certificate right away (for example after a key compromise). Each renewal counts against the monthly certificate limit.
+Manually queue a renewal for an `issued` certificate. Creates a new ACME order using the stored CSR, or a new one from the request body. By default the renewal always runs, whatever the expiry date, so it can be used to replace a certificate right away (for example after a key compromise). Each renewal counts against the monthly certificate limit.
+
+**Request body (optional):**
+```json
+{
+  "csrPem": "-----BEGIN CERTIFICATE REQUEST-----\n...\n-----END CERTIFICATE REQUEST-----"
+}
+```
+
+Without a body, the CSR stored at first issuance is used again, so the key stays the same. With `csrPem`, the certificate is renewed with that CSR, which lets a client that keeps its keys locally rotate the key on every renewal:
+
+- The CSR gets the same checks as [POST /certs/tls](#post-certstls): PEM format, at most 10,000 characters, a valid signature, and an RSA (2048 bits or more) or ECDSA (P-256, P-384) key. A CSR that fails returns `400`. Domain verification is not checked again, the same as any renewal; the name rule below keeps the certificate on the names it already had.
+- Its names (CN plus DNS SANs, lowercased, without duplicates, in any order) must equal the certificate's names. Otherwise the response is `400` with the message `CSR names must match the certificate`. To change names, request a new certificate.
+- Once the renewal is queued, the new CSR replaces the stored one, so later renewals (and a retry after a failed renewal) use it. When `ifDue=true` skips the renewal, or a plan limit refuses it, the stored CSR is left unchanged.
+
+Scope (`certs:renew`), roles, API key limits and rate limit category are the same with or without a body.
 
 **Query parameters:**
 
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
-| `ifDue` | boolean | `false` | Only renew if the certificate is inside its plan's renewal window (Free: 5 days before expiry, paid plans: 30 days, the same window auto-renewal uses). Only the string `true` turns it on. |
+| `ifDue` | boolean | `false` | Only renew if the certificate is inside its plan's renewal window (Free: 5 days before expiry, paid plans: 30 days, the same window auto-renewal uses). A connector-managed certificate is due once its `renewAfter` has passed (at least 30 days before expiry, earlier when the CA's ARI window opens sooner), and only then, even when the CA has asked for early replacement. Only the string `true` turns it on. |
 
 A certificate the CA has asked to replace early (`ariReplacementRequestedAt` set, see [ACME Renewal Information](CERTIFICATE_FLOW.md#acme-renewal-information-ari)) counts as due whatever the window.
 
