@@ -5,6 +5,14 @@ End-to-end walkthrough of how KrakenKey processes certificate requests, from CSR
 ## Certificate Lifecycle
 
 ```
+  submit names (connector)
+                 │
+                 ▼
+          ┌──────────────┐
+          │ awaiting_csr │  (no CSR yet, nothing sent to the CA)
+          └──────┬───────┘
+                 │  connector sends its CSR (renew)
+                 │
              submit CSR
                  │
                  ▼
@@ -51,6 +59,7 @@ End-to-end walkthrough of how KrakenKey processes certificate requests, from CSR
 
 | Status | Description |
 |--------|-------------|
+| `awaiting_csr` | Created from names for a connector; waiting for its CSR. Nothing sent to the CA yet. See [Pending Certificates](#pending-certificates) |
 | `pending` | CSR received, validated, and queued for processing |
 | `issuing` | ACME workflow actively running (order created, challenges in progress) |
 | `issued` | Certificate successfully issued and stored |
@@ -338,6 +347,19 @@ A customer-hosted connector can renew a certificate itself, so the private key n
 
 `{"managedBy": null}` hands renewal back to KrakenKey, which then renews with the last CSR it stored.
 
+### Pending Certificates
+
+A connector can also issue a certificate the first time, so even the first key never leaves the customer's machine. Since the key doesn't exist yet when the certificate is set up in the dashboard, the certificate is created from its names instead of a CSR:
+
+1. `POST /certs/tls` with `{"names": ["example.com", "www.example.com"], "managedBy": "connector"}` (instead of `csrPem`). The names get the same checks a CSR's names get: verified domains, and the domain limits of the API key used. The certificate is created with status `awaiting_csr`, no CSR (`rawCsr` and `parsedCsr` are `null`), `requestedNames` set, `managedBy: "connector"` and `autoRenew: false`. Nothing is queued and nothing goes to the CA.
+2. The connector is given access to that certificate, for example with an API key limited to it (`allowedCertIds`, scopes `certs:read` and `certs:renew`). It sees the certificate as due: `renewAfter` is the creation time.
+3. The connector generates a key, builds a CSR for exactly the `requestedNames` (CN plus DNS SANs, any order and case) and sends it to `POST /certs/tls/:id/renew` as `{"csrPem": "..."}`. Without a CSR the response is `400` `This certificate is waiting for a CSR`; with different names it is `400` `CSR names must match the certificate`. The names are checked against the verified domains again, in case one lost its verification meanwhile.
+4. The CSR is stored and the certificate is issued like a new request: `pending` -> `issuing` -> `issued` through the issuance queue, with the usual `cert.issued` email and alert, or `failed` with a `failureReason` (and [retry](#retrying-failed-certificates) uses the connector's CSR). From then on it is an ordinary [connector-managed certificate](#connector-managed-certificates).
+
+Limits: an `awaiting_csr` certificate counts toward the total active certificate limit and, since it is created that month, the monthly limit. It does not count toward concurrent pending requests, because nothing is in flight. When the connector completes it, the concurrent pending limit applies, and the certificate is not counted twice for the other two.
+
+While it waits, the auto-renewal, ARI and expiry jobs skip it (they only look at `issued` certificates), it can't be revoked or retried, and it can be deleted with `DELETE /certs/tls/:id`. The dashboard lists it by its requested names with the status "Awaiting CSR".
+
 ### Free Tier Confirmation
 
 Free tier users must confirm auto-renewal every 6 months by calling:
@@ -413,7 +435,7 @@ curl -X POST https://api.example.com/certs/tls/42/retry \
   -H "Authorization: Bearer $API_KEY"
 ```
 
-This re-queues the original CSR for another issuance attempt.
+This re-queues the original CSR for another issuance attempt. For a [pending certificate](#pending-certificates) that failed, that is the CSR the connector sent.
 
 ---
 
@@ -425,5 +447,7 @@ Certificate operations are subject to plan-based quotas:
 |-------|------|---------|------|----------|------------|
 | Certificates per month | 5 | 50 | 250 | 1,000 | Unlimited |
 | Active certificates | 10 | 75 | 375 | 1,500 | Unlimited |
+
+Active certificates are `issued` ones plus [pending certificates](#pending-certificates) still `awaiting_csr`.
 
 See [Billing](./BILLING.md) for full plan details.

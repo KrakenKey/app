@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { render } from '../../test/test-utils';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../test/mocks/server';
-import { mockCerts } from '../../test/mocks/data';
+import { mockAwaitingCsrCert, mockCerts } from '../../test/mocks/data';
 import { API_URL } from '../../services/api';
 import CertificateManagement from '../CertificateManagement';
 
@@ -162,6 +162,37 @@ describe('CertificateManagement', () => {
     await waitFor(() => {
       expect(screen.getByText(reason)).toBeInTheDocument();
     });
+  });
+
+  it('shows an awaiting_csr certificate by its requested names, with Delete', async () => {
+    vi.useRealTimers();
+    server.use(
+      http.get(`${API_URL}/certs/tls`, () => {
+        return HttpResponse.json([mockAwaitingCsrCert]);
+      }),
+    );
+
+    render(<CertificateManagement />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Awaiting CSR').length).toBeGreaterThanOrEqual(
+        1,
+      );
+    });
+    expect(
+      screen.getAllByText('app.example.com').length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.getAllByText(/Awaiting CSR from connector/).length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.getAllByRole('button', { name: /Delete/ }).length,
+    ).toBeGreaterThanOrEqual(1);
+    // Nothing to renew, revoke, retry or download yet
+    expect(screen.queryByRole('button', { name: /Renew/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Revoke/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Download/ })).toBeNull();
   });
 
   it('displays domains from parsed CSR', async () => {

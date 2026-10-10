@@ -216,6 +216,64 @@ describe('CertIssuerConsumer', () => {
       );
     });
 
+    it('leaves an awaiting_csr certificate alone', async () => {
+      mockTlsService.findOneInternal.mockResolvedValue({
+        id: 1,
+        status: 'awaiting_csr',
+        rawCsr: null,
+        parsedCsr: null,
+        requestedNames: ['example.com'],
+      });
+
+      const result = await processor.process({
+        name: 'tlsCertIssuance',
+        data: { certId: 1 },
+      } as any);
+
+      expect(result).toEqual({ success: false });
+      expect(mockAcme.issue).not.toHaveBeenCalled();
+      expect(mockTlsService.updateInternal).not.toHaveBeenCalled();
+      expect(mockEmailService.sendCertFailed).not.toHaveBeenCalled();
+    });
+
+    it('names a certificate without a parsed CSR by its requested names', async () => {
+      // A completed pending certificate whose parsedCsr is missing
+      mockTlsService.findOneInternal.mockResolvedValue({
+        ...mockCsrRecord,
+        parsedCsr: null,
+        requestedNames: ['app.example.com'],
+        userId: 'u1',
+      });
+
+      await processor.process({
+        name: 'tlsCertIssuance',
+        data: { certId: 1 },
+      } as any);
+
+      expect(mockAlerts.emit).toHaveBeenCalledWith(
+        'u1',
+        'cert.issued',
+        expect.objectContaining({ subject: 'app.example.com' }),
+      );
+    });
+
+    it('marks cert as failed when the CSR is missing', async () => {
+      mockTlsService.findOneInternal.mockResolvedValue({
+        id: 1,
+        status: 'pending',
+        rawCsr: null,
+        parsedCsr: null,
+      });
+
+      await expect(
+        processor.process({
+          name: 'tlsCertIssuance',
+          data: { certId: 1 },
+        } as any),
+      ).rejects.toThrow('CSR appears to be invalid');
+      expect(mockAcme.issue).not.toHaveBeenCalled();
+    });
+
     it('marks cert as failed when CSR has no PEM delimiters', async () => {
       mockTlsService.findOneInternal.mockResolvedValue({
         id: 1,

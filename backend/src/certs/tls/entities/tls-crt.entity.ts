@@ -22,12 +22,22 @@ export class TlsCrt {
   @PrimaryGeneratedColumn()
   id: number;
 
+  /** Null while the certificate is awaiting_csr. */
   @ApiHideProperty()
-  @Column()
-  rawCsr: string;
+  @Column({ type: 'varchar', nullable: true })
+  rawCsr: string | null;
 
-  @Column('jsonb')
-  parsedCsr: ParsedCsr;
+  /** Null while the certificate is awaiting_csr. */
+  @Column('jsonb', { nullable: true })
+  parsedCsr: ParsedCsr | null;
+
+  /**
+   * The names a certificate was requested with when created without a CSR
+   * (lowercased, deduplicated); a connector's CSR must have exactly these.
+   * Null for certificates requested with a CSR.
+   */
+  @Column('text', { array: true, nullable: true })
+  requestedNames: string[] | null;
 
   @Column({ type: 'text', nullable: true })
   crtPem: string | null;

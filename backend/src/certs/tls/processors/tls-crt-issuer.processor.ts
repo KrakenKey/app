@@ -18,6 +18,7 @@ import { AlertsService } from '../../../notifications/channels/alerts.service';
 import type { CertEmailContext } from '../../../notifications/email.service';
 import { User } from '../../../users/entities/user.entity';
 import { ariCertId } from '../util/ari';
+import { certDisplayName } from '../util/cert-names';
 
 const MAX_FAILURE_REASON_LENGTH = 2000;
 
@@ -102,11 +103,16 @@ export class CertIssuerConsumer extends WorkerHost {
       throw new Error(`CSR with ID ${certId} not found`);
     }
 
-    const commonName =
-      (csrRecord.parsedCsr?.subject?.find((a) => a.shortName === 'CN')
-        ?.value as string) ??
-      csrRecord.parsedCsr?.extensions?.[0]?.altNames?.[0]?.value ??
-      `cert #${certId}`;
+    // Still waiting for a connector's CSR: nothing to issue. Leave it as it
+    // is rather than marking it failed (a job should never be queued for it).
+    if (csrRecord.status === CertStatus.AWAITING_CSR) {
+      this.logger.warn(
+        `Skipping ${job.name} for cert #${certId}: still awaiting a CSR`,
+      );
+      return { success: false };
+    }
+
+    const commonName = certDisplayName(csrRecord);
 
     try {
       // Validate CSR format before attempting ACME
@@ -139,7 +145,7 @@ export class CertIssuerConsumer extends WorkerHost {
 
       // ACME issuance handles DNS-01 challenge creation, validation, and cert retrieval
       const fullChainPem = await this.acmeStrategy.issue(
-        this.csrUtilService.formatPem(csrRecord.rawCsr),
+        this.csrUtilService.formatPem(raw),
         this.dnsStrategy,
         { replaces },
       );

@@ -2,8 +2,11 @@ import { Test, TestingModule } from '@nestjs/testing';
 import {
   NotFoundException,
   BadRequestException,
+  ConflictException,
+  ForbiddenException,
   InternalServerErrorException,
 } from '@nestjs/common';
+import { In, Not } from 'typeorm';
 import { TlsService } from './tls.service';
 import { CsrUtilService } from './util/csr-util.service';
 import { CertUtilService } from './util/cert-util.service';
@@ -522,6 +525,447 @@ describe('TlsService', () => {
 
       expect(result).toEqual({ id: 1, status: 'pending' });
       expect(mockRepository.save).toHaveBeenCalled();
+    });
+  });
+
+  // ─── pending certificates (awaiting_csr) ──────────────────────────────
+  describe('create by names (awaiting_csr)', () => {
+    const namesDto = {
+      names: ['WWW.Example.com', 'example.com', 'www.example.com'],
+      managedBy: 'connector' as const,
+    };
+    const ACTIVE = In(['issued', 'awaiting_csr']);
+    const IN_FLIGHT = In(['pending', 'issuing', 'renewing']);
+    const countWhere = (call: unknown[]) =>
+      (call[0] as { where: Record<string, unknown> }).where;
+
+    beforeEach(() => {
+      mockRepository.save.mockResolvedValue({ id: 7, status: 'awaiting_csr' });
+    });
+
+    it('creates an awaiting_csr certificate without a CSR or a job', async () => {
+      const result = await service.create(userId, namesDto);
+
+      expect(result).toEqual({ id: 7, status: 'awaiting_csr' });
+      expect(csrUtilService.validateAndParse).not.toHaveBeenCalled();
+      expect(mockRepository.save).toHaveBeenCalledWith({
+        rawCsr: null,
+        parsedCsr: null,
+        // Lowercased and deduplicated, first name first
+        requestedNames: ['www.example.com', 'example.com'],
+        status: 'awaiting_csr',
+        managedBy: 'connector',
+        autoRenew: false,
+        userId,
+      });
+      expect(mockQueue.add).not.toHaveBeenCalled();
+    });
+
+    it('checks the names against the verified domains like CSR names', async () => {
+      await service.create(userId, namesDto);
+
+      expect(domainsService.findAllVerified).toHaveBeenCalledWith(userId);
+      expect(csrUtilService.isAuthorized).toHaveBeenCalledWith(
+        ['www.example.com', 'example.com'],
+        ['example.com', 'www.example.com'],
+      );
+    });
+
+    it('refuses when the account has no verified domains', async () => {
+      jest.spyOn(domainsService, 'findAllVerified').mockResolvedValue([]);
+
+      await expect(service.create(userId, namesDto)).rejects.toThrow(
+        /No verified domains found/,
+      );
+      expect(mockRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('refuses a name outside the verified domains', async () => {
+      jest.spyOn(csrUtilService, 'isAuthorized').mockImplementation(() => {
+        throw new BadRequestException(
+          'CSR contains unauthorized domains: other.com',
+        );
+      });
+
+      await expect(
+        service.create(userId, {
+          names: ['other.com'],
+          managedBy: 'connector',
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('keeps an API key limited to domains to names under them', async () => {
+      await expect(
+        service.create(userId, namesDto, {
+          restrictToHostnames: ['www.example.com'],
+        }),
+      ).rejects.toThrow(ForbiddenException);
+      expect(mockRepository.save).not.toHaveBeenCalled();
+
+      await expect(
+        service.create(
+          userId,
+          { names: ['a.www.example.com'], managedBy: 'connector' },
+          { restrictToHostnames: ['www.example.com'] },
+        ),
+      ).resolves.toEqual({ id: 7, status: 'awaiting_csr' });
+    });
+
+    it('needs exactly one of csrPem and names', async () => {
+      await expect(
+        service.create(userId, { csrPem: 'pem', ...namesDto }),
+      ).rejects.toThrow('Send exactly one of csrPem or names');
+      await expect(service.create(userId, {})).rejects.toThrow(
+        'Send exactly one of csrPem or names',
+      );
+      expect(mockRepository.save).not.toHaveBeenCalled();
+    });
+
+    it("needs managedBy: 'connector' with names, and refuses it with a CSR", async () => {
+      await expect(
+        service.create(userId, { names: ['example.com'] }),
+      ).rejects.toThrow(/names needs managedBy: 'connector'/);
+      await expect(
+        service.create(userId, {
+          names: ['example.com'],
+          managedBy: null as any,
+        }),
+      ).rejects.toThrow(/names needs managedBy: 'connector'/);
+      await expect(
+        service.create(userId, { csrPem: 'pem', managedBy: 'connector' }),
+      ).rejects.toThrow(/managedBy is only accepted with names/);
+      await expect(
+        service.create(userId, { csrPem: 'pem', managedBy: null as any }),
+      ).rejects.toThrow(/managedBy is only accepted with names/);
+      expect(mockRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('skips the concurrent pending limit', async () => {
+      // Every in-flight slot taken: a CSR request would get 402
+      mockRepository.count.mockImplementation(
+        ({ where }: { where: { status: unknown } }) =>
+          Promise.resolve(
+            JSON.stringify(where.status) === JSON.stringify(IN_FLIGHT)
+              ? 100
+              : 0,
+          ),
+      );
+
+      await expect(service.create(userId, namesDto)).resolves.toEqual({
+        id: 7,
+        status: 'awaiting_csr',
+      });
+      expect(
+        mockRepository.count.mock.calls.map((c: unknown[]) => countWhere(c)),
+      ).not.toContainEqual(expect.objectContaining({ status: IN_FLIGHT }));
+    });
+
+    it('counts toward the total active certificate limit', async () => {
+      // Free plan: 10 active
+      mockRepository.count.mockImplementation(
+        ({ where }: { where: { status: unknown } }) =>
+          Promise.resolve(
+            JSON.stringify(where.status) === JSON.stringify(ACTIVE) ? 10 : 0,
+          ),
+      );
+
+      await expect(service.create(userId, namesDto)).rejects.toMatchObject({
+        status: 402,
+        response: expect.objectContaining({
+          message: 'Total active certificate limit reached',
+        }),
+      });
+      expect(mockRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('is refused by the monthly limit', async () => {
+      mockRepository.count.mockImplementation(
+        ({ where }: { where: { createdAt?: unknown } }) =>
+          Promise.resolve(where.createdAt ? 5 : 0),
+      );
+
+      await expect(service.create(userId, namesDto)).rejects.toMatchObject({
+        status: 402,
+        response: expect.objectContaining({
+          message: 'Monthly certificate limit reached',
+        }),
+      });
+    });
+
+    it('is idempotent on the set of names', async () => {
+      const mockRedis = {
+        set: jest.fn().mockResolvedValue('OK'),
+        get: jest.fn().mockResolvedValue(null),
+        del: jest.fn().mockResolvedValue(1),
+      };
+      mockQueue.client = Promise.resolve(mockRedis);
+
+      await service.create(userId, namesDto);
+      await service.create(userId, {
+        names: ['example.com', 'www.example.com'],
+        managedBy: 'connector',
+      });
+
+      const keys = mockRedis.set.mock.calls
+        .filter((c: unknown[]) => c[4] === 'NX')
+        .map((c: unknown[]) => c[0]);
+      expect(keys).toHaveLength(2);
+      expect(keys[0]).toMatch(
+        new RegExp(`^tls:idem:${userId}:names:[0-9a-f]{64}$`),
+      );
+      expect(keys[1]).toBe(keys[0]);
+    });
+
+    it('replays an awaiting_csr certificate for a repeated request', async () => {
+      const mockRedis = {
+        set: jest.fn().mockResolvedValue(null),
+        get: jest.fn().mockResolvedValue('7'),
+        del: jest.fn().mockResolvedValue(1),
+      };
+      mockQueue.client = Promise.resolve(mockRedis);
+      mockRepository.findOneBy.mockResolvedValue({
+        id: 7,
+        status: 'awaiting_csr',
+      });
+
+      await expect(service.create(userId, namesDto)).resolves.toEqual({
+        id: 7,
+        status: 'awaiting_csr',
+      });
+      expect(mockRepository.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('concurrent pending limit for CSR requests', () => {
+    it('counts pending, issuing and renewing, not awaiting_csr', async () => {
+      await service.create(userId, { csrPem: 'valid-csr-pem' });
+
+      expect(mockRepository.count).toHaveBeenCalledWith({
+        where: {
+          userId: In([userId]),
+          status: In(['pending', 'issuing', 'renewing']),
+        },
+      });
+      expect(mockRepository.count).toHaveBeenCalledWith({
+        where: {
+          userId: In([userId]),
+          status: In(['issued', 'awaiting_csr']),
+        },
+      });
+    });
+  });
+
+  describe('renew an awaiting_csr certificate', () => {
+    const createdAt = new Date('2026-10-01T12:00:00.000Z');
+    const awaiting = () => ({
+      id: 5,
+      userId,
+      status: 'awaiting_csr',
+      rawCsr: null,
+      parsedCsr: null,
+      requestedNames: ['www.example.com', 'example.com'],
+      managedBy: 'connector',
+      autoRenew: false,
+      expiresAt: null,
+      createdAt,
+    });
+    const parsedFor = (cn: string, sans: string[]) =>
+      ({
+        subject: [{ name: 'commonName', shortName: 'CN', value: cn }],
+        attributes: [],
+        publicKey: { keyType: 'ECDSA', bitLength: 256 },
+        extensions: [
+          {
+            name: 'subjectAltName',
+            altNames: sans.map((value) => ({ type: 2, value })),
+          },
+        ],
+      }) as unknown as ParsedCsr;
+    const csrPem =
+      '-----BEGIN CERTIFICATE REQUEST-----\nconnector\n-----END CERTIFICATE REQUEST-----';
+    const mockCsr = (parsed: ParsedCsr, domains: string[]) =>
+      (csrUtilService.validateAndParse as jest.Mock).mockResolvedValue({
+        raw: 'connector-pem',
+        parsed,
+        domains,
+        publicKeyLength: 256,
+      });
+
+    beforeEach(() => {
+      mockRepository.findOneBy.mockResolvedValue(awaiting());
+      mockCsr(parsedFor('Example.com', ['example.com', 'WWW.example.com']), [
+        'Example.com',
+        'WWW.example.com',
+      ]);
+    });
+
+    it('stores the CSR and queues a first issuance when the names match', async () => {
+      const result = await service.renew(5, userId, { csrPem });
+
+      expect(csrUtilService.validateAndParse).toHaveBeenCalledWith(csrPem);
+      // Domains are checked again: one may have lost its verification
+      expect(csrUtilService.isAuthorized).toHaveBeenCalledWith(
+        ['Example.com', 'WWW.example.com'],
+        ['example.com', 'www.example.com'],
+      );
+      expect(mockRepository.update).toHaveBeenCalledWith(
+        { id: 5, status: 'awaiting_csr' },
+        {
+          rawCsr: 'connector-pem',
+          parsedCsr: expect.objectContaining({ subject: expect.any(Array) }),
+          status: 'pending',
+          failureReason: null,
+        },
+      );
+      expect(mockQueue.add).toHaveBeenCalledWith(
+        'tlsCertIssuance',
+        { certId: 5 },
+        { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
+      );
+      expect(result).toEqual({ id: 5, status: 'pending', skipped: false });
+    });
+
+    it('needs a CSR', async () => {
+      await expect(service.renew(5, userId)).rejects.toThrow(
+        new BadRequestException('This certificate is waiting for a CSR'),
+      );
+      await expect(service.renew(5, userId, { ifDue: true })).rejects.toThrow(
+        'This certificate is waiting for a CSR',
+      );
+      expect(mockRepository.update).not.toHaveBeenCalled();
+      expect(mockQueue.add).not.toHaveBeenCalled();
+    });
+
+    it('refuses a CSR whose names differ from requestedNames', async () => {
+      mockCsr(parsedFor('example.com', ['example.com']), ['example.com']);
+
+      await expect(service.renew(5, userId, { csrPem })).rejects.toThrow(
+        'CSR names must match the certificate',
+      );
+      mockCsr(
+        parsedFor('example.com', [
+          'example.com',
+          'www.example.com',
+          'api.example.com',
+        ]),
+        [],
+      );
+      await expect(service.renew(5, userId, { csrPem })).rejects.toThrow(
+        'CSR names must match the certificate',
+      );
+      expect(mockRepository.update).not.toHaveBeenCalled();
+      expect(mockQueue.add).not.toHaveBeenCalled();
+    });
+
+    it('rejects an invalid CSR with the issuance validation error', async () => {
+      (csrUtilService.validateAndParse as jest.Mock).mockRejectedValue(
+        new BadRequestException('RSA key must be at least 2048 bits'),
+      );
+
+      await expect(service.renew(5, userId, { csrPem })).rejects.toThrow(
+        'RSA key must be at least 2048 bits',
+      );
+      expect(mockRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('always treats it as due with ifDue', async () => {
+      const result = await service.renew(5, userId, { ifDue: true, csrPem });
+
+      expect(result).toEqual({ id: 5, status: 'pending', skipped: false });
+      expect(mockQueue.add).toHaveBeenCalled();
+    });
+
+    it('refuses when the names are no longer under a verified domain', async () => {
+      jest.spyOn(domainsService, 'findAllVerified').mockResolvedValue([]);
+
+      await expect(service.renew(5, userId, { csrPem })).rejects.toThrow(
+        /No verified domains found/,
+      );
+      expect(mockRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('leaves itself out of the total active and monthly counts', async () => {
+      await service.renew(5, userId, { csrPem });
+
+      const wheres = mockRepository.count.mock.calls.map(
+        (c: unknown[]) => (c[0] as { where: Record<string, unknown> }).where,
+      );
+      expect(wheres).toContainEqual({
+        userId: In([userId]),
+        status: In(['issued', 'awaiting_csr']),
+        id: Not(5),
+      });
+      expect(wheres).toContainEqual({
+        userId: In([userId]),
+        createdAt: expect.anything(),
+        id: Not(5),
+      });
+    });
+
+    it('is refused by the concurrent pending limit', async () => {
+      mockRepository.count.mockImplementation(
+        ({ where }: { where: { status: unknown } }) =>
+          Promise.resolve(
+            JSON.stringify(where.status) ===
+              JSON.stringify(In(['pending', 'issuing', 'renewing']))
+              ? 2
+              : 0,
+          ),
+      );
+
+      await expect(service.renew(5, userId, { csrPem })).rejects.toMatchObject({
+        status: 402,
+      });
+      expect(mockRepository.update).not.toHaveBeenCalled();
+      expect(mockQueue.add).not.toHaveBeenCalled();
+    });
+
+    it('returns 409 when another request completed it first', async () => {
+      mockRepository.update.mockResolvedValue({ affected: 0 });
+
+      await expect(service.renew(5, userId, { csrPem })).rejects.toThrow(
+        ConflictException,
+      );
+      expect(mockQueue.add).not.toHaveBeenCalled();
+    });
+
+    it('can be deleted', async () => {
+      const result = await service.remove(5, userId);
+
+      expect(mockRepository.delete).toHaveBeenCalledWith(5);
+      expect(result).toEqual({ id: 5 });
+    });
+
+    it('cannot be retried or revoked', async () => {
+      await expect(service.retry(5, userId)).rejects.toThrow(
+        /'failed' state to retry/,
+      );
+      mockRepository.findOne.mockResolvedValue(awaiting());
+      await expect(service.revoke(5, userId)).rejects.toThrow(
+        /'issued' state to revoke/,
+      );
+      expect(mockQueue.add).not.toHaveBeenCalled();
+    });
+
+    it('is never auto-renewed', async () => {
+      mockRepository.findOne.mockResolvedValue(awaiting());
+
+      await service.renewInternal(5);
+
+      expect(mockRepository.update).not.toHaveBeenCalled();
+      expect(mockQueue.add).not.toHaveBeenCalled();
+    });
+
+    it('reports renewAfter as its creation time, without a plan lookup', async () => {
+      const [res] = await service.toResponses([
+        awaiting() as unknown as TlsCrt,
+      ]);
+
+      expect(res.renewAfter).toBe(createdAt.toISOString());
+      expect(res.requestedNames).toEqual(['www.example.com', 'example.com']);
+      expect(billingService.resolveUserTier).not.toHaveBeenCalled();
     });
   });
 

@@ -1,8 +1,15 @@
 import type { TlsCert } from '@krakenkey/shared';
 
+/**
+ * The names a certificate covers: the CSR's CN and SANs, or, for a
+ * certificate still waiting for a connector's CSR, the names it was
+ * requested with.
+ */
 export function getCertDomains(cert: TlsCert): string[] {
   const parsed = cert.parsedCsr;
-  if (!parsed || typeof parsed !== 'object') return [];
+  if (!parsed || typeof parsed !== 'object') {
+    return Array.isArray(cert.requestedNames) ? [...cert.requestedNames] : [];
+  }
 
   const domains: string[] = [];
 
