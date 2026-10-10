@@ -1,10 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, Ban, KeyRound, Pencil, Plug } from 'lucide-react';
+import {
+  ArrowLeft,
+  Ban,
+  KeyRound,
+  Pencil,
+  Plug,
+  SlidersHorizontal,
+} from 'lucide-react';
 import type { Connector } from '@krakenkey/shared';
 import * as connectorService from '../services/connectorService';
 import { useAccessForm } from '../hooks/useAccessForm';
-import { formatRelative, isFailedState } from '../utils/connectors';
+import {
+  enrollmentTokenExpired,
+  formatRelative,
+  isFailedState,
+} from '../utils/connectors';
 import { getCertDomains } from '../utils/certDomains';
 import { toast } from '../utils/toast';
 import {
@@ -12,6 +23,7 @@ import {
   DeploymentStateBadge,
 } from '../components/connectors/ConnectorBadges';
 import { EnrollmentTokenPanel } from '../components/connectors/EnrollmentTokenPanel';
+import { EditLimitsModal } from '../components/connectors/EditLimitsModal';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
@@ -56,7 +68,7 @@ export default function ConnectorDetail() {
   const [notFound, setNotFound] = useState(false);
   const [token, setToken] = useState<{
     value: string;
-    issuedAt: number;
+    expiresAt: string;
   } | null>(null);
   const [issuing, setIssuing] = useState(false);
 
@@ -65,6 +77,7 @@ export default function ConnectorDetail() {
   const [editLabel, setEditLabel] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const [limitsOpen, setLimitsOpen] = useState(false);
   const [revokeOpen, setRevokeOpen] = useState(false);
   const [revoking, setRevoking] = useState(false);
 
@@ -130,8 +143,12 @@ export default function ConnectorDetail() {
     if (!connector) return;
     try {
       setIssuing(true);
-      const value = await connectorService.newEnrollmentToken(connector.id);
-      setToken({ value, issuedAt: Date.now() });
+      const { enrollmentToken, expiresAt } =
+        await connectorService.newEnrollmentToken(connector.id);
+      setToken({ value: enrollmentToken, expiresAt });
+      setConnector((prev) =>
+        prev ? { ...prev, enrollmentTokenExpiresAt: expiresAt } : prev,
+      );
       toast.success(
         'New enrollment token issued. The previous one no longer works.',
       );
@@ -184,6 +201,7 @@ export default function ConnectorDetail() {
 
   const revoked = connector.revokedAt !== null;
   const waiting = !revoked && !connector.enrolledAt;
+  const tokenExpired = enrollmentTokenExpired(connector);
   const deployments = connector.deployments ?? [];
   const failing = deployments.filter((d) => isFailedState(d.state)).length;
   const platform = [connector.os, connector.arch].filter(Boolean).join('/');
@@ -246,7 +264,7 @@ export default function ConnectorDetail() {
         <EnrollmentTokenPanel
           connectorName={connector.name}
           token={token.value}
-          issuedAt={token.issuedAt}
+          expiresAt={token.expiresAt}
           onDismiss={() => setToken(null)}
         />
       )}
@@ -254,9 +272,23 @@ export default function ConnectorDetail() {
       {waiting && !token && (
         <Card className="mb-6 border-amber-500/20 bg-amber-500/5">
           <p className="text-sm text-zinc-300">
-            This connector has not enrolled yet. Its token works once and
-            expires 24 hours after it was issued. If you no longer have the
-            token, or it has expired, get a new one with New enrollment token.
+            {tokenExpired ? (
+              <>
+                This connector has not enrolled, and its enrollment token
+                expired
+                {connector.enrollmentTokenExpiresAt &&
+                  ` on ${new Date(connector.enrollmentTokenExpiresAt).toLocaleString()}`}
+                . Get a new one with New enrollment token.
+              </>
+            ) : (
+              <>
+                This connector has not enrolled yet. Its token works once
+                {connector.enrollmentTokenExpiresAt &&
+                  ` and expires on ${new Date(connector.enrollmentTokenExpiresAt).toLocaleString()}`}
+                . If you no longer have it, get a new one with New enrollment
+                token.
+              </>
+            )}
           </p>
         </Card>
       )}
@@ -294,17 +326,29 @@ export default function ConnectorDetail() {
               <span className="text-zinc-500">&mdash;</span>
             )}
           </Field>
+        </div>
+
+        <div className="border-t border-zinc-800 mt-4 pt-4 text-sm space-y-1.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <h4 className="text-sm font-medium text-zinc-400">
+              Access and restrictions
+            </h4>
+            {!revoked && (
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<SlidersHorizontal className="w-3.5 h-3.5" />}
+                onClick={() => setLimitsOpen(true)}
+              >
+                Edit restrictions
+              </Button>
+            )}
+          </div>
           <Field label="Scopes">
             <span className="font-mono text-xs">
               {connector.scopes.join(', ')}
             </span>
           </Field>
-        </div>
-
-        <div className="border-t border-zinc-800 mt-4 pt-4 text-sm space-y-1.5">
-          <h4 className="text-sm font-medium text-zinc-400 mb-2">
-            Restrictions
-          </h4>
           <Field label="Certificates">
             {connector.allowedCertIds?.length ? (
               <span className="font-mono text-xs">
@@ -326,8 +370,10 @@ export default function ConnectorDetail() {
             )}
           </Field>
           <p className="text-xs text-zinc-500 pt-1">
-            Restrictions can't be changed. To change them, create a new
-            connector and revoke this one.
+            A domain restriction covers new certificates for that domain
+            automatically. Changing the access or restrictions revokes the
+            connector's current short-lived keys, so the new limits apply from
+            its next check.
           </p>
         </div>
       </Card>
@@ -451,6 +497,18 @@ export default function ConnectorDetail() {
           </div>
         </form>
       </Modal>
+
+      {limitsOpen && (
+        <EditLimitsModal
+          connector={connector}
+          onClose={() => setLimitsOpen(false)}
+          onSaved={() => {
+            setLimitsOpen(false);
+            // Reload: the deployments shown follow the new limits.
+            void load();
+          }}
+        />
+      )}
 
       {/* Revoke Modal */}
       <Modal

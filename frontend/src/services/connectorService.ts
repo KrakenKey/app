@@ -63,12 +63,14 @@ export async function revokeConnector(id: string): Promise<void> {
   await api.delete(API_ROUTES.CONNECTORS.BY_ID(id));
 }
 
-/** A fresh enrollment token; any earlier one stops working. */
-export async function newEnrollmentToken(id: string): Promise<string> {
+/** A fresh enrollment token and its expiry; any earlier token stops working. */
+export async function newEnrollmentToken(
+  id: string,
+): Promise<ConnectorEnrollmentTokenResponse> {
   const response = await api.post<ConnectorEnrollmentTokenResponse>(
     API_ROUTES.CONNECTORS.ENROLLMENT_TOKEN(id),
   );
-  return response.data.enrollmentToken;
+  return response.data;
 }
 
 /** Where one certificate is deployed, across the user's active connectors. */

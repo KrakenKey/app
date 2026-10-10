@@ -1,5 +1,4 @@
 import {
-  CONNECTOR_ENROLLMENT_TOKEN_TTL_SECONDS,
   CONNECTOR_FAILED_STATES,
   CONNECTOR_STALE_AFTER_HOURS,
 } from '@krakenkey/shared';
@@ -11,10 +10,16 @@ import type {
 
 type BadgeVariant = 'success' | 'warning' | 'danger' | 'info' | 'neutral';
 
-export type ConnectorStatus = 'waiting' | 'active' | 'stale' | 'revoked';
+export type ConnectorStatus =
+  | 'waiting'
+  | 'expired'
+  | 'active'
+  | 'stale'
+  | 'revoked';
 
 export const CONNECTOR_STATUS_LABEL: Record<ConnectorStatus, string> = {
   waiting: 'Waiting to enroll',
+  expired: 'Enrollment token expired',
   active: 'Active',
   stale: 'Stale',
   revoked: 'Revoked',
@@ -22,6 +27,7 @@ export const CONNECTOR_STATUS_LABEL: Record<ConnectorStatus, string> = {
 
 export const CONNECTOR_STATUS_VARIANT: Record<ConnectorStatus, BadgeVariant> = {
   waiting: 'neutral',
+  expired: 'warning',
   active: 'success',
   stale: 'warning',
   revoked: 'danger',
@@ -29,19 +35,42 @@ export const CONNECTOR_STATUS_VARIANT: Record<ConnectorStatus, BadgeVariant> = {
 
 const STALE_AFTER_MS = CONNECTOR_STALE_AFTER_HOURS * 60 * 60 * 1000;
 
+export type ConnectorStatusFields = Pick<
+  Connector,
+  'revokedAt' | 'enrolledAt' | 'lastSeenAt' | 'enrollmentTokenExpiresAt'
+>;
+
+/** True when the connector hasn't enrolled and its token has expired. */
+export function enrollmentTokenExpired(
+  connector: ConnectorStatusFields,
+  now: number = Date.now(),
+): boolean {
+  return (
+    !connector.revokedAt &&
+    !connector.enrolledAt &&
+    !!connector.enrollmentTokenExpiresAt &&
+    new Date(connector.enrollmentTokenExpiresAt).getTime() <= now
+  );
+}
+
 /**
- * Revoked, not enrolled yet, stale (not seen for 24 hours, the same rule as
- * the connector.stale alert), or active.
+ * Revoked; not enrolled yet, with a usable or an expired token; stale (not
+ * seen for 24 hours, the same rule as the connector.stale alert); or active.
  */
 export function connectorStatus(
-  connector: Pick<Connector, 'revokedAt' | 'enrolledAt' | 'lastSeenAt'>,
+  connector: ConnectorStatusFields,
   now: number = Date.now(),
 ): ConnectorStatus {
   if (connector.revokedAt) return 'revoked';
-  if (!connector.enrolledAt) return 'waiting';
+  if (!connector.enrolledAt) {
+    return enrollmentTokenExpired(connector, now) ? 'expired' : 'waiting';
+  }
   const seen = connector.lastSeenAt ?? connector.enrolledAt;
   return now - new Date(seen).getTime() > STALE_AFTER_MS ? 'stale' : 'active';
 }
+
+export const RESTRICTION_REQUIRED =
+  'Pick at least one certificate or domain. A connector can only use what it is limited to.';
 
 export const DEPLOYMENT_STATE_LABEL: Record<ConnectorDeploymentState, string> =
   {
@@ -84,14 +113,9 @@ export function formatRelative(iso: string, now: number = Date.now()): string {
   return unit(Math.floor(hours / 24), 'day');
 }
 
-/** When a token issued now stops working. */
-export function enrollmentTokenExpiry(now: number = Date.now()): Date {
-  return new Date(now + CONNECTOR_ENROLLMENT_TOKEN_TTL_SECONDS * 1000);
-}
-
 export const CONNECTOR_CONFIG_PATH = '/etc/krakenkey-connector/config.yaml';
 export const CONNECTOR_TOKEN_PATH = '/etc/krakenkey-connector/enrollment-token';
-export const CONNECTOR_IMAGE = 'ghcr.io/krakenkey/connector';
+export const CONNECTOR_IMAGE = 'ghcr.io/krakenkey/connector:v${VERSION}';
 
 /** Enrolls a connector installed on the host. */
 export function enrollCommand(): string {
@@ -104,7 +128,7 @@ export function enrollCommand(): string {
 }
 
 export const CONNECTOR_DOCS_URL =
-  'https://github.com/KrakenKey/connector#quick-start';
+  'https://github.com/KrakenKey/connector/blob/main/README.md#install';
 
 /**
  * Enrolls a connector that runs in Docker, then starts it. Its identity
@@ -112,6 +136,8 @@ export const CONNECTOR_DOCS_URL =
  */
 export function dockerCommands(): string {
   return [
+    'VERSION=0.1.0   # the connector release to run, without the leading v',
+    '',
     'docker run --rm \\',
     '  -e KK_ENROLLMENT_TOKEN_FILE=/run/secrets/kk_enrollment_token \\',
     `  -v ${CONNECTOR_TOKEN_PATH}:/run/secrets/kk_enrollment_token:ro \\`,

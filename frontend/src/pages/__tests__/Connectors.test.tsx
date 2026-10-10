@@ -7,6 +7,7 @@ import { server } from '../../test/mocks/server';
 import { API_URL } from '../../services/api';
 import {
   activeConnector,
+  expiredConnector,
   revokedConnector,
   staleConnector,
   waitingConnector,
@@ -20,6 +21,7 @@ vi.mock('../../utils/clipboard', () => ({
 
 const BASE = `${API_URL}/connectors`;
 const TOKEN = `kkce_${'A'.repeat(43)}`;
+const EXPIRES = '2026-10-11T12:00:00.000Z';
 
 function renderPage() {
   return render(
@@ -38,6 +40,7 @@ describe('Connectors', () => {
     list = [
       activeConnector,
       waitingConnector,
+      expiredConnector,
       staleConnector,
       revokedConnector,
     ];
@@ -59,6 +62,7 @@ describe('Connectors', () => {
               deploymentSummary: undefined,
             },
             enrollmentToken: TOKEN,
+            expiresAt: EXPIRES,
           },
           { status: 201 },
         );
@@ -71,7 +75,8 @@ describe('Connectors', () => {
     await screen.findByText('web-01');
     const table = within(screen.getByRole('table'));
 
-    expect(screen.getByText('Your Connectors (3 of 50)')).toBeInTheDocument();
+    expect(screen.getByText('Your Connectors (4 of 50)')).toBeInTheDocument();
+    expect(table.getByText('Enrollment token expired')).toBeInTheDocument();
     expect(table.getByText('Active')).toBeInTheDocument();
     expect(table.getByText('Waiting to enroll')).toBeInTheDocument();
     expect(table.getByText('Stale')).toBeInTheDocument();
@@ -80,7 +85,7 @@ describe('Connectors', () => {
     expect(table.getByText('Globex')).toBeInTheDocument();
     expect(table.getAllByText('0.3.0').length).toBeGreaterThan(0);
     expect(table.getByText('5 minutes ago')).toBeInTheDocument();
-    expect(table.getByText('Never')).toBeInTheDocument();
+    expect(table.getAllByText('Never')).toHaveLength(2);
     expect(table.getByText('1 certificate')).toBeInTheDocument();
     expect(table.getByText('3 certificates')).toBeInTheDocument();
     expect(table.getByText('1 failing')).toBeInTheDocument();
@@ -170,7 +175,13 @@ describe('Connectors', () => {
     expect(
       within(panel).getByText(/It will not be shown again/),
     ).toBeInTheDocument();
-    expect(within(panel).getByText(/\(24 hours\)/)).toBeInTheDocument();
+    // The expiry comes from the API, not the browser clock.
+    expect(
+      within(panel).getByText(
+        `expires on ${new Date(EXPIRES).toLocaleString()}`,
+        { exact: false },
+      ),
+    ).toBeInTheDocument();
     expect(
       within(panel).getByLabelText('Enroll on the host'),
     ).toHaveTextContent(
@@ -188,7 +199,7 @@ describe('Connectors', () => {
     expect(
       within(screen.getByRole('table')).getByText('web-05'),
     ).toBeInTheDocument();
-    expect(screen.getByText('Your Connectors (4 of 50)')).toBeInTheDocument();
+    expect(screen.getByText('Your Connectors (5 of 50)')).toBeInTheDocument();
 
     await user.click(within(panel).getByRole('button', { name: 'Dismiss' }));
     expect(screen.queryByText(TOKEN)).toBeNull();

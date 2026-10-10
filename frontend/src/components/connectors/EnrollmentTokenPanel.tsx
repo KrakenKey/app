@@ -6,7 +6,6 @@ import {
   CONNECTOR_DOCS_URL,
   dockerCommands,
   enrollCommand,
-  enrollmentTokenExpiry,
 } from '../../utils/connectors';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
@@ -50,16 +49,16 @@ function Snippet({
 export function EnrollmentTokenPanel({
   connectorName,
   token,
-  issuedAt,
+  expiresAt,
   onDismiss,
 }: {
   connectorName: string;
   token: string;
-  /** When the token was issued, in ms; it lasts 24 hours from then. */
-  issuedAt: number;
+  /** When the token expires (ISO 8601), as the API returned it. */
+  expiresAt: string;
   onDismiss: () => void;
 }) {
-  const expires = useMemo(() => enrollmentTokenExpiry(issuedAt), [issuedAt]);
+  const expires = useMemo(() => new Date(expiresAt), [expiresAt]);
   const enroll = useMemo(() => enrollCommand(), []);
   const docker = useMemo(() => dockerCommands(), []);
 
@@ -97,8 +96,8 @@ export function EnrollmentTokenPanel({
             <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
             <span>
               Copy this token now. It will not be shown again. It works once and
-              expires on {expires.toLocaleString()} (24 hours). If it expires
-              first, get a new one from the connector's page.
+              expires on {expires.toLocaleString()}. If it expires first, get a
+              new one from the connector's page.
             </span>
           </p>
         </div>
@@ -116,7 +115,7 @@ export function EnrollmentTokenPanel({
               rel="noreferrer"
               className="text-cyan-400 hover:text-cyan-300 underline"
             >
-              connector quick start
+              connector install guide
             </a>
             ), save the token to a file, then enroll it as the user it will run
             as:
@@ -132,9 +131,10 @@ export function EnrollmentTokenPanel({
             copyLabel="Copy Docker commands"
           />
           <p className="text-xs text-zinc-500">
-            In Docker, mount the directories the connector installs certificates
-            into (here /srv/tls), and keep the data volume: it holds the
-            connector's identity key.
+            Set VERSION to the connector release you want to run and pin it, so
+            an upgrade happens when you choose. Mount the directories the
+            connector installs certificates into (here /srv/tls), and keep the
+            data volume: it holds the connector's identity key.
           </p>
         </div>
       </div>

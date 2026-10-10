@@ -27,7 +27,11 @@ describe('connectorService', () => {
       http.post(BASE, async ({ request }) => {
         posted = (await request.json()) as Record<string, unknown>;
         return HttpResponse.json(
-          { connector: { id: ID, ...posted }, enrollmentToken: 'kkce_x' },
+          {
+            connector: { id: ID, ...posted },
+            enrollmentToken: 'kkce_x',
+            expiresAt: '2026-10-11T12:00:00.000Z',
+          },
           { status: 201 },
         );
       }),
@@ -44,7 +48,13 @@ describe('connectorService', () => {
         return new HttpResponse(null, { status: 204 });
       }),
       http.post(`${BASE}/:id/enrollment-token`, () =>
-        HttpResponse.json({ enrollmentToken: 'kkce_new' }, { status: 201 }),
+        HttpResponse.json(
+          {
+            enrollmentToken: 'kkce_new',
+            expiresAt: '2026-10-11T12:00:00.000Z',
+          },
+          { status: 201 },
+        ),
       ),
     );
   });
@@ -85,7 +95,10 @@ describe('connectorService', () => {
     expect(patched).toEqual({ name: 'web-02', clientLabel: null });
     await revokeConnector(ID);
     expect(deleted).toBe(ID);
-    expect(await newEnrollmentToken(ID)).toBe('kkce_new');
+    expect(await newEnrollmentToken(ID)).toEqual({
+      enrollmentToken: 'kkce_new',
+      expiresAt: '2026-10-11T12:00:00.000Z',
+    });
   });
 
   it('asks for the deployments of one certificate', async () => {

@@ -7,6 +7,7 @@ import { server } from '../../test/mocks/server';
 import { API_URL } from '../../services/api';
 import {
   activeConnector,
+  expiredConnector,
   mockDeployments,
   waitingConnector,
 } from '../../test/mocks/connectors';
@@ -16,6 +17,7 @@ vi.mock('../../utils/clipboard', () => ({ copyToClipboard: vi.fn() }));
 
 const BASE = `${API_URL}/connectors`;
 const TOKEN = `kkce_${'B'.repeat(43)}`;
+const EXPIRES = new Date(Date.now() + 24 * 3600_000).toISOString();
 
 function renderPage(id: string) {
   return render(
@@ -59,7 +61,10 @@ describe('ConnectorDetail', () => {
       }),
       http.post(`${BASE}/:id/enrollment-token`, () => {
         tokens++;
-        return HttpResponse.json({ enrollmentToken: TOKEN }, { status: 201 });
+        return HttpResponse.json(
+          { enrollmentToken: TOKEN, expiresAt: EXPIRES },
+          { status: 201 },
+        );
       }),
     );
   });
@@ -166,5 +171,77 @@ describe('ConnectorDetail', () => {
     expect(
       await screen.findByText('This connector does not exist.'),
     ).toBeInTheDocument();
+  });
+
+  it('shows an expired token and offers a new one', async () => {
+    current = { ...expiredConnector, deployments: [] };
+    const user = userEvent.setup();
+    renderPage(expiredConnector.id);
+    await screen.findByRole('heading', { name: 'mail-05' });
+    expect(screen.getByText('Enrollment token expired')).toBeInTheDocument();
+    expect(
+      screen.getByText(/its enrollment token\s+expired/),
+    ).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole('button', { name: /New enrollment token/ }),
+    );
+    expect(await screen.findByTestId('enrollment-token')).toHaveTextContent(
+      TOKEN,
+    );
+    // The new expiry from the API replaces the expired one.
+    expect(screen.getByText('Waiting to enroll')).toBeInTheDocument();
+    expect(
+      screen.getByText(`expires on ${new Date(EXPIRES).toLocaleString()}`, {
+        exact: false,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it('edits scopes and restrictions, saying the current keys are revoked', async () => {
+    const user = userEvent.setup();
+    renderPage(activeConnector.id);
+    await screen.findByRole('heading', { name: 'web-01' });
+    expect(
+      screen.getByText(/covers new certificates for that domain/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/can't be changed/)).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Edit restrictions' }));
+    const dialog = within(screen.getByRole('dialog'));
+    expect(
+      dialog.getByText(/revokes the connector's current short-lived keys/),
+    ).toBeInTheDocument();
+    // Starts from the current limits.
+    const renew = dialog.getByRole('checkbox', { name: /certs:renew/ });
+    expect(renew).toBeChecked();
+    const cert = await dialog.findByRole('checkbox', {
+      name: /^#1 example\.com/,
+    });
+    expect(cert).toBeChecked();
+    const domain = dialog.getByRole('checkbox', { name: /^example\.com/ });
+    expect(domain).toBeChecked();
+
+    // Clearing every restriction is refused before sending.
+    await user.click(cert);
+    await user.click(domain);
+    await user.click(dialog.getByRole('button', { name: 'Save' }));
+    expect(
+      dialog.getByText(/Pick at least one certificate or domain/),
+    ).toBeInTheDocument();
+    expect(patched).toBeNull();
+
+    await user.click(domain);
+    await user.click(renew);
+    await user.click(dialog.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(patched).toEqual({
+        scopes: ['certs:read'],
+        allowedCertIds: null,
+        allowedDomainIds: ['domain-1'],
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(await screen.findByText('certs:read')).toBeInTheDocument();
   });
 });

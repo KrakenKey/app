@@ -9,6 +9,7 @@ const ACTIVE_ID = '3f1c2b9e-1111-4111-8111-111111111111';
 const WAITING_ID = '3f1c2b9e-2222-4222-8222-222222222222';
 const NEW_ID = '3f1c2b9e-5555-4555-8555-555555555555';
 const TOKEN = `kkce_${'x'.repeat(43)}`;
+const TOKEN_EXPIRES = new Date(Date.now() + 24 * HOUR).toISOString();
 
 /** An issued certificate the connector restriction picker can list. */
 const issuedCert = {
@@ -73,6 +74,7 @@ const activeConnector = {
   allowedCertIds: [42],
   allowedDomainIds: null,
   enrolledAt: ago(48 * HOUR),
+  enrollmentTokenExpiresAt: null as string | null,
   revokedAt: null,
   lastSeenAt: ago(10 * 60 * 1000),
   version: '0.3.0',
@@ -88,6 +90,8 @@ const waitingConnector = {
   name: 'db-02',
   clientLabel: null,
   enrolledAt: null,
+  // Issued 25 hours ago, so it has expired.
+  enrollmentTokenExpiresAt: ago(HOUR),
   lastSeenAt: null,
   version: null,
   os: null,
@@ -101,6 +105,7 @@ async function mockApi(page: Page) {
     list: [activeConnector, waitingConnector] as Record<string, unknown>[],
     posted: null as Record<string, unknown> | null,
     revoked: [] as string[],
+    patched: null as Record<string, unknown> | null,
   };
 
   await page.route(api('/domains'), (route) =>
@@ -128,7 +133,7 @@ async function mockApi(page: Page) {
       ];
       return route.fulfill({
         status: 201,
-        json: { connector, enrollmentToken: TOKEN },
+        json: { connector, enrollmentToken: TOKEN, expiresAt: TOKEN_EXPIRES },
       });
     }
     return route.fulfill({ status: 200, json: state.list });
@@ -141,6 +146,11 @@ async function mockApi(page: Page) {
         status: 404,
         json: { statusCode: 404, message: 'Connector not found' },
       });
+    }
+    if (route.request().method() === 'PATCH') {
+      state.patched = route.request().postDataJSON();
+      Object.assign(connector, state.patched);
+      return route.fulfill({ status: 200, json: connector });
     }
     if (route.request().method() === 'DELETE') {
       state.revoked.push(id);
@@ -173,7 +183,7 @@ test.describe('Connectors', () => {
     await expect(table.getByText('web-01')).toBeVisible();
     await expect(table.getByText('Acme Corp')).toBeVisible();
     await expect(table.getByText('Active')).toBeVisible();
-    await expect(table.getByText('Waiting to enroll')).toBeVisible();
+    await expect(table.getByText('Enrollment token expired')).toBeVisible();
     await expect(table.getByText('10 minutes ago')).toBeVisible();
     await expect(table.getByText('1 certificate')).toBeVisible();
     await expect(table.getByText('1 failing')).toBeVisible();
@@ -199,7 +209,7 @@ test.describe('Connectors', () => {
       'krakenkey-connector enroll --config /etc/krakenkey-connector/config.yaml',
     );
     await expect(page.getByLabel('Enroll and run with Docker')).toContainText(
-      'ghcr.io/krakenkey/connector',
+      'ghcr.io/krakenkey/connector:v${VERSION}',
     );
     expect(state.posted).toEqual({
       name: 'web-05',
@@ -251,7 +261,7 @@ test.describe('Connectors', () => {
     ).toHaveCount(0);
   });
 
-  test('issues a new enrollment token for a connector that has not enrolled', async ({
+  test('issues a new enrollment token once the old one expired', async ({
     page,
   }) => {
     await mockApi(page);
@@ -260,14 +270,51 @@ test.describe('Connectors', () => {
       api(`/connectors/${WAITING_ID}/enrollment-token`),
       (route) => {
         issued++;
-        return route.fulfill({ status: 201, json: { enrollmentToken: TOKEN } });
+        return route.fulfill({
+          status: 201,
+          json: { enrollmentToken: TOKEN, expiresAt: TOKEN_EXPIRES },
+        });
       },
     );
     await page.goto(`/dashboard/connectors/${WAITING_ID}`);
 
-    await expect(page.getByText(/has not enrolled yet/)).toBeVisible();
+    await expect(
+      page.getByText('Enrollment token expired', { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(/its enrollment token\s+expired/),
+    ).toBeVisible();
     await page.getByRole('button', { name: /New enrollment token/ }).click();
     await expect(page.getByTestId('enrollment-token')).toHaveText(TOKEN);
     expect(issued).toBe(1);
+    await expect(
+      page.getByText('Waiting to enroll', { exact: true }),
+    ).toBeVisible();
+  });
+
+  test("edits a connector's restrictions", async ({ page }) => {
+    const state = await mockApi(page);
+    await page.goto(`/dashboard/connectors/${ACTIVE_ID}`);
+
+    await page.getByRole('button', { name: 'Edit restrictions' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(
+      dialog.getByText(/revokes the connector's current short-lived keys/),
+    ).toBeVisible();
+    await expect(
+      dialog.getByRole('checkbox', { name: /#42 app\.example\.com/ }),
+    ).toBeChecked();
+    await dialog.getByRole('checkbox', { name: /^example\.com/ }).check();
+    await dialog.getByRole('button', { name: 'Save' }).click();
+
+    await expect
+      .poll(() => state.patched)
+      .toEqual({
+        scopes: ['certs:read', 'certs:renew'],
+        allowedCertIds: [42],
+        allowedDomainIds: ['dom_001'],
+      });
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByText('example.com', { exact: true })).toBeVisible();
   });
 });

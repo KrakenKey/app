@@ -417,8 +417,9 @@ export default function CertificateManagement() {
                 exactly these names; its first pass issues the certificate.
                 Nothing is sent to the CA until then. Add the certificate's id
                 to the connector's config, and make sure the connector's
-                restrictions cover it (limit the connector to its domain, or
-                create the connector after this certificate and pick it).
+                restrictions cover it. A connector limited to the domain covers
+                it automatically; otherwise add the certificate under Edit
+                restrictions on the connector's page.
               </span>
             </p>
             <Button type="submit" variant="primary" disabled={submitting}>

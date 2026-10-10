@@ -47,7 +47,7 @@ export default function Connectors() {
   const [created, setCreated] = useState<{
     name: string;
     token: string;
-    issuedAt: number;
+    expiresAt: string;
   } | null>(null);
 
   const fetchConnectors = useCallback(async () => {
@@ -71,12 +71,13 @@ export default function Connectors() {
   const handleCreated = ({
     connector,
     enrollmentToken,
+    expiresAt,
   }: CreateConnectorResponse) => {
     setCreateOpen(false);
     setCreated({
       name: connector.name,
       token: enrollmentToken,
-      issuedAt: Date.now(),
+      expiresAt,
     });
     setConnectors((prev) => [
       {
@@ -123,7 +124,7 @@ export default function Connectors() {
         <EnrollmentTokenPanel
           connectorName={created.name}
           token={created.token}
-          issuedAt={created.issuedAt}
+          expiresAt={created.expiresAt}
           onDismiss={() => setCreated(null)}
         />
       )}

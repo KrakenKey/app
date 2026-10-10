@@ -8,12 +8,11 @@ import type {
 } from '@krakenkey/shared';
 import { useAccessForm } from '../../hooks/useAccessForm';
 import * as connectorService from '../../services/connectorService';
-import { CertChecklist, DomainChecklist } from '../AccessFields';
+import { RESTRICTION_REQUIRED } from '../../utils/connectors';
+import { ConnectorLimitsFields } from './ConnectorLimitsFields';
 import { Modal } from '../ui/Modal';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
-
-const legendClass = 'text-sm font-medium text-zinc-300 mb-2';
 
 /** The message to show for a failed create, or null when a toast is enough. */
 function createErrorMessage(error: unknown): string | null {
@@ -79,9 +78,7 @@ export function CreateConnectorModal({
       return;
     }
     if (domainIds.length === 0 && certIds.length === 0) {
-      setRestrictionError(
-        'Pick at least one certificate or domain. A connector can only use what it is limited to.',
-      );
+      setRestrictionError(RESTRICTION_REQUIRED);
       return;
     }
 
@@ -142,81 +139,14 @@ export function CreateConnectorModal({
           />
         </div>
 
-        <fieldset disabled={creating}>
-          <legend className={legendClass}>Access</legend>
-          <div className="grid gap-1 sm:grid-cols-2">
-            <label className="flex items-start gap-2 p-2 rounded-lg">
-              <input
-                type="checkbox"
-                checked
-                disabled
-                className="accent-cyan-500 mt-0.5"
-              />
-              <span>
-                <span className="block font-mono text-xs text-zinc-200">
-                  certs:read
-                </span>
-                <span className="block text-xs text-zinc-500">
-                  Look up the certificates it manages. Always included.
-                </span>
-              </span>
-            </label>
-            <label className="flex items-start gap-2 p-2 rounded-lg cursor-pointer hover:bg-zinc-800/30">
-              <input
-                type="checkbox"
-                checked={renew}
-                onChange={(e) => setRenew(e.target.checked)}
-                className="accent-cyan-500 mt-0.5"
-              />
-              <span>
-                <span className="block font-mono text-xs text-zinc-200">
-                  certs:renew
-                </span>
-                <span className="block text-xs text-zinc-500">
-                  Renew certificates with keys the connector creates, and issue
-                  pending ones. Without it, the connector only deploys.
-                </span>
-              </span>
-            </label>
-          </div>
-        </fieldset>
-
-        <div
-          className="flex flex-col gap-4"
-          aria-describedby={
-            shownRestrictionError ? 'connector-restriction-error' : undefined
-          }
-        >
-          <div>
-            <p className={legendClass}>Restrictions</p>
-            <p className="text-xs text-zinc-500">
-              Pick certificates, domains, or both. A connector can only use the
-              certificates you pick, and if you pick domains, only certificates
-              whose names are all within them. Choose at least one.
-            </p>
-          </div>
-          <CertChecklist
-            form={accessForm}
-            disabled={creating}
-            legend="Certificates"
-            help="Renewing keeps the same certificate, so the limit still applies."
-          />
-          <DomainChecklist
-            form={accessForm}
-            disabled={creating}
-            legend="Domains"
-            help="Certificates for these domains are covered, including ones created later, such as a pending certificate for this connector."
-          />
-          {shownRestrictionError && (
-            <p
-              id="connector-restriction-error"
-              role="alert"
-              className="text-xs text-red-400"
-            >
-              {shownRestrictionError}
-            </p>
-          )}
-        </div>
+        <ConnectorLimitsFields
+          form={accessForm}
+          idPrefix="connector"
+          renew={renew}
+          onRenewChange={setRenew}
+          disabled={creating}
+          error={shownRestrictionError}
+        />
 
         {formError && (
           <p role="alert" className="text-sm text-red-400">

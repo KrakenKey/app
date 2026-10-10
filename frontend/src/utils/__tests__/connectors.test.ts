@@ -3,7 +3,7 @@ import {
   connectorStatus,
   dockerCommands,
   enrollCommand,
-  enrollmentTokenExpiry,
+  enrollmentTokenExpired,
   formatRelative,
   groupByConnector,
   isFailedState,
@@ -13,10 +13,30 @@ const NOW = Date.parse('2026-10-10T12:00:00Z');
 const hoursAgo = (h: number) => new Date(NOW - h * 3600_000).toISOString();
 
 describe('connectorStatus', () => {
-  const base = { revokedAt: null, enrolledAt: null, lastSeenAt: null };
+  const base = {
+    revokedAt: null,
+    enrolledAt: null,
+    lastSeenAt: null,
+    enrollmentTokenExpiresAt: null,
+  };
 
   it('is waiting until the connector enrolls', () => {
     expect(connectorStatus(base, NOW)).toBe('waiting');
+    expect(
+      connectorStatus({ ...base, enrollmentTokenExpiresAt: hoursAgo(-1) }, NOW),
+    ).toBe('waiting');
+  });
+
+  it('shows an expired token until the connector enrolls', () => {
+    const expired = { ...base, enrollmentTokenExpiresAt: hoursAgo(1) };
+    expect(connectorStatus(expired, NOW)).toBe('expired');
+    expect(enrollmentTokenExpired(expired, NOW)).toBe(true);
+    expect(connectorStatus({ ...expired, revokedAt: hoursAgo(0.5) }, NOW)).toBe(
+      'revoked',
+    );
+    expect(
+      enrollmentTokenExpired({ ...expired, enrolledAt: hoursAgo(0.5) }, NOW),
+    ).toBe(false);
   });
 
   it('is active when seen in the last 24 hours', () => {
@@ -50,6 +70,7 @@ describe('connectorStatus', () => {
           revokedAt: hoursAgo(1),
           enrolledAt: hoursAgo(5),
           lastSeenAt: hoursAgo(1),
+          enrollmentTokenExpiresAt: null,
         },
         NOW,
       ),
@@ -102,12 +123,6 @@ describe('groupByConnector', () => {
 });
 
 describe('setup instructions', () => {
-  it('expires a token 24 hours after it was issued', () => {
-    expect(enrollmentTokenExpiry(NOW).toISOString()).toBe(
-      '2026-10-11T12:00:00.000Z',
-    );
-  });
-
   it('enrolls with the token file and the config', () => {
     expect(enrollCommand()).toContain(
       'KK_ENROLLMENT_TOKEN_FILE=/etc/krakenkey-connector/enrollment-token \\\n  krakenkey-connector enroll --config /etc/krakenkey-connector/config.yaml',
@@ -117,8 +132,10 @@ describe('setup instructions', () => {
   it('mounts the same data volume to enroll and run in Docker', () => {
     const text = dockerCommands();
     expect(text).toContain(
-      'ghcr.io/krakenkey/connector enroll --config /etc/krakenkey-connector/config.yaml',
+      'ghcr.io/krakenkey/connector:v${VERSION} enroll --config /etc/krakenkey-connector/config.yaml',
     );
+    expect(text.startsWith('VERSION=')).toBe(true);
+    expect(text).not.toContain('connector:latest');
     expect(
       text.match(/krakenkey-connector-data:\/var\/lib\/krakenkey-connector/g),
     ).toHaveLength(2);

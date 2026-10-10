@@ -41,6 +41,7 @@ export const activeConnector: Connector = {
   allowedCertIds: [1],
   allowedDomainIds: ['domain-1'],
   enrolledAt: ago(48 * HOUR),
+  enrollmentTokenExpiresAt: null,
   revokedAt: null,
   lastSeenAt: ago(5 * 60 * 1000),
   version: '0.3.0',
@@ -58,6 +59,7 @@ export const waitingConnector: Connector = {
   scopes: ['certs:read'],
   allowedDomainIds: null,
   enrolledAt: null,
+  enrollmentTokenExpiresAt: new Date(Date.now() + 23 * HOUR).toISOString(),
   lastSeenAt: null,
   version: null,
   os: null,
@@ -83,4 +85,13 @@ export const revokedConnector: Connector = {
   lastSeenAt: ago(50 * HOUR),
   revokedAt: ago(HOUR),
   deploymentSummary: { certificates: 0, targets: 0, failing: 0 },
+};
+
+export const EXPIRED_ID = '3f1c2b9e-6666-4666-8666-666666666666';
+
+export const expiredConnector: Connector = {
+  ...waitingConnector,
+  id: EXPIRED_ID,
+  name: 'mail-05',
+  enrollmentTokenExpiresAt: ago(2 * HOUR),
 };
