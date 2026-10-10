@@ -205,6 +205,20 @@ describe('TLS Certificates (e2e)', () => {
       );
     });
 
+    it('strips csrPem so it never reaches the service', async () => {
+      mockTlsService.update.mockClear();
+      await request(app.getHttpServer())
+        .patch('/certs/tls/1')
+        .send({ csrPem: MOCK_CSR_PEM, autoRenew: false })
+        .expect(200);
+
+      expect(mockTlsService.update).toHaveBeenCalledWith(1, MOCK_USER.userId, {
+        autoRenew: false,
+      });
+      const dto = mockTlsService.update.mock.calls[0][2] as object;
+      expect(dto).not.toHaveProperty('csrPem');
+    });
+
     it('returns 400 for any other managedBy value', async () => {
       mockTlsService.update.mockClear();
       const res = await request(app.getHttpServer())

@@ -509,6 +509,8 @@ Update certificate metadata. Needs the `certs:renew` scope. Returns the updated 
 | `autoRenew` | boolean | Turn KrakenKey's automatic renewal on or off. |
 | `managedBy` | `"connector"` or `null` | `"connector"` hands renewal to a customer-hosted connector that keeps the private key and renews with a new CSR (see [renew](#post-certstlsidrenew)). KrakenKey then never renews the certificate on its own: the daily auto-renewal and ARI early replacement both skip it, whatever `autoRenew` says. Expiry warnings, `cert.expiring` and `cert.replacement_requested` alerts and ARI checks still run. `null` hands renewal back to KrakenKey. Any other value returns `400`. |
 
+Other fields are ignored and never stored, the same as on every other route. In particular a `csrPem` here does not change the certificate's CSR; to renew with a new CSR, send it to [`POST /certs/tls/:id/renew`](#post-certstlsidrenew).
+
 ### POST /certs/tls/:id/renew
 
 Manually queue a renewal for an `issued` certificate. Creates a new ACME order using the stored CSR, or a new one from the request body. By default the renewal always runs, whatever the expiry date, so it can be used to replace a certificate right away (for example after a key compromise). Each renewal counts against the monthly certificate limit.
