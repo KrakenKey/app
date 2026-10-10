@@ -46,6 +46,8 @@ describe('Sprint 5.1 Critical Path (e2e)', () => {
       remove: jest.fn().mockResolvedValue('removed'),
       renew: jest.fn().mockResolvedValue(MOCK_TLS_CERT),
       retry: jest.fn().mockResolvedValue(MOCK_TLS_CERT),
+      toResponses: jest.fn((certs: unknown[]) => Promise.resolve(certs)),
+      toResponse: jest.fn((cert: unknown) => Promise.resolve(cert)),
     };
 
     ({ app } = await createTestApp({

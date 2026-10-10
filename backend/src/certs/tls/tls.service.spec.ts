@@ -172,6 +172,98 @@ describe('TlsService', () => {
     });
   });
 
+  // ─── toResponses (renewAfter) ─────────────────────────────────────────
+  describe('toResponses', () => {
+    const DAY = 86_400_000;
+    const expiresAt = new Date('2026-12-31T00:00:00.000Z');
+    const issued = (over: Record<string, unknown> = {}) =>
+      ({
+        id: 1,
+        userId,
+        status: 'issued',
+        expiresAt,
+        ariWindowStart: null,
+        managedBy: null,
+        ...over,
+      }) as unknown as TlsCrt;
+
+    it('uses the plan window: 5 days on free', async () => {
+      billingService.resolveUserTier.mockResolvedValue('free');
+
+      const [res] = await service.toResponses([issued()]);
+
+      expect(res.renewAfter).toBe(
+        new Date(expiresAt.getTime() - 5 * DAY).toISOString(),
+      );
+      expect(billingService.resolveUserTier).toHaveBeenCalledWith(userId);
+    });
+
+    it('uses the plan window: 30 days on paid plans', async () => {
+      billingService.resolveUserTier.mockResolvedValue('team');
+
+      const [res] = await service.toResponses([issued()]);
+
+      expect(res.renewAfter).toBe(
+        new Date(expiresAt.getTime() - 30 * DAY).toISOString(),
+      );
+    });
+
+    it('gives connector-managed certs at least 30 days, even on free', async () => {
+      billingService.resolveUserTier.mockResolvedValue('free');
+
+      const [res] = await service.toResponses([
+        issued({ managedBy: 'connector' }),
+      ]);
+
+      expect(res.renewAfter).toBe(
+        new Date(expiresAt.getTime() - 30 * DAY).toISOString(),
+      );
+    });
+
+    it('uses the ARI window start when it is earlier than the plan window', async () => {
+      billingService.resolveUserTier.mockResolvedValue('starter');
+      const ariWindowStart = new Date(expiresAt.getTime() - 45 * DAY);
+
+      const [res] = await service.toResponses([issued({ ariWindowStart })]);
+
+      expect(res.renewAfter).toBe(ariWindowStart.toISOString());
+    });
+
+    it('keeps the plan window when the ARI window starts later', async () => {
+      billingService.resolveUserTier.mockResolvedValue('starter');
+      const ariWindowStart = new Date(expiresAt.getTime() - 10 * DAY);
+
+      const [res] = await service.toResponses([issued({ ariWindowStart })]);
+
+      expect(res.renewAfter).toBe(
+        new Date(expiresAt.getTime() - 30 * DAY).toISOString(),
+      );
+    });
+
+    it('is null for a certificate that is not issued yet', async () => {
+      const [res] = await service.toResponses([
+        issued({ status: 'pending', expiresAt: null }),
+      ]);
+
+      expect(res.renewAfter).toBeNull();
+      expect(billingService.resolveUserTier).not.toHaveBeenCalled();
+    });
+
+    it('keeps the stored fields and looks up each owner plan once', async () => {
+      billingService.resolveUserTier.mockResolvedValue('free');
+
+      const res = await service.toResponses([
+        issued({ id: 1 }),
+        issued({ id: 2 }),
+        issued({ id: 3, userId: 'other-user' }),
+      ]);
+
+      expect(res.map((c) => c.id)).toEqual([1, 2, 3]);
+      expect(res[0]).toMatchObject({ status: 'issued', managedBy: null });
+      expect(billingService.resolveUserTier).toHaveBeenCalledTimes(2);
+    });
+  });
+
   // ─── create ───────────────────────────────────────────────────────────
   describe('create', () => {
     const createDto = { csrPem: 'valid-csr-pem' };
@@ -843,6 +935,197 @@ describe('TlsService', () => {
         BadRequestException,
       );
     });
+
+    describe('with a new CSR', () => {
+      const DAY = 86_400_000;
+      const parsedFor = (cn: string, sans: string[]) =>
+        ({
+          subject: [{ name: 'commonName', shortName: 'CN', value: cn }],
+          attributes: [],
+          publicKey: { keyType: 'ECDSA', bitLength: 256 },
+          extensions: [
+            {
+              name: 'subjectAltName',
+              altNames: sans.map((value) => ({ type: 2, value })),
+            },
+          ],
+        }) as unknown as ParsedCsr;
+      const certWithNames = {
+        ...issuedCert,
+        parsedCsr: parsedFor('example.com', ['example.com', 'www.example.com']),
+      };
+      const newCsrPem =
+        '-----BEGIN CERTIFICATE REQUEST-----\nnew\n-----END CERTIFICATE REQUEST-----';
+      const mockNewCsr = (parsed: ParsedCsr) =>
+        (csrUtilService.validateAndParse as jest.Mock).mockResolvedValue({
+          raw: 'new-normalized-pem',
+          parsed,
+          domains: [],
+          publicKeyLength: 256,
+        });
+
+      it('stores the new CSR and queues the renewal when the names match', async () => {
+        mockRepository.findOneBy.mockResolvedValue({ ...certWithNames });
+        // Same names in another order and case, with a duplicate
+        const parsed = parsedFor('WWW.example.com', [
+          'Example.com',
+          'www.example.com',
+          'example.com',
+        ]);
+        mockNewCsr(parsed);
+
+        const result = await service.renew(1, userId, { csrPem: newCsrPem });
+
+        expect(csrUtilService.validateAndParse).toHaveBeenCalledWith(newCsrPem);
+        expect(mockRepository.update).toHaveBeenCalledWith(1, {
+          rawCsr: 'new-normalized-pem',
+          parsedCsr: parsed,
+          status: 'renewing',
+        });
+        expect(mockQueue.add).toHaveBeenCalledWith(
+          'tlsCertRenewal',
+          { certId: 1 },
+          { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
+        );
+        expect(result).toEqual({ id: 1, status: 'renewing', skipped: false });
+      });
+
+      it('rejects a CSR whose names differ from the certificate', async () => {
+        mockRepository.findOneBy.mockResolvedValue({ ...certWithNames });
+        mockNewCsr(
+          parsedFor('example.com', ['example.com', 'api.example.com']),
+        );
+
+        await expect(
+          service.renew(1, userId, { csrPem: newCsrPem }),
+        ).rejects.toThrow(
+          new BadRequestException('CSR names must match the certificate'),
+        );
+        expect(mockRepository.update).not.toHaveBeenCalled();
+        expect(mockQueue.add).not.toHaveBeenCalled();
+      });
+
+      it('rejects a CSR that covers fewer names than the certificate', async () => {
+        mockRepository.findOneBy.mockResolvedValue({ ...certWithNames });
+        mockNewCsr(parsedFor('example.com', ['example.com']));
+
+        await expect(
+          service.renew(1, userId, { csrPem: newCsrPem }),
+        ).rejects.toThrow('CSR names must match the certificate');
+        expect(mockQueue.add).not.toHaveBeenCalled();
+      });
+
+      it('rejects an invalid CSR with the issuance validation error', async () => {
+        mockRepository.findOneBy.mockResolvedValue({ ...certWithNames });
+        (csrUtilService.validateAndParse as jest.Mock).mockRejectedValue(
+          new BadRequestException('RSA key must be at least 2048 bits'),
+        );
+
+        await expect(
+          service.renew(1, userId, { csrPem: newCsrPem }),
+        ).rejects.toThrow('RSA key must be at least 2048 bits');
+        expect(mockRepository.update).not.toHaveBeenCalled();
+        expect(mockQueue.add).not.toHaveBeenCalled();
+      });
+
+      it('validates the CSR but does not store it when ifDue skips the renewal', async () => {
+        mockRepository.findOneBy.mockResolvedValue({
+          ...certWithNames,
+          expiresAt: new Date(Date.now() + 60 * DAY),
+        });
+        billingService.resolveUserTier.mockResolvedValue('starter');
+        mockNewCsr(parsedFor('example.com', ['www.example.com']));
+
+        const result = await service.renew(1, userId, {
+          ifDue: true,
+          csrPem: newCsrPem,
+        });
+
+        expect(result).toMatchObject({ skipped: true, reason: 'not_due' });
+        expect(csrUtilService.validateAndParse).toHaveBeenCalled();
+        expect(mockRepository.update).not.toHaveBeenCalled();
+        expect(mockQueue.add).not.toHaveBeenCalled();
+      });
+
+      it('rejects a mismatched CSR even when ifDue would skip', async () => {
+        mockRepository.findOneBy.mockResolvedValue({
+          ...certWithNames,
+          expiresAt: new Date(Date.now() + 60 * DAY),
+        });
+        mockNewCsr(parsedFor('other.example.com', []));
+
+        await expect(
+          service.renew(1, userId, { ifDue: true, csrPem: newCsrPem }),
+        ).rejects.toThrow('CSR names must match the certificate');
+      });
+
+      it('does not store the CSR when the plan limit refuses the renewal', async () => {
+        mockRepository.findOneBy.mockResolvedValue({ ...certWithNames });
+        mockNewCsr(parsedFor('example.com', ['www.example.com']));
+        mockRepository.count.mockResolvedValue(1000);
+
+        await expect(
+          service.renew(1, userId, { csrPem: newCsrPem }),
+        ).rejects.toThrow();
+        expect(mockRepository.update).not.toHaveBeenCalled();
+        expect(mockQueue.add).not.toHaveBeenCalled();
+      });
+
+      it('renews with a new CSR when the stored CSR is missing', async () => {
+        mockRepository.findOneBy.mockResolvedValue({
+          ...certWithNames,
+          rawCsr: null,
+        });
+        mockNewCsr(parsedFor('example.com', ['www.example.com']));
+
+        const result = await service.renew(1, userId, { csrPem: newCsrPem });
+
+        expect(result).toMatchObject({ status: 'renewing', skipped: false });
+      });
+    });
+
+    describe('ifDue for connector-managed certs', () => {
+      const DAY = 86_400_000;
+      const connectorCert = (
+        days: number,
+        over: Record<string, unknown> = {},
+      ) => ({
+        ...issuedCert,
+        managedBy: 'connector',
+        expiresAt: new Date(Date.now() + days * DAY + 60_000),
+        ...over,
+      });
+
+      it('is due 30 days before expiry even on the free plan', async () => {
+        mockRepository.findOneBy.mockResolvedValue(connectorCert(20));
+        billingService.resolveUserTier.mockResolvedValue('free');
+
+        const result = await service.renew(1, userId, { ifDue: true });
+
+        expect(result).toEqual({ id: 1, status: 'renewing', skipped: false });
+      });
+
+      it('skips with the 30-day window when not due', async () => {
+        mockRepository.findOneBy.mockResolvedValue(connectorCert(40));
+        billingService.resolveUserTier.mockResolvedValue('free');
+
+        const result = await service.renew(1, userId, { ifDue: true });
+
+        expect(result).toMatchObject({ skipped: true, renewalWindowDays: 30 });
+        expect(mockQueue.add).not.toHaveBeenCalled();
+      });
+
+      it('is due once the ARI window has opened', async () => {
+        mockRepository.findOneBy.mockResolvedValue(
+          connectorCert(40, { ariWindowStart: new Date(Date.now() - DAY) }),
+        );
+        billingService.resolveUserTier.mockResolvedValue('starter');
+
+        const result = await service.renew(1, userId, { ifDue: true });
+
+        expect(result).toMatchObject({ skipped: false });
+      });
+    });
   });
 
   // ─── retry ────────────────────────────────────────────────────────────
@@ -961,6 +1244,21 @@ describe('TlsService', () => {
         { certId: 1 },
         { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
       );
+    });
+
+    it('never renews a connector-managed cert', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        id: 1,
+        status: 'issued',
+        rawCsr: 'pem',
+        managedBy: 'connector',
+        renewalCount: 0,
+      });
+
+      await service.renewInternal(1);
+
+      expect(mockRepository.update).not.toHaveBeenCalled();
+      expect(mockQueue.add).not.toHaveBeenCalled();
     });
 
     it('silently skips non-issued certs', async () => {

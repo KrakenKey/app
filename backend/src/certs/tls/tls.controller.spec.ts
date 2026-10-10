@@ -23,6 +23,12 @@ describe('TlsController', () => {
       retry: jest.fn(),
       revoke: jest.fn(),
       remove: jest.fn(),
+      toResponses: jest.fn((certs: object[]) =>
+        Promise.resolve(certs.map((c) => ({ ...c, renewAfter: null }))),
+      ),
+      toResponse: jest.fn((cert: object) =>
+        Promise.resolve({ ...cert, renewAfter: null }),
+      ),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -56,8 +62,11 @@ describe('TlsController', () => {
       const certs = [{ id: 1, status: 'issued' }];
       mockService.findAll.mockReturnValue(certs);
 
-      expect(await controller.findAll(mockReq)).toEqual(certs);
+      expect(await controller.findAll(mockReq)).toEqual([
+        { ...certs[0], renewAfter: null },
+      ]);
       expect(mockService.findAll).toHaveBeenCalledWith(userId);
+      expect(mockService.toResponses).toHaveBeenCalledWith(certs);
     });
   });
 
@@ -126,8 +135,12 @@ describe('TlsController', () => {
       const cert = { id: 42, status: 'issued' };
       mockService.findOne.mockReturnValue(cert);
 
-      expect(await controller.findOne(mockReq, '42')).toEqual(cert);
+      expect(await controller.findOne(mockReq, '42')).toEqual({
+        ...cert,
+        renewAfter: null,
+      });
       expect(mockService.findOne).toHaveBeenCalledWith(42, userId);
+      expect(mockService.toResponse).toHaveBeenCalledWith(cert);
     });
   });
 
@@ -135,6 +148,18 @@ describe('TlsController', () => {
     it('passes numeric id, userId, and dto to service.update()', async () => {
       const dto = { autoRenew: true };
       mockService.update.mockReturnValue({ id: 1 });
+
+      expect(await controller.update(mockReq, '1', dto as any)).toEqual({
+        id: 1,
+        renewAfter: null,
+      });
+
+      expect(mockService.update).toHaveBeenCalledWith(1, userId, dto);
+    });
+
+    it('passes managedBy through to service.update()', async () => {
+      const dto = { managedBy: 'connector' };
+      mockService.update.mockReturnValue({ id: 1, managedBy: 'connector' });
 
       await controller.update(mockReq, '1', dto as any);
 
@@ -206,6 +231,19 @@ describe('TlsController', () => {
         ifDue: true,
       });
       expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('passes a CSR from the body to service.renew()', async () => {
+      mockService.renew.mockResolvedValue({ skipped: false });
+      const csrPem =
+        '-----BEGIN CERTIFICATE REQUEST-----\nfoo\n-----END CERTIFICATE REQUEST-----';
+
+      await controller.renew(mockReq, '1', mockRes(), 'true', { csrPem });
+
+      expect(mockService.renew).toHaveBeenCalledWith(1, userId, {
+        ifDue: true,
+        csrPem,
+      });
     });
 
     it('treats any value other than "true" as false', async () => {

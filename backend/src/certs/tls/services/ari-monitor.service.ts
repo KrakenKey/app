@@ -31,7 +31,9 @@ const ERROR_RETRY_MS = 6 * HOUR_MS;
 
 /**
  * Polls ACME Renewal Information (RFC 9773) for issued, auto-renewing
- * certificates and stores the CA's suggested window.
+ * certificates and stores the CA's suggested window. Connector-managed
+ * certificates are checked too, whatever their autoRenew flag, since their
+ * renewAfter uses the window; they are never renewed here.
  *
  * Normal renewals still follow the plan window (CertMonitorService). ARI only
  * pulls a renewal earlier when the CA asks for early replacement, for
@@ -68,6 +70,16 @@ export class AriMonitorService {
         {
           status: CertStatus.ISSUED,
           autoRenew: true,
+          ariNextCheckAt: LessThanOrEqual(now),
+        },
+        {
+          status: CertStatus.ISSUED,
+          managedBy: 'connector',
+          ariNextCheckAt: IsNull(),
+        },
+        {
+          status: CertStatus.ISSUED,
+          managedBy: 'connector',
           ariNextCheckAt: LessThanOrEqual(now),
         },
       ],
@@ -166,6 +178,14 @@ export class AriMonitorService {
       });
     }
     if (window.start > now) return;
+
+    // The connector sees the window through renewAfter and renews itself
+    if (cert.managedBy === 'connector') {
+      this.logger.log(
+        `Not renewing certificate #${cert.id} early: managed by a connector`,
+      );
+      return;
+    }
 
     if (await this.autoRenewalLapsed(cert.userId)) {
       this.logger.warn(

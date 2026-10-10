@@ -9,7 +9,7 @@ import {
 } from 'typeorm';
 import { ApiHideProperty } from '@nestjs/swagger';
 import { User } from '../../../users/entities/user.entity';
-import type { CertStatus, ParsedCsr } from '@krakenkey/shared';
+import type { CertManagedBy, CertStatus, ParsedCsr } from '@krakenkey/shared';
 
 @Entity()
 @Index('IDX_tls_crt_userId', ['userId'])
@@ -91,6 +91,14 @@ export class TlsCrt {
    */
   @Column({ type: 'timestamp', nullable: true })
   ariReplacementRequestedAt: Date | null;
+
+  /**
+   * `connector` when a customer-hosted connector renews this certificate with
+   * its own keys. The server then never renews it on its own; expiry alerts
+   * and ARI checks still run.
+   */
+  @Column({ type: 'text', nullable: true })
+  managedBy: CertManagedBy | null;
 
   @CreateDateColumn()
   createdAt: Date;

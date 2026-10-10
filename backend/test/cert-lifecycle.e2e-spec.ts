@@ -37,6 +37,8 @@ describe('Certificate Lifecycle (e2e)', () => {
       revoke: jest.fn().mockResolvedValue({ id: 1, status: 'revoked' }),
       renew: jest.fn().mockResolvedValue({ id: 1, status: 'renewing' }),
       retry: jest.fn().mockResolvedValue({ id: 1, status: 'pending' }),
+      toResponses: jest.fn((certs: unknown[]) => Promise.resolve(certs)),
+      toResponse: jest.fn((cert: unknown) => Promise.resolve(cert)),
     };
 
     ({ app } = await createTestApp({

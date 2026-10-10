@@ -18,6 +18,7 @@ import { CsrUtilService } from './util/csr-util.service';
 import { CertUtilService } from './util/cert-util.service';
 import { TlsCrt } from './entities/tls-crt.entity';
 import { In, MoreThanOrEqual, Repository } from 'typeorm';
+import type { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -32,6 +33,7 @@ import type {
   TlsCertJobPayload,
   TlsCertDetails,
   TlsCertChainInfo,
+  ParsedCsr,
 } from '@krakenkey/shared';
 import { AcmeIssuerStrategy } from './strategies/acme-issuer.strategy';
 import { EmailService } from '../../notifications/email.service';
@@ -39,8 +41,23 @@ import { AlertsService } from '../../notifications/channels/alerts.service';
 import { BillingService } from '../../billing/billing.service';
 import { PLAN_LIMITS } from '../../billing/constants/plan-limits';
 import type { SubscriptionPlan } from '@krakenkey/shared';
-import { daysUntilExpiry, renewalWindowDays } from './util/renewal-window';
-import { nameCovered } from '../../auth/api-key-restrictions';
+import {
+  certRenewalWindowDays,
+  daysUntilExpiry,
+  renewAfter,
+} from './util/renewal-window';
+import { certDnsNames, nameCovered } from '../../auth/api-key-restrictions';
+
+/** A certificate as the API returns it: the stored row plus computed fields. */
+export type TlsCrtResponse = TlsCrt & {
+  /** When the certificate should be renewed (ISO 8601); see renewAfter(). */
+  renewAfter: string | null;
+};
+
+/** Lowercased, deduplicated, sorted names, for comparing two name sets. */
+function normalizedNames(names: string[]): string[] {
+  return [...new Set(names.map((n) => n.toLowerCase()))].sort();
+}
 
 /**
  * Manages TLS certificate lifecycle through a job queue.
@@ -296,6 +313,41 @@ export class TlsService {
     }
   }
 
+  /**
+   * Adds the computed renewAfter to certificates for an API response. Plans
+   * are looked up once per certificate owner.
+   */
+  async toResponses(certs: TlsCrt[]): Promise<TlsCrtResponse[]> {
+    const plans = new Map<string, Promise<string>>();
+    const planOf = (ownerId: string) => {
+      let plan = plans.get(ownerId);
+      if (!plan) {
+        plan = this.billingService.resolveUserTier(ownerId);
+        plans.set(ownerId, plan);
+      }
+      return plan;
+    };
+    return Promise.all(
+      certs.map(async (cert) => {
+        // Only issued certificates have a renewal time; skip the plan lookup
+        if (!cert.expiresAt) return { ...cert, renewAfter: null };
+        const windowDays = certRenewalWindowDays(
+          await planOf(cert.userId),
+          cert.managedBy,
+        );
+        return {
+          ...cert,
+          renewAfter: renewAfter(cert, windowDays)?.toISOString() ?? null,
+        };
+      }),
+    );
+  }
+
+  async toResponse(cert: TlsCrt): Promise<TlsCrtResponse> {
+    const [response] = await this.toResponses([cert]);
+    return response;
+  }
+
   async findOne(id: number, userId: string) {
     // Try direct ownership first (fast path)
     let tlsCrt = await this.TlsCrtRepository.findOneBy({ id, userId });
@@ -446,11 +498,17 @@ export class TlsService {
   }
 
   /**
-   * Renews an existing certificate using the original CSR.
+   * Renews an existing certificate, by default with the CSR stored at first
+   * issuance.
    *
    * Requirements:
    * - Certificate must be in 'issued' state
-   * - Original CSR must be available
+   * - Original CSR must be available, unless a new one is given
+   *
+   * With `csrPem` the certificate is renewed with that CSR instead, so a
+   * client that keeps its keys locally can rotate the key on each renewal.
+   * The CSR gets the same checks as a new request, its names must equal the
+   * certificate's, and it replaces the stored CSR once the renewal is queued.
    *
    * Queues a separate 'tlsCertRenewal' job to handle ACME renewal.
    *
@@ -462,7 +520,7 @@ export class TlsService {
   async renew(
     id: number,
     userId: string,
-    options: { ifDue?: boolean } = {},
+    options: { ifDue?: boolean; csrPem?: string } = {},
   ): Promise<RenewTlsCertResponse> {
     const cert = await this.findOne(id, userId);
 
@@ -472,34 +530,36 @@ export class TlsService {
       );
     }
 
-    if (!cert.rawCsr) {
+    if (!cert.rawCsr && !options.csrPem) {
       throw new BadRequestException(
         'Certificate missing CSR data, cannot renew',
       );
     }
 
+    // Check a new CSR before anything else, so a bad one fails even when the
+    // renewal would be skipped as not due
+    const newCsr = options.csrPem
+      ? await this.validateRenewalCsr(cert, options.csrPem)
+      : null;
+
     // A CA request for early replacement (ARI) makes the cert due regardless
     if (options.ifDue && cert.expiresAt && !cert.ariReplacementRequestedAt) {
-      // Same window the auto-renewal cron applies to this cert's owner
-      const windowDays = renewalWindowDays(
-        await this.billingService.resolveUserTier(cert.userId),
-      );
-      if (daysUntilExpiry(cert.expiresAt) > windowDays) {
-        return {
-          id: cert.id,
-          status: CertStatus.ISSUED,
-          skipped: true,
-          reason: 'not_due',
-          expiresAt: cert.expiresAt.toISOString(),
-          renewalWindowDays: windowDays,
-        };
-      }
+      const skip = await this.notDue(cert, cert.expiresAt);
+      if (skip) return skip;
     }
 
     // Plan-based limit checks (renewals count against monthly cert limit)
     await this.enforceCertLimits(userId);
 
+    // The new CSR is only stored once the renewal is certain to be queued
     await this.TlsCrtRepository.update(cert.id, {
+      ...(newCsr
+        ? {
+            rawCsr: newCsr.raw,
+            // ParsedCsr has `unknown` values, which QueryDeepPartialEntity rejects
+            parsedCsr: newCsr.parsed as QueryDeepPartialEntity<ParsedCsr>,
+          }
+        : {}),
       status: CertStatus.RENEWING,
     });
 
@@ -514,6 +574,53 @@ export class TlsService {
       id: cert.id,
       status: CertStatus.RENEWING,
       skipped: false,
+    };
+  }
+
+  /**
+   * Validates a CSR given for renewal: the checks a new request gets
+   * (format, signature, key type and strength), and the same names as the
+   * certificate. Names are compared lowercased, deduplicated and sorted.
+   */
+  private async validateRenewalCsr(cert: TlsCrt, csrPem: string) {
+    const csr = await this.csrUtilService.validateAndParse(csrPem);
+    const current = normalizedNames(certDnsNames(cert.parsedCsr));
+    const requested = normalizedNames(certDnsNames(csr.parsed));
+    if (
+      current.length !== requested.length ||
+      current.some((name, i) => name !== requested[i])
+    ) {
+      throw new BadRequestException('CSR names must match the certificate');
+    }
+    return csr;
+  }
+
+  /**
+   * For `renew?ifDue=true`: the skip response when the certificate is not
+   * due yet, or null when it is. Other certificates use the same window the
+   * auto-renewal cron applies to the owner's plan. A connector-managed
+   * certificate is due once its renewAfter, as the API reports it, has passed.
+   */
+  private async notDue(
+    cert: TlsCrt,
+    expiresAt: Date,
+  ): Promise<RenewTlsCertResponse | null> {
+    const windowDays = certRenewalWindowDays(
+      await this.billingService.resolveUserTier(cert.userId),
+      cert.managedBy,
+    );
+    const due =
+      cert.managedBy === 'connector'
+        ? (renewAfter(cert, windowDays)?.getTime() ?? 0) <= Date.now()
+        : daysUntilExpiry(expiresAt) <= windowDays;
+    if (due) return null;
+    return {
+      id: cert.id,
+      status: CertStatus.ISSUED,
+      skipped: true,
+      reason: 'not_due',
+      expiresAt: expiresAt.toISOString(),
+      renewalWindowDays: windowDays,
     };
   }
 
@@ -600,6 +707,14 @@ export class TlsService {
   async renewInternal(id: number): Promise<void> {
     const cert = await this.findOneInternal(id, { relations: ['user'] });
     if (!cert || cert.status !== CertStatus.ISSUED || !cert.rawCsr) {
+      return;
+    }
+
+    // A connector renews these itself with its own keys; never renew them here
+    if (cert.managedBy === 'connector') {
+      this.logger.log(
+        `Auto-renewal skipped for cert #${id}: managed by a connector`,
+      );
       return;
     }
 

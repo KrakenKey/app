@@ -33,6 +33,11 @@ export class CertMonitorService {
    * Runs daily at 6 AM. Finds all issued certificates expiring within their
    * tier-specific renewal window and queues a renewal job for each via BullMQ.
    * Free tier: 5-day window, paid tiers: 30-day window.
+   *
+   * Connector-managed certificates get the expiry warning but are never
+   * renewed here: the connector renews them with its own keys. They are
+   * checked whatever their autoRenew flag, which only controls server-side
+   * renewal.
    */
   @Cron(CronExpression.EVERY_DAY_AT_6AM)
   async checkExpiringCertificates(): Promise<void> {
@@ -47,11 +52,18 @@ export class CertMonitorService {
     this.metricsService.activeCertificatesTotal.set(activeCount);
 
     const expiring = await this.tlsCrtRepository.find({
-      where: {
-        status: CertStatus.ISSUED,
-        autoRenew: true,
-        expiresAt: LessThan(threshold),
-      },
+      where: [
+        {
+          status: CertStatus.ISSUED,
+          autoRenew: true,
+          expiresAt: LessThan(threshold),
+        },
+        {
+          status: CertStatus.ISSUED,
+          managedBy: 'connector',
+          expiresAt: LessThan(threshold),
+        },
+      ],
       relations: ['user'],
     });
 
@@ -92,8 +104,10 @@ export class CertMonitorService {
       // Skip certs outside this user's renewal window
       if (daysLeft > windowDays) continue;
 
-      // Free-tier auto-renewal confirmation check
-      if (userPlan === 'free') {
+      const connector = cert.managedBy === 'connector';
+
+      // Free-tier auto-renewal confirmation check (server-side renewal only)
+      if (userPlan === 'free' && !connector) {
         let lapsed = lapsedCache.get(cert.userId);
         if (lapsed === undefined) {
           const user =
@@ -138,6 +152,13 @@ export class CertMonitorService {
             daysUntilExpiry: daysLeft,
           },
         });
+      }
+
+      if (connector) {
+        this.logger.log(
+          `Not renewing certificate #${cert.id}: managed by a connector`,
+        );
+        continue;
       }
 
       try {

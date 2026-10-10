@@ -55,6 +55,8 @@ describe('Scoped API keys (e2e)', () => {
     revoke: jest.fn().mockResolvedValue({ id: 1, status: 'revoking' }),
     remove: jest.fn().mockResolvedValue({ id: 1 }),
     create: jest.fn().mockResolvedValue({ id: 3, status: 'pending' }),
+    toResponses: jest.fn((certs: unknown[]) => Promise.resolve(certs)),
+    toResponse: jest.fn((cert: unknown) => Promise.resolve(cert)),
   };
   const domainsService = {
     findAll: jest.fn().mockResolvedValue(DOMAINS),
