@@ -58,6 +58,10 @@ describe('Connectors (e2e)', () => {
   let api: INestApplication;
   let repo: FakeConnectorRepo;
   let auth: FakeAuthService;
+  const security = {
+    isLockedOut: jest.fn().mockResolvedValue(false),
+    recordFailure: jest.fn(),
+  };
 
   const tlsService = {
     findAll: jest.fn().mockResolvedValue(CERTS),
@@ -101,13 +105,7 @@ describe('Connectors (e2e)', () => {
         ApiKeyStrategy,
         JwtStrategy,
         { provide: TlsService, useValue: tlsService },
-        {
-          provide: ApiKeySecurityService,
-          useValue: {
-            isLockedOut: jest.fn().mockResolvedValue(false),
-            recordFailure: jest.fn(),
-          },
-        },
+        { provide: ApiKeySecurityService, useValue: security },
         {
           provide: ConfigService,
           useValue: { get: () => 'https://auth.example.com/application/o/kk/' },
@@ -208,6 +206,12 @@ describe('Connectors (e2e)', () => {
         'a bad domain id',
         { allowedCertIds: undefined, allowedDomainIds: ['x'] },
       ],
+      ['an out-of-range certificate id', { allowedCertIds: [2147483648] }],
+      ['a newline in the name', { name: 'web\n01' }],
+      [
+        'a bidi override in the client label',
+        { clientLabel: 'Acme\u202Eevil' },
+      ],
     ])('refuses %s with 400', async (_, over) => {
       await session()
         .post('/connectors')
@@ -238,6 +242,15 @@ describe('Connectors (e2e)', () => {
         .patch(`/connectors/${connector.id}`)
         .send({ name: null })
         .expect(400);
+      await session()
+        .patch(`/connectors/${connector.id}`)
+        .send({ clientLabel: 'line\nbreak' })
+        .expect(400);
+      await session().delete(`/connectors/${connector.id}`).expect(204);
+      await session()
+        .patch(`/connectors/${connector.id}`)
+        .send({ name: 'after-revoke' })
+        .expect(409);
       await session().get(`/connectors/${UNKNOWN_ID}`).expect(404);
       await session().get('/connectors/not-a-uuid').expect(400);
     });
@@ -336,9 +349,11 @@ describe('Connectors (e2e)', () => {
         .expect(409);
     });
 
-    it('400s a malformed public key without using up the token', async () => {
+    it('400s a malformed or small-order public key without using up the token', async () => {
       const { enrollmentToken } = await createConnector();
       for (const publicKey of [
+        'AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+        Buffer.alloc(32).toString('base64'),
         'AAAA',
         Buffer.alloc(32, 1).toString('base64url'),
         Buffer.alloc(33, 1).toString('base64'),
@@ -469,6 +484,44 @@ describe('Connectors (e2e)', () => {
         .expect(200);
     });
 
+    it('revokes keys issued under the old key', async () => {
+      const { id, key } = await enrolled();
+      const res = await anon()
+        .post('/connectors/token')
+        .send(tokenRequest(key, id))
+        .expect(200);
+      const bearer = `Bearer ${res.body.apiKey}`;
+      await anon().get('/certs/tls/7').set('Authorization', bearer).expect(200);
+      const next = connectorKey();
+      await anon()
+        .post('/connectors/rotate')
+        .send(rotateRequest(key, id, next.publicB64))
+        .expect(204);
+      await anon().get('/certs/tls/7').set('Authorization', bearer).expect(401);
+    });
+
+    it('refuses rotating to the same key or a small-order key', async () => {
+      const { id, key } = await enrolled();
+      await anon()
+        .post('/connectors/rotate')
+        .send(rotateRequest(key, id, key.publicB64))
+        .expect(400);
+      await anon()
+        .post('/connectors/rotate')
+        .send(
+          rotateRequest(
+            key,
+            id,
+            'AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+          ),
+        )
+        .expect(400);
+      await anon()
+        .post('/connectors/token')
+        .send(tokenRequest(key, id))
+        .expect(200);
+    });
+
     it('does not accept a token signature as a rotation', async () => {
       const { id, key } = await enrolled();
       const body = tokenRequest(key, id);
@@ -491,11 +544,20 @@ describe('Connectors (e2e)', () => {
 
       await session().delete(`/connectors/${id}`).expect(204);
 
-      await anon().get('/certs/tls/7').set('Authorization', bearer).expect(401);
+      security.recordFailure.mockClear();
+      for (let i = 0; i < 12; i++) {
+        await anon()
+          .get('/certs/tls/7')
+          .set('Authorization', bearer)
+          .expect(401);
+      }
       await anon()
         .post('/connectors/token')
         .send(tokenRequest(key, id))
         .expect(401);
+      // Neither counts toward the per-IP API key lockout, so revoking a
+      // site's connectors can't lock the site out for other keys
+      expect(security.recordFailure).not.toHaveBeenCalled();
       await anon()
         .post('/connectors/rotate')
         .send(rotateRequest(key, id, connectorKey().publicB64))

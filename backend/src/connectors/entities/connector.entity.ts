@@ -50,7 +50,7 @@ export class Connector {
   @Column({ type: 'text', nullable: true })
   publicKey: string | null;
 
-  /** scrypt hash of the unused enrollment token; cleared when used. */
+  /** HMAC-SHA256 of the unused enrollment token; cleared when used. */
   @Column({ type: 'text', nullable: true, select: false })
   enrollmentTokenHash?: string | null;
 

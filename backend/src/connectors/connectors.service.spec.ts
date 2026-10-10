@@ -92,7 +92,7 @@ describe('ConnectorsService', () => {
       createQueryBuilder: jest.fn(() => qb),
     };
     auth = {
-      hashSecret: jest.fn((raw: string) => `hash(${raw})`),
+      hmacSecret: jest.fn((raw: string) => `hash(${raw})`),
       validateRestrictions: jest.fn(
         async (_u: string, r: Record<string, unknown[] | undefined>) => ({
           scopes: null,
@@ -232,6 +232,14 @@ describe('ConnectorsService', () => {
   });
 
   describe('update', () => {
+    it('refuses a revoked connector with 409', async () => {
+      row = enrolled({ revokedAt: new Date() });
+      await expect(svc.update('u1', ID, { name: 'x' })).rejects.toThrow(
+        ConflictException,
+      );
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
     it('renames and clears the client label', async () => {
       row = enrolled({ clientLabel: 'Acme' });
       const res = await svc.update('u1', ID, {
@@ -239,7 +247,7 @@ describe('ConnectorsService', () => {
         clientLabel: null,
       });
       expect(repo.update).toHaveBeenCalledWith(
-        { id: ID, userId: 'u1' },
+        { id: ID, userId: 'u1', revokedAt: expect.anything() },
         { name: 'web-02', clientLabel: null },
       );
       expect(res).toMatchObject({ name: 'web-02', clientLabel: null });
@@ -318,13 +326,26 @@ describe('ConnectorsService', () => {
       expect(err.message).toBe('Invalid enrollment token');
     });
 
-    it('refuses malformed tokens without hashing them', async () => {
+    it('gives malformed tokens the same work as any other refusal', async () => {
       for (const bad of ['kk_abc', 'kkce_short', 'x'.repeat(60)]) {
         await expect(svc.enroll(dto({ token: bad }))).rejects.toThrow(
           'Invalid enrollment token',
         );
       }
-      expect(auth.hashSecret).not.toHaveBeenCalled();
+      expect(auth.hmacSecret).toHaveBeenCalledTimes(3);
+      expect(qb.execute).toHaveBeenCalledTimes(3);
+    });
+
+    it('refuses small-order public keys before touching the token', async () => {
+      for (const publicKey of [
+        'AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+        Buffer.alloc(32).toString('base64'),
+      ]) {
+        await expect(svc.enroll(dto({ publicKey }))).rejects.toThrow(
+          BadRequestException,
+        );
+      }
+      expect(qb.execute).not.toHaveBeenCalled();
     });
 
     it('checks the public key before touching the token', async () => {
@@ -441,12 +462,30 @@ describe('ConnectorsService', () => {
       };
     };
 
-    it('replaces the key when signed by the current one', async () => {
+    it('replaces the key when signed by the current one and revokes live keys', async () => {
       await svc.rotate(rotateDto(key));
       expect(repo.update).toHaveBeenCalledWith(
         expect.objectContaining({ id: ID, publicKey: key.publicB64 }),
         expect.objectContaining({ publicKey: next.publicB64 }),
       );
+      expect(auth.revokeConnectorKeys).toHaveBeenCalledWith(ID);
+    });
+
+    it('refuses rotating to the same key', async () => {
+      await expect(svc.rotate(rotateDto(key, key.publicB64))).rejects.toThrow(
+        'newPublicKey must differ from the current key',
+      );
+      expect(repo.update).not.toHaveBeenCalled();
+      expect(auth.revokeConnectorKeys).not.toHaveBeenCalled();
+    });
+
+    it('refuses a small-order new key', async () => {
+      await expect(
+        svc.rotate(
+          rotateDto(key, 'AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='),
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(nonces.claim).not.toHaveBeenCalled();
     });
 
     it('refuses a rotation signed by the new key', async () => {
@@ -468,6 +507,7 @@ describe('ConnectorsService', () => {
       await expect(svc.rotate(rotateDto(key))).rejects.toThrow(
         UnauthorizedException,
       );
+      expect(auth.revokeConnectorKeys).not.toHaveBeenCalled();
     });
 
     it('400s for an invalid new key', async () => {

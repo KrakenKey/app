@@ -125,7 +125,7 @@ export class ConnectorsService {
       allowedCertIds: limits.allowedCertIds,
       allowedDomainIds: limits.allowedDomainIds,
       publicKey: null,
-      enrollmentTokenHash: this.authService.hashSecret(enrollmentToken),
+      enrollmentTokenHash: this.authService.hmacSecret(enrollmentToken),
       enrollmentTokenExpiresAt: tokenExpiry(),
       enrolledAt: null,
       revokedAt: null,
@@ -159,7 +159,7 @@ export class ConnectorsService {
     const result = await this.connectorRepo.update(
       { id, userId, enrolledAt: IsNull(), revokedAt: IsNull() },
       {
-        enrollmentTokenHash: this.authService.hashSecret(enrollmentToken),
+        enrollmentTokenHash: this.authService.hmacSecret(enrollmentToken),
         enrollmentTokenExpiresAt: tokenExpiry(),
       },
     );
@@ -176,11 +176,17 @@ export class ConnectorsService {
     dto: UpdateConnectorDto,
   ): Promise<ConnectorDto> {
     const connector = await this.findOwned(userId, id);
+    if (connector.revokedAt) {
+      throw new ConflictException('This connector has been revoked');
+    }
     const changes: { name?: string; clientLabel?: string | null } = {};
     if (dto.name !== undefined) changes.name = dto.name;
     if (dto.clientLabel !== undefined) changes.clientLabel = dto.clientLabel;
     if (Object.keys(changes).length) {
-      await this.connectorRepo.update({ id, userId }, changes);
+      await this.connectorRepo.update(
+        { id, userId, revokedAt: IsNull() },
+        changes,
+      );
       Object.assign(connector, changes);
     }
     return toDto(connector);
@@ -236,13 +242,9 @@ export class ConnectorsService {
         'publicKey is not a valid Ed25519 public key',
       );
     }
-    if (
-      !dto.token.startsWith(CONNECTOR_ENROLLMENT_TOKEN_PREFIX) ||
-      dto.token.length < CONNECTOR_ENROLLMENT_TOKEN_PREFIX.length + 43
-    ) {
-      this.refuseEnrollment('malformed token', ip);
-    }
-
+    // Every token, well-formed or not, gets the same HMAC and the same
+    // conditional UPDATE, so a refusal takes the same work whatever the
+    // reason.
     const now = new Date();
     const result = await this.connectorRepo
       .createQueryBuilder()
@@ -259,7 +261,7 @@ export class ConnectorsService {
         arch: dto.arch,
       })
       .where('"enrollmentTokenHash" = :hash', {
-        hash: this.authService.hashSecret(dto.token),
+        hash: this.authService.hmacSecret(dto.token),
       })
       .andWhere('"enrollmentTokenExpiresAt" > :now', { now })
       .andWhere('"enrolledAt" IS NULL')
@@ -271,7 +273,10 @@ export class ConnectorsService {
       result.raw as { id: string; name: string; userId: string }[]
     )[0];
     if (!row) {
-      this.refuseEnrollment('unknown, used, expired or revoked token', ip);
+      this.refuseEnrollment(
+        'unknown, malformed, used, expired or revoked token',
+        ip,
+      );
     }
     this.logger.log(
       `Connector ${row.id} (user ${row.userId}) enrolled${ip ? ` from ${ip}` : ''}`,
@@ -328,7 +333,13 @@ export class ConnectorsService {
     return { apiKey: key.apiKey, expiresAt: key.expiresAt.toISOString() };
   }
 
-  /** Replaces the connector's public key, signed by the current one. */
+  /**
+   * Replaces the connector's public key, signed by the current one, and
+   * revokes every key issued so far. Rotating is what a connector does
+   * after a suspected compromise of its host, so keys minted under the old
+   * key must not outlive it; the connector gets a fresh one with the new
+   * key right after.
+   */
   async rotate(dto: ConnectorRotateDto, ip?: string): Promise<void> {
     if (!parsePublicKey(dto.newPublicKey)) {
       throw new BadRequestException(
@@ -345,6 +356,12 @@ export class ConnectorsService {
       ),
       ip,
     );
+    // Checked after the signature, so only the connector learns this
+    if (dto.newPublicKey === connector.publicKey) {
+      throw new BadRequestException(
+        'newPublicKey must differ from the current key',
+      );
+    }
     const result = await this.connectorRepo.update(
       {
         id: connector.id,
@@ -360,8 +377,9 @@ export class ConnectorsService {
     if (!result.affected) {
       this.refuseCredentials(connector.id, 'key changed or revoked', ip);
     }
+    const keys = await this.authService.revokeConnectorKeys(connector.id);
     this.logger.log(
-      `Connector ${connector.id} rotated its key${ip ? ` from ${ip}` : ''}`,
+      `Connector ${connector.id} rotated its key${ip ? ` from ${ip}` : ''}; ${keys} live key(s) revoked`,
     );
   }
 
