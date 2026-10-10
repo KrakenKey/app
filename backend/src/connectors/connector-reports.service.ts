@@ -11,6 +11,7 @@ import {
   CONNECTOR_FAILED_STATES,
   CONNECTOR_STALE_AFTER_HOURS,
   type ConnectorDeployment as ConnectorDeploymentDto,
+  type ConnectorDeploymentSummary,
   type ConnectorDeploymentState,
   type ConnectorReportResponse,
 } from '@krakenkey/shared';
@@ -108,6 +109,36 @@ export class ConnectorReportsService {
       order: { certificateId: 'ASC', label: 'ASC' },
     });
     return rows.map((d) => toDeploymentDto(d, connector.name));
+  }
+
+  /**
+   * Counts of what each connector last reported, for the connector list.
+   * Connectors without deployments get zeros.
+   */
+  async summaries(
+    connectorIds: string[],
+  ): Promise<Map<string, ConnectorDeploymentSummary>> {
+    const result = new Map<string, ConnectorDeploymentSummary>();
+    if (!connectorIds.length) return result;
+    for (const id of connectorIds) {
+      result.set(id, { certificates: 0, targets: 0, failing: 0 });
+    }
+    const rows = await this.deploymentRepo.find({
+      where: { connectorId: In(connectorIds) },
+      select: ['connectorId', 'certificateId', 'state'],
+    });
+    const certs = new Map<string, Set<number>>();
+    for (const row of rows) {
+      const summary = result.get(row.connectorId);
+      if (!summary) continue;
+      summary.targets++;
+      if (FAILED.has(row.state)) summary.failing++;
+      const seen = certs.get(row.connectorId) ?? new Set<number>();
+      seen.add(row.certificateId);
+      certs.set(row.connectorId, seen);
+    }
+    for (const [id, seen] of certs) result.get(id)!.certificates = seen.size;
+    return result;
   }
 
   // --- Report ----------------------------------------------------------------

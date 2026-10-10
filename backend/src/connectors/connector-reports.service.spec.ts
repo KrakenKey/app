@@ -428,6 +428,36 @@ describe('ConnectorReportsService', () => {
       await expect(svc.forCertificate('u1', 7)).resolves.toEqual([]);
       expect(deploymentRepo.find).not.toHaveBeenCalled();
     });
+
+    it('counts certificates, targets and failing targets per connector', async () => {
+      deploymentRepo.find.mockResolvedValue([
+        { connectorId: CID, certificateId: 7, state: 'verified' },
+        { connectorId: CID, certificateId: 7, state: 'failed' },
+        { connectorId: CID, certificateId: 8, state: 'rolled_back' },
+        { connectorId: CID, certificateId: 8, state: 'staged' },
+      ]);
+      const result = await svc.summaries([CID, 'c2']);
+      expect(result.get(CID)).toEqual({
+        certificates: 2,
+        targets: 4,
+        failing: 2,
+      });
+      expect(result.get('c2')).toEqual({
+        certificates: 0,
+        targets: 0,
+        failing: 0,
+      });
+      expect(deploymentRepo.find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: ['connectorId', 'certificateId', 'state'],
+        }),
+      );
+    });
+
+    it('does not query deployments for an empty list', async () => {
+      await expect(svc.summaries([])).resolves.toEqual(new Map());
+      expect(deploymentRepo.find).not.toHaveBeenCalled();
+    });
   });
 
   describe('alertStaleConnectors', () => {

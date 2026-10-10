@@ -875,7 +875,7 @@ The three connector routes are limited to 10 requests per minute per IP each (se
 }
 ```
 
-`lastSeenAt` is the last enrollment, key exchange, rotation or status report. `version`, `os` and `arch` are what the connector last sent. `GET /connectors/:id` adds `deployments`, every target the connector last reported (see [below](#post-connectorsreport)); the list does not include it.
+`lastSeenAt` is the last enrollment, key exchange, rotation or status report. `version`, `os` and `arch` are what the connector last sent. `GET /connectors/:id` adds `deployments`, every target the connector last reported (see [below](#post-connectorsreport)); the list does not include it. Instead, each connector in `GET /connectors` has `deploymentSummary`: `{ "certificates": 2, "targets": 3, "failing": 1 }`, where `failing` counts targets in `failed` or `rolled_back`.
 
 ### POST /connectors
 
