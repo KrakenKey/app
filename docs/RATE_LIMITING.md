@@ -22,7 +22,19 @@ Each limit applies **per route**, not across the API. See [Tracking key](#tracki
 
 `PUBLIC` routes are always limited per IP at the `free` row, because the caller's tier can only come from an unverified token there. The higher Public values for paid tiers are currently unused.
 
-`PUBLIC_STRICT` routes are tracked the same way, per IP at the `free` row, with a limit of **10/min** on every tier. They are the unauthenticated credential exchanges, where a caller proves itself with something other than a bearer token.
+Three connector categories use the same limit on every tier:
+
+| Category | Limit | Tracked by | Routes |
+|----------|-------|-----------|--------|
+| `public-strict` | 10/min | client IP | `POST /connectors/enroll`, `POST /connectors/rotate` |
+| `connector-token` | 60/min | client IP | `POST /connectors/token` |
+| `connector-report` | 60/hr | connector | `POST /connectors/report` |
+
+Why these numbers:
+
+- **Enroll and rotate** happen once per connector install and rarely after, so 10 a minute per address is plenty and keeps token guessing (pointless against 256-bit tokens anyway) and junk traffic cheap to absorb.
+- **Token exchange** happens about once an hour per connector (keys last an hour). An MSP can run up to 50 connectors behind one NAT address, and after a power cut or a host image update they all restart and ask for a key within the same minute. 60 a minute per address lets all 50 through with room for retries, while each request still costs a forger a valid Ed25519 signature, so a higher limit doesn't weaken anything.
+- **Reports** are counted per connector, keyed by the connector behind the `kk_` key (`connector:<id>`), not against the owner's write bucket, so one busy connector can't use up the owner's other API requests and 50 connectors don't share one budget. A connector reports after each step of a deployment run (pending, staged, activated, verified) plus a periodic check-in, which fits in 60 an hour with headroom. A key that isn't a connector's (the route refuses it with `403`) is tracked by IP.
 
 ---
 
@@ -33,7 +45,9 @@ Defined in `interfaces/rate-limit-category.enum.ts`:
 | Category | Enum value | Covers |
 |----------|-----------|--------|
 | `public` | `PUBLIC` | Unauthenticated endpoints: `/`, `/health`, the login, registration and OAuth callback routes under `/auth`, `POST /public-scan` |
-| `public-strict` | `PUBLIC_STRICT` | Unauthenticated connector credential exchanges: `POST /connectors/enroll`, `POST /connectors/token`, `POST /connectors/rotate` |
+| `public-strict` | `PUBLIC_STRICT` | Unauthenticated connector credential exchanges: `POST /connectors/enroll`, `POST /connectors/rotate` |
+| `connector-token` | `CONNECTOR_TOKEN` | `POST /connectors/token` |
+| `connector-report` | `CONNECTOR_REPORT` | `POST /connectors/report` |
 | `read` | `AUTHENTICATED_READ` | Authenticated reads: list domains, view certificates, endpoint history |
 | `write` | `AUTHENTICATED_WRITE` | Authenticated mutations: create domain, delete certificate, update endpoint |
 | `expensive` | `EXPENSIVE` | Resource-heavy operations: certificate issuance, renewal, retry, revocation, domain verification |
@@ -83,7 +97,7 @@ The guard does not override `generateKey()`, so the library default applies: the
 Details that matter when changing this code:
 
 - **The guard runs as `APP_GUARD`, before the auth guards.** To key by user it decodes the JWT payload without verifying the signature, so the `sub` it uses is unauthenticated and must never be treated as identity.
-- **`PUBLIC` and `PUBLIC_STRICT` routes ignore the token entirely** and always key by IP at the default tier. Nothing on those routes rejects a forged token, so trusting its `sub` would let a caller send a different one per request and get a fresh bucket each time. On authenticated routes this is safe because `JwtOrApiKeyGuard` rejects a forged token after the throttler has counted it.
+- **`PUBLIC`, `PUBLIC_STRICT` and `CONNECTOR_TOKEN` routes ignore the token entirely** and always key by IP at the default tier. Nothing on those routes rejects a forged token, so trusting its `sub` would let a caller send a different one per request and get a fresh bucket each time. On authenticated routes this is safe because `JwtOrApiKeyGuard` rejects a forged token after the throttler has counted it.
 - **API key requests key by the key's owner**, and the owner's plan sets the tier, so all of a user's keys share one bucket and keys from different users behind one NAT don't. The owner comes from `ApiKeyUserResolverService` (`backend/src/auth/services/api-key-user-resolver.service.ts`), which caches lookups in process for 60 seconds (never past the key's `expiresAt`), checks the IP lockout before any hashing, and applies the key's IP allowlist on every request. A key it can't resolve falls back to client IP at the default tier. Service keys always key by IP.
 - `req.ip` is used, never `req.ips[0]`. `req.ip` resolves the client through the trusted proxy chain (`backend/src/config/trusted-proxies.ts`); the leftmost `X-Forwarded-For` entry is client-controlled and forgeable, so keying on it would let a caller mint unlimited buckets.
 

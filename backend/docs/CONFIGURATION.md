@@ -42,6 +42,8 @@ Complete reference for all environment variables used by the KrakenKey backend a
 | `KK_DEVICE_AUTH_TTL_SEC` | No | `600` | Lifetime of a CLI browser login request (`krakenkey auth login --web`) |
 | `KK_DEVICE_AUTH_INTERVAL_SEC` | No | `5` | Minimum seconds between CLI polls for a browser login |
 
+Redis must run with `maxmemory-policy noeviction`. BullMQ requires it, and the API also keeps state there that must not disappear early: connector nonces (`connector-nonce:`, a replay guard), connector alert cooldowns (`connector-alert:`), API key lockouts and CLI login requests. With an evicting policy a used nonce could be dropped inside its window and a captured signed request replayed.
+
 ### DNS Provider
 
 Set `KK_DNS_PROVIDER` to select which provider handles DNS-01 ACME challenges. Only configure the credentials for your chosen provider.

@@ -12,6 +12,8 @@ const slackChannel = {
     'cert.replacement_requested',
     'domain.verification_failed',
     'endpoint.scan_failed',
+    'deploy.failed',
+    'connector.stale',
   ],
   enabled: true,
   hasSecret: false,

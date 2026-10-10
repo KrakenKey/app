@@ -477,6 +477,21 @@ describe('AuthService', () => {
         userId: 'user-1',
         expiresAt: null,
         allowedIps: null,
+        connectorId: null,
+      });
+    });
+
+    it('returns the connector a key was issued to', async () => {
+      mockUserApiKeyRepo.findOne.mockResolvedValue({
+        id: 'key-1',
+        userId: 'user-1',
+        expiresAt: new Date(Date.now() + 60_000),
+        revokedAt: null,
+        connectorId: 'c1',
+      });
+      expect(await service.findApiKeyOwner('kk_raw')).toMatchObject({
+        userId: 'user-1',
+        connectorId: 'c1',
       });
     });
 

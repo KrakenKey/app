@@ -1,9 +1,12 @@
+import { ALERT_EVENTS } from '@krakenkey/shared';
 import {
+  ALERT_TITLES,
   buildSlackBody,
   buildTeamsBody,
   buildWebhookBody,
   dashboardLink,
   signWebhookPayload,
+  teamsEscape,
   type AlertMessage,
 } from './alert-payloads';
 
@@ -37,6 +40,36 @@ describe('alert payloads', () => {
     expect(dashboardLink('app.krakenkey.io', { subject: 'x' })).toBe(
       'https://app.krakenkey.io/dashboard',
     );
+  });
+
+  it('has a title for every event, including the connector events', () => {
+    for (const event of [...ALERT_EVENTS, 'test' as const]) {
+      expect(ALERT_TITLES[event]).toEqual(expect.any(String));
+    }
+    expect(
+      buildWebhookBody(
+        {
+          id: 'd1',
+          event: 'connector.stale',
+          createdAt: '2026-10-10T14:00:00.000Z',
+          payload: {
+            subject: 'web-01',
+            resource: { type: 'connector', id: 'c1' },
+            details: { connectorName: 'web-01', lastSeenAt: null },
+          },
+        },
+        dashboardLink('app.krakenkey.io', {
+          subject: 'web-01',
+          resource: { type: 'connector', id: 'c1' },
+        }),
+      ).data,
+    ).toEqual({
+      title: 'Connector not seen for 24 hours',
+      subject: 'web-01',
+      resource: { type: 'connector', id: 'c1' },
+      details: { connectorName: 'web-01', lastSeenAt: null },
+      url: 'https://app.krakenkey.io/dashboard/connectors',
+    });
   });
 
   it('builds a Slack message with text and a section block', () => {
@@ -80,6 +113,27 @@ describe('alert payloads', () => {
     expect(att.content.actions).toEqual([
       { type: 'Action.OpenUrl', title: 'Open in KrakenKey', url: link },
     ]);
+  });
+
+  it('escapes Markdown from payload text in Teams cards', () => {
+    const body = buildTeamsBody(
+      {
+        ...msg,
+        event: 'deploy.failed',
+        payload: {
+          subject: 'web.example.com on web-01/nginx',
+          details: { error: '[x](https://evil) **bold** `code`', label: 'a_b' },
+        },
+      },
+      link,
+    );
+    const texts = body.attachments[0].content.body.map((b) => b.text);
+    expect(texts).toContain(
+      '**Error:** \\[x\\]\\(https://evil\\) \\*\\*bold\\*\\* \\`code\\`',
+    );
+    expect(texts).toContain('**Label:** a\\_b');
+    expect(texts.join('\n')).not.toContain('[x](https://evil)');
+    expect(teamsEscape('plain v0.2.0 - ok')).toBe('plain v0.2.0 - ok');
   });
 
   it('builds the webhook envelope', () => {

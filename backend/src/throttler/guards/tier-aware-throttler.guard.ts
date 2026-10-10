@@ -55,6 +55,15 @@ export class TierAwareThrottlerGuard extends ThrottlerGuard {
     // a user API key, or by peeking at the JWT in the Authorization header.
     // Public routes never look at the token: it is unverified and nothing
     // rejects it later, so a caller could mint a new bucket per request.
+    // Connector reports are counted per connector; a key that isn't a
+    // connector's (refused by the route anyway) falls back to its IP.
+    if (
+      context &&
+      this.resolveCategory(context) === RateLimitCategory.CONNECTOR_REPORT
+    ) {
+      const connectorId = await this.tryExtractConnectorId(req);
+      return connectorId ? `connector:${connectorId}` : req.ip;
+    }
     const userId =
       context && isPublicCategory(this.resolveCategory(context))
         ? null
@@ -85,9 +94,12 @@ export class TierAwareThrottlerGuard extends ThrottlerGuard {
 
     // 2. Determine user's subscription tier (public routes always use the
     //    default tier; see getTracker)
-    const userId = isPublicCategory(category)
-      ? null
-      : await this.tryExtractUserId(req);
+    // Connector reports use the same limit on every tier
+    const userId =
+      isPublicCategory(category) ||
+      category === RateLimitCategory.CONNECTOR_REPORT
+        ? null
+        : await this.tryExtractUserId(req);
     let tier = DEFAULT_TIER;
     if (userId) {
       try {
@@ -152,6 +164,29 @@ export class TierAwareThrottlerGuard extends ThrottlerGuard {
    *
    * The result is memoised per request object.
    */
+  /** The connector behind a `kk_` key, through the same cached lookup. */
+  private async tryExtractConnectorId(
+    req: Record<string, any>,
+  ): Promise<string | null> {
+    const authHeader: string | undefined = req.headers?.authorization;
+    if (!authHeader?.startsWith('Bearer kk_')) return null;
+    const token = authHeader.slice(7);
+    if (
+      token.startsWith('kk_svc_') ||
+      !this.apiKeyUserResolver.resolveConnector
+    ) {
+      return null;
+    }
+    try {
+      return await this.apiKeyUserResolver.resolveConnector(
+        token,
+        req.ip ?? '',
+      );
+    } catch {
+      return null;
+    }
+  }
+
   private tryExtractUserId(req: Record<string, any>): Promise<string | null> {
     let pending = this.userIds.get(req);
     if (!pending) {

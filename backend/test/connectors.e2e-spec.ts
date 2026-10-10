@@ -2,6 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PassportModule } from '@nestjs/passport';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import request from 'supertest';
 import { AuthService } from '../src/auth/auth.service';
 import { ApiKeySecurityService } from '../src/auth/services/api-key-security.service';
@@ -14,11 +15,21 @@ import { ConnectorNonceStore } from '../src/connectors/connector-nonce.store';
 import { ConnectorsController } from '../src/connectors/connectors.controller';
 import { ConnectorsService } from '../src/connectors/connectors.service';
 import { Connector } from '../src/connectors/entities/connector.entity';
+import { ConnectorDeployment } from '../src/connectors/entities/connector-deployment.entity';
+import { ConnectorReportsService } from '../src/connectors/connector-reports.service';
+import { ConnectorAlertGate } from '../src/connectors/connector-alert-gate';
+import { TlsCrt } from '../src/certs/tls/entities/tls-crt.entity';
+import { User } from '../src/users/entities/user.entity';
+import { AlertsService } from '../src/notifications/channels/alerts.service';
+import { EmailService } from '../src/notifications/email.service';
 import { MetricsService } from '../src/metrics/metrics.service';
 import { createTestApp } from './helpers/create-test-app';
 import {
   FakeAuthService,
   FakeConnectorRepo,
+  FakeAlertGate,
+  FakeDeploymentRepo,
+  fixedRepo,
   FakeNonceStore,
   connectorKey,
   newNonce,
@@ -42,8 +53,18 @@ function csr(name: string) {
   };
 }
 const CERTS = [
-  { id: 7, status: 'issued', parsedCsr: csr('web.labxp.io') },
-  { id: 8, status: 'issued', parsedCsr: csr('example.com') },
+  {
+    id: 7,
+    userId: MOCK_USER.userId,
+    status: 'issued',
+    parsedCsr: csr('web.labxp.io'),
+  },
+  {
+    id: 8,
+    userId: MOCK_USER.userId,
+    status: 'issued',
+    parsedCsr: csr('example.com'),
+  },
 ];
 
 /**
@@ -57,7 +78,13 @@ describe('Connectors (e2e)', () => {
   let dashboard: INestApplication;
   let api: INestApplication;
   let repo: FakeConnectorRepo;
+  let deployments: FakeDeploymentRepo;
   let auth: FakeAuthService;
+  const alerts = { emit: jest.fn().mockResolvedValue(1) };
+  const email = {
+    sendDeployFailed: jest.fn().mockResolvedValue(undefined),
+    sendConnectorStale: jest.fn().mockResolvedValue(undefined),
+  };
   const security = {
     isLockedOut: jest.fn().mockResolvedValue(false),
     recordFailure: jest.fn(),
@@ -77,16 +104,45 @@ describe('Connectors (e2e)', () => {
 
   beforeAll(async () => {
     repo = new FakeConnectorRepo();
+    deployments = new FakeDeploymentRepo();
     auth = new FakeAuthService({ certIds: [7, 8], domainIds: [DOMAIN_ID] });
     const nonces = new FakeNonceStore();
+    const owner = { id: MOCK_USER.userId, role: null, ...MOCK_USER };
     const shared = [
       ConnectorsService,
+      ConnectorReportsService,
       { provide: getRepositoryToken(Connector), useValue: repo },
+      {
+        provide: getRepositoryToken(ConnectorDeployment),
+        useValue: deployments,
+      },
+      { provide: getRepositoryToken(TlsCrt), useValue: fixedRepo(CERTS) },
+      { provide: getRepositoryToken(User), useValue: fixedRepo([owner]) },
+      {
+        // Transactions for reports; plain getRepository for RoleGuard
+        provide: DataSource,
+        useValue: {
+          transaction: (cb: (m: unknown) => unknown) =>
+            cb({
+              getRepository: (e: unknown) =>
+                e === Connector ? repo : deployments,
+            }),
+          getRepository: () => ({ findOne: async () => owner }),
+        },
+      },
       { provide: AuthService, useValue: auth },
       { provide: ConnectorNonceStore, useValue: nonces },
+      { provide: AlertsService, useValue: alerts },
+      { provide: EmailService, useValue: email },
+      { provide: ConnectorAlertGate, useValue: new FakeAlertGate() },
       {
         provide: BillingService,
-        useValue: { resolveUserTier: jest.fn().mockResolvedValue('free') },
+        useValue: {
+          resolveUserTier: jest.fn().mockResolvedValue('free'),
+          getResourceCountUserIds: jest
+            .fn()
+            .mockResolvedValue([MOCK_USER.userId]),
+        },
       },
     ];
 
@@ -665,6 +721,300 @@ describe('Connectors (e2e)', () => {
         .set('Authorization', bearer)
         .send(BODY)
         .expect(403);
+    });
+  });
+
+  describe('status reports', () => {
+    let id: string;
+    let bearer: string;
+
+    const target = (label: string, state: string, over = {}) => ({
+      label,
+      state,
+      updatedAt: '2026-10-10T14:00:00Z',
+      ...over,
+    });
+    const report = (certificates: unknown[], auth = bearer) =>
+      anon()
+        .post('/connectors/report')
+        .set('Authorization', auth)
+        .send({ version: '0.3.0', os: 'linux', arch: 'arm64', certificates });
+
+    beforeAll(async () => {
+      const e = await enrolled({ ...BODY, allowedCertIds: [7] });
+      id = e.id;
+      const res = await anon()
+        .post('/connectors/token')
+        .send(tokenRequest(e.key, id));
+      bearer = `Bearer ${res.body.apiKey}`;
+    });
+    beforeEach(() => {
+      alerts.emit.mockClear();
+      email.sendDeployFailed.mockClear();
+    });
+
+    it('stores targets and shows them on the connector and the certificate', async () => {
+      await report([
+        {
+          certificateId: 7,
+          targets: [
+            target('nginx-main', 'verified', { serial: '04AB' }),
+            target('haproxy', 'staged'),
+          ],
+        },
+      ]).expect(200);
+
+      const one = await session().get(`/connectors/${id}`).expect(200);
+      expect(one.body).toMatchObject({ version: '0.3.0', arch: 'arm64' });
+      expect(one.body.deployments).toEqual([
+        expect.objectContaining({ label: 'haproxy', state: 'staged' }),
+        {
+          connectorId: id,
+          connectorName: 'web-01',
+          certificateId: 7,
+          label: 'nginx-main',
+          state: 'verified',
+          serial: '04ab',
+          error: null,
+          updatedAt: '2026-10-10T14:00:00.000Z',
+          reportedAt: expect.any(String),
+        },
+      ]);
+
+      const byCert = await session()
+        .get('/connectors/deployments?certificateId=7')
+        .expect(200);
+      expect(
+        byCert.body
+          .filter((d: { connectorId: string }) => d.connectorId === id)
+          .map((d: { label: string }) => d.label),
+      ).toEqual(['haproxy', 'nginx-main']);
+      await session().get('/connectors/deployments').expect(400);
+      await session()
+        .get('/connectors/deployments?certificateId=abc')
+        .expect(400);
+    });
+
+    it('drops targets the connector stops listing for a certificate', async () => {
+      await report([
+        { certificateId: 7, targets: [target('nginx-main', 'verified')] },
+      ]).expect(200);
+      const one = await session().get(`/connectors/${id}`).expect(200);
+      expect(
+        one.body.deployments.map((d: { label: string }) => d.label),
+      ).toEqual(['nginx-main']);
+    });
+
+    it('alerts once when a target starts failing', async () => {
+      const failing = [
+        {
+          certificateId: 7,
+          targets: [
+            target('nginx-main', 'failed', { error: 'reload\nfailed' }),
+          ],
+        },
+      ];
+      await report(failing).expect(200);
+      await report(failing).expect(200);
+      expect(alerts.emit).toHaveBeenCalledTimes(1);
+      expect(alerts.emit).toHaveBeenCalledWith(
+        MOCK_USER.userId,
+        'deploy.failed',
+        expect.objectContaining({
+          details: expect.objectContaining({
+            connectorName: 'web-01',
+            clientLabel: 'Acme',
+            certificateId: 7,
+            label: 'nginx-main',
+            state: 'failed',
+            error: 'reload failed',
+          }),
+        }),
+      );
+      expect(email.sendDeployFailed).toHaveBeenCalledTimes(1);
+
+      // Flapping, or dropping the target and listing it again, doesn't
+      // re-alert inside the target's 6-hour cooldown
+      for (const targets of [
+        [target('nginx-main', 'verified')],
+        [target('nginx-main', 'rolled_back')],
+        [],
+        [target('nginx-main', 'failed')],
+      ]) {
+        await report([{ certificateId: 7, targets }]).expect(200);
+      }
+      expect(alerts.emit).toHaveBeenCalledTimes(1);
+      expect(email.sendDeployFailed).toHaveBeenCalledTimes(1);
+
+      // Another target can still alert, but the email waits for the hour
+      await report([
+        { certificateId: 7, targets: [target('haproxy', 'failed')] },
+      ]).expect(200);
+      expect(alerts.emit).toHaveBeenCalledTimes(2);
+      expect(email.sendDeployFailed).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects out-of-range ids in the list instead of failing', async () => {
+      const res = await report([
+        { certificateId: 2147483648, targets: [] },
+        { certificateId: 9007199254740991, targets: [] },
+      ]).expect(200);
+      expect(res.body).toEqual({
+        accepted: 0,
+        rejectedCertificateIds: [2147483648, 9007199254740991],
+      });
+      await session()
+        .get('/connectors/deployments?certificateId=2147483648')
+        .expect(400);
+    });
+
+    it('requires UTC updatedAt no more than 5 minutes ahead', async () => {
+      for (const updatedAt of [
+        '2026-10-10T14:00:00+01:00',
+        '2026-10-10',
+        new Date(Date.now() + 10 * 60_000).toISOString(),
+      ]) {
+        await report([
+          {
+            certificateId: 7,
+            targets: [target('x', 'verified', { updatedAt })],
+          },
+        ]).expect(400);
+      }
+    });
+
+    it('only shows deployments a restricted key may see', async () => {
+      auth.addKey('kk_reader_cert8', MOCK_USER.userId, {
+        scopes: ['account:read'],
+        allowedCertIds: [8],
+      });
+      const h = { Authorization: 'Bearer kk_reader_cert8' };
+      const one = await anon().get(`/connectors/${id}`).set(h).expect(200);
+      expect(one.body.deployments).toEqual([]);
+      const byCert = await anon()
+        .get('/connectors/deployments?certificateId=7')
+        .set(h)
+        .expect(200);
+      expect(byCert.body).toEqual([]);
+      const full = await session().get(`/connectors/${id}`).expect(200);
+      expect(full.body.deployments.length).toBeGreaterThan(0);
+    });
+
+    it('skips certificates outside the connector restrictions and stores the rest', async () => {
+      const res = await report([
+        {
+          certificateId: 7,
+          targets: [
+            target('nginx-main', 'verified', {
+              updatedAt: '2026-10-10T15:00:00.123Z',
+            }),
+          ],
+        },
+        { certificateId: 8, targets: [target('x', 'verified')] },
+        { certificateId: 999, targets: [] },
+      ]).expect(200);
+      expect(res.body).toEqual({
+        accepted: 1,
+        rejectedCertificateIds: [8, 999],
+      });
+      expect(deployments.rows.some((d) => d.certificateId === 8)).toBe(false);
+      const one = await session().get(`/connectors/${id}`).expect(200);
+      expect(one.body.deployments).toEqual([
+        expect.objectContaining({
+          certificateId: 7,
+          label: 'nginx-main',
+          updatedAt: '2026-10-10T15:00:00.123Z',
+        }),
+      ]);
+    });
+
+    it('only accepts keys issued to a connector', async () => {
+      auth.addKey('kk_regular_full_key', MOCK_USER.userId);
+      const res = await report([], 'Bearer kk_regular_full_key').expect(403);
+      expect(res.body.message).toBe(
+        'Only a key issued to a connector can send connector reports.',
+      );
+      auth.addKey('kk_regular_scoped_key', MOCK_USER.userId, {
+        scopes: ['account:read'],
+      });
+      await report([], 'Bearer kk_regular_scoped_key').expect(403);
+      await anon().post('/connectors/report').send({}).expect(401);
+    });
+
+    it.each([
+      [
+        'a bad label',
+        [{ certificateId: 7, targets: [target('a b', 'verified')] }],
+      ],
+      [
+        'an unknown state',
+        [{ certificateId: 7, targets: [target('a', 'done')] }],
+      ],
+      [
+        'a non-hex serial',
+        [
+          {
+            certificateId: 7,
+            targets: [target('a', 'verified', { serial: 'zz' })],
+          },
+        ],
+      ],
+      [
+        'a long error',
+        [
+          {
+            certificateId: 7,
+            targets: [target('a', 'failed', { error: 'e'.repeat(201) })],
+          },
+        ],
+      ],
+      [
+        'a bad updatedAt',
+        [
+          {
+            certificateId: 7,
+            targets: [target('a', 'verified', { updatedAt: 'yesterday' })],
+          },
+        ],
+      ],
+      [
+        'too many targets',
+        [
+          {
+            certificateId: 7,
+            targets: Array.from({ length: 51 }, (_, i) =>
+              target(`t${i}`, 'verified'),
+            ),
+          },
+        ],
+      ],
+      [
+        'a duplicate label',
+        [
+          {
+            certificateId: 7,
+            targets: [target('a', 'verified'), target('a', 'failed')],
+          },
+        ],
+      ],
+      [
+        'a duplicate certificate',
+        [
+          { certificateId: 7, targets: [] },
+          { certificateId: 7, targets: [] },
+        ],
+      ],
+      [
+        'a non-numeric certificate id',
+        [{ certificateId: 'seven', targets: [] }],
+      ],
+    ])('400s %s', async (_, certificates) => {
+      await report(certificates as unknown[]).expect(400);
+    });
+
+    it('stops accepting reports once the connector is revoked', async () => {
+      await session().delete(`/connectors/${id}`).expect(204);
+      await report([]).expect(401);
     });
   });
 

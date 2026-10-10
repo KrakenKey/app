@@ -652,10 +652,18 @@ export class AuthService implements OnModuleInit {
     userId: string;
     expiresAt: Date | null;
     allowedIps: string[] | null;
+    connectorId?: string | null;
   } | null> {
     const record = await this.userApiKeyRepo.findOne({
       where: { hash: this.hashKey(rawKey) },
-      select: ['id', 'userId', 'expiresAt', 'revokedAt', 'allowedIps'],
+      select: [
+        'id',
+        'userId',
+        'expiresAt',
+        'revokedAt',
+        'allowedIps',
+        'connectorId',
+      ],
     });
     if (!record || record.revokedAt) return null;
     if (record.expiresAt && record.expiresAt < new Date()) return null;
@@ -663,6 +671,7 @@ export class AuthService implements OnModuleInit {
       userId: record.userId,
       expiresAt: record.expiresAt ?? null,
       allowedIps: record.allowedIps?.length ? record.allowedIps : null,
+      connectorId: record.connectorId ?? null,
     };
   }
 

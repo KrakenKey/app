@@ -189,6 +189,8 @@ Approve, deny and lookup require a dashboard (JWT) session; an API key gets 403,
 
 **Providers**:
 - `ConnectorsService` — Connector CRUD, enrollment, signed key exchange and key rotation, revocation
+- `ConnectorReportsService` — Stores deployment status reports, sends `deploy.failed` on transitions, and runs the hourly `connector.stale` check (at :45)
+- `ConnectorAlertGate` — Redis cooldowns for `deploy.failed`: one alert per target per 6 hours, one email per connector per hour (`connector-alert:` prefix); fails closed
 - `ConnectorNonceStore` — Remembers used nonces per connector in Redis (`connector-nonce:` prefix, 11 minutes); fails closed
 - `ConnectorsController` — REST endpoints
 
@@ -199,6 +201,7 @@ Approve, deny and lookup require a dashboard (JWT) session; an API key gets 403,
 - Rotating the connector's key also revokes every key it was issued
 - Revoked or expired short-lived keys throw from `AuthService.validateApiKey` instead of returning null, so `ApiKeyStrategy` doesn't count them toward the per-IP lockout
 - Enroll, token and rotate are public routes limited per IP (`PUBLIC_STRICT`, 10/min)
+- `POST /connectors/report` only accepts keys issued to a connector; a report is applied in one transaction with the connector row locked, so concurrent reports can't double-alert. `connector.stale` claims stale connectors with one `UPDATE ... RETURNING` on `staleAlertedAt`, so it alerts once across replicas, and any contact from the connector clears it
 
 ---
 

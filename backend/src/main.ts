@@ -5,7 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { Logger } from '@nestjs/common';
 import { ValidationPipe } from '@nestjs/common';
 import { HttpExceptionFilter } from './filters/http-exception.filter';
-import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction, json } from 'express';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { createSwaggerConfig } from './config/swagger.config';
@@ -16,6 +16,40 @@ async function bootstrap() {
 
   app.use(helmet());
   app.use(cookieParser());
+
+  // Connector status reports can list up to 500 certificates with 50
+  // targets each, so POST /connectors/report takes bodies up to 2 MB
+  // instead of the 100 kB default. Only requests carrying a user API key
+  // (the only credential the route accepts) get the larger parser; anything
+  // else falls through to Nest's own 100 kB parser and is then refused by
+  // the guard. The key itself is only checked after parsing (middleware
+  // runs before guards), so a request with a made-up `kk_` key can still
+  // make the API read and parse up to 2 MB before it is refused.
+  //
+  // Nest's parser runs later and skips a body that is already read. The
+  // named wrapper matters: Nest skips registering its global JSON parser
+  // when it finds a middleware named `jsonParser`, which would leave every
+  // other route without a parsed body.
+  const reportBodyParser = json({ limit: '2mb' });
+  app.use(
+    '/connectors/report',
+    function connectorReportBody(
+      req: Request,
+      res: Response,
+      next: NextFunction,
+    ) {
+      const auth = req.headers.authorization;
+      if (
+        req.method !== 'POST' ||
+        !auth?.startsWith('Bearer kk_') ||
+        auth.startsWith('Bearer kk_svc_')
+      ) {
+        next();
+        return;
+      }
+      reportBodyParser(req, res, next);
+    },
+  );
 
   // Trust the known proxy chain (Traefik + Cloudflare) so req.ip resolves
   // to the real client address. A hop count would either expose a

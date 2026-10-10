@@ -123,6 +123,48 @@ export class FakeConnectorRepo {
   }
 }
 
+/** connector_deployment, keyed by (connectorId, certificateId, label). */
+export class FakeDeploymentRepo {
+  rows: Row[] = [];
+
+  async find({ where }: { where: Row }): Promise<Row[]> {
+    return this.rows
+      .filter((r) => matches(r, where))
+      .sort(
+        (a, b) =>
+          a.connectorId.localeCompare(b.connectorId) ||
+          a.certificateId - b.certificateId ||
+          a.label.localeCompare(b.label),
+      )
+      .map((r) => ({ ...r }));
+  }
+
+  async delete(criteria: Row | Row[]) {
+    const list = Array.isArray(criteria) ? criteria : [criteria];
+    const before = this.rows.length;
+    this.rows = this.rows.filter((r) => !list.some((c) => matches(r, c)));
+    return { affected: before - this.rows.length };
+  }
+
+  async upsert(rows: Row[], keys: string[]) {
+    for (const row of rows) {
+      const i = this.rows.findIndex((r) => keys.every((k) => r[k] === row[k]));
+      if (i >= 0) this.rows[i] = { ...row };
+      else this.rows.push({ ...row });
+    }
+  }
+}
+
+/** Any repository that only needs find() over fixed rows. */
+export function fixedRepo(rows: Row[]) {
+  return {
+    find: async ({ where }: { where: Row }) =>
+      rows.filter((r) => matches(r, where)).map((r) => ({ ...r })),
+    findOne: async ({ where }: { where: Row }) =>
+      rows.find((r) => matches(r, where)) ?? null,
+  };
+}
+
 export interface FakeKey {
   id: string;
   user: { id: string; groups: string[] };
@@ -245,6 +287,31 @@ export class FakeAuthService {
     }
     if (k.revokedAt || expired) return null;
     return k;
+  }
+}
+
+/** ConnectorAlertGate in memory: cooldowns never expire during a test. */
+export class FakeAlertGate {
+  private readonly targets = new Set<string>();
+  private readonly emailed = new Set<string>();
+  private readonly held = new Map<string, number>();
+
+  async claimTargetAlert(c: string, certificateId: number, label: string) {
+    const key = `${c}\n${certificateId}\n${label}`;
+    if (this.targets.has(key)) return false;
+    this.targets.add(key);
+    return true;
+  }
+
+  async claimEmail(c: string, failures: number): Promise<number | null> {
+    if (this.emailed.has(c)) {
+      this.held.set(c, (this.held.get(c) ?? 0) + failures);
+      return null;
+    }
+    this.emailed.add(c);
+    const held = this.held.get(c) ?? 0;
+    this.held.delete(c);
+    return held;
   }
 }
 

@@ -11,6 +11,8 @@ export const AlertEvent = {
   CERT_REPLACEMENT_REQUESTED: 'cert.replacement_requested',
   DOMAIN_VERIFICATION_FAILED: 'domain.verification_failed',
   ENDPOINT_SCAN_FAILED: 'endpoint.scan_failed',
+  DEPLOY_FAILED: 'deploy.failed',
+  CONNECTOR_STALE: 'connector.stale',
 } as const;
 
 export type AlertEvent = (typeof AlertEvent)[keyof typeof AlertEvent];
@@ -30,6 +32,9 @@ export const ALERT_EVENT_DESCRIPTIONS: Record<AlertEvent, string> = {
     'A verified domain failed its periodic DNS re-check',
   'endpoint.scan_failed':
     'A monitored endpoint started failing (connection error, invalid chain or expired certificate)',
+  'deploy.failed':
+    'A connector failed to install a certificate on a target, or rolled it back',
+  'connector.stale': 'A connector has not checked in for 24 hours',
 };
 
 /** Events a new channel subscribes to when none are given. */
@@ -40,6 +45,8 @@ export const DEFAULT_ALERT_EVENTS: AlertEvent[] = [
   'cert.replacement_requested',
   'domain.verification_failed',
   'endpoint.scan_failed',
+  'deploy.failed',
+  'connector.stale',
 ];
 
 /** Event name used by the test-send button. Never stored as a subscription. */
