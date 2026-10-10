@@ -394,14 +394,23 @@ export class TlsService {
     return this.certUtilService.getChainInfo(cert.crtPem, cert.chainPem);
   }
 
-  async update(
-    id: number,
-    userId: string,
-    updateTlsCrtDto: UpdateTlsCrtDto,
-    status?: CertStatus,
-  ) {
+  /**
+   * Applies a user's PATCH. Only the fields UpdateTlsCrtDto declares are
+   * copied, so anything else on the object (for example a csrPem from a
+   * caller that skipped validation) never reaches the repository.
+   */
+  async update(id: number, userId: string, updateTlsCrtDto: UpdateTlsCrtDto) {
     const cert = await this.findOne(id, userId); // Verifies ownership
-    await this.TlsCrtRepository.update(cert.id, { ...updateTlsCrtDto, status });
+    const changes: Partial<Pick<TlsCrt, 'autoRenew' | 'managedBy'>> = {};
+    if (updateTlsCrtDto.autoRenew !== undefined) {
+      changes.autoRenew = updateTlsCrtDto.autoRenew;
+    }
+    if (updateTlsCrtDto.managedBy !== undefined) {
+      changes.managedBy = updateTlsCrtDto.managedBy;
+    }
+    // Nothing to change: skip the write (TypeORM rejects an empty update)
+    if (Object.keys(changes).length === 0) return cert;
+    await this.TlsCrtRepository.update(cert.id, changes);
     return this.findOne(id, userId);
   }
 
