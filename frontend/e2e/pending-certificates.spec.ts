@@ -65,4 +65,70 @@ test.describe('Pending certificates', () => {
       .click();
     await expect.poll(() => deleted).toBe(true);
   });
+
+  test('creates a pending certificate from names', async ({ page }) => {
+    let posted: unknown = null;
+    await page.route(api('/certs/tls'), (route) => {
+      if (route.request().method() === 'POST') {
+        posted = route.request().postDataJSON();
+        return route.fulfill({
+          status: 201,
+          json: { id: 43, status: 'awaiting_csr' },
+        });
+      }
+      return route.fulfill({ status: 200, json: [awaitingCert] });
+    });
+
+    await page.goto('/dashboard/certificates');
+    await page.getByRole('radio', { name: /Issued by a connector/ }).check();
+    await page
+      .getByRole('textbox', { name: 'Names' })
+      .fill('Shop.example.com\nwww.shop.example.com');
+    await page
+      .getByRole('button', { name: 'Create Pending Certificate' })
+      .click();
+
+    await expect
+      .poll(() => posted)
+      .toEqual({
+        names: ['shop.example.com', 'www.shop.example.com'],
+        managedBy: 'connector',
+      });
+    await expect(
+      page.getByText(/Pending certificate #43 created/),
+    ).toBeVisible();
+  });
+
+  test('shows where a connector deployed a certificate', async ({ page }) => {
+    let calls = 0;
+    await page.route(api('/connectors/deployments') + '*', (route) => {
+      calls++;
+      return route.fulfill({
+        status: 200,
+        json: [
+          {
+            connectorId: '3f1c2b9e-1111-4111-8111-111111111111',
+            connectorName: 'web-01',
+            certificateId: 41,
+            label: 'nginx-main',
+            state: 'pending',
+            serial: null,
+            error: null,
+            updatedAt: new Date().toISOString(),
+            reportedAt: new Date().toISOString(),
+          },
+        ],
+      });
+    });
+
+    await page.goto('/dashboard/certificates');
+    await expect(page.getByText('app.example.com').first()).toBeVisible();
+    expect(calls).toBe(0);
+
+    await page.getByRole('button', { name: /Deployed to/ }).click();
+    await expect(page.getByRole('link', { name: 'web-01' })).toBeVisible();
+    await expect(page.getByText('nginx-main')).toBeVisible();
+    await expect(page.getByText('Pending', { exact: true })).toBeVisible();
+    expect(calls).toBe(1);
+  });
 });

@@ -46,3 +46,29 @@ export function getCertDomains(cert: TlsCert): string[] {
 
   return domains;
 }
+
+const DNS_LABEL = '[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?';
+const DNS_NAME = new RegExp(`^(\\*\\.)?(${DNS_LABEL}\\.)+${DNS_LABEL}$`);
+
+/**
+ * Splits text on newlines, commas and spaces into lowercase names, dropping
+ * blanks and duplicates. `invalid` lists entries that aren't DNS names
+ * (an optional leading `*.` is allowed). The server does the real checks.
+ */
+export function parseNameList(text: string): {
+  names: string[];
+  invalid: string[];
+} {
+  const names = [
+    ...new Set(
+      text
+        .split(/[\s,]+/)
+        .map((s) => s.trim().toLowerCase().replace(/\.$/, ''))
+        .filter(Boolean),
+    ),
+  ];
+  return {
+    names,
+    invalid: names.filter((n) => n.length > 253 || !DNS_NAME.test(n)),
+  };
+}

@@ -6,6 +6,7 @@ test.describe('Navigation guards', () => {
     '/dashboard/domains',
     '/dashboard/certificates',
     '/dashboard/api-keys',
+    '/dashboard/connectors',
     '/dashboard/billing',
     '/dashboard/organizations',
     '/settings',

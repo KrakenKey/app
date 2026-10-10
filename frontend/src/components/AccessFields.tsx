@@ -153,14 +153,8 @@ export function RestrictionFields({
   const {
     restrictionsOpen,
     toggleRestrictions,
-    domains,
-    domainsFailed,
-    certs,
-    certsFailed,
     domainIds,
     certIds,
-    toggleDomain,
-    toggleCert,
     access,
     selectedScopes,
   } = form;
@@ -202,99 +196,17 @@ export function RestrictionFields({
             Leave a list empty to allow everything of that kind.
           </p>
 
-          <fieldset disabled={disabled}>
-            <legend className={legendClass}>Limit to domains</legend>
-            {domains === null ? (
-              <p className="text-xs text-zinc-500">
-                {domainsFailed
-                  ? 'Could not load your domains.'
-                  : 'Loading domains...'}
-              </p>
-            ) : domains.length === 0 ? (
-              <p className="text-xs text-zinc-500">No domains yet.</p>
-            ) : (
-              <>
-                <div className={checkListClass}>
-                  {domains.map((d) => {
-                    const checked = domainIds.includes(d.id);
-                    return (
-                      <label key={d.id} className={checkRowClass}>
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleDomain(d.id)}
-                          disabled={
-                            !checked &&
-                            domainIds.length >=
-                              API_KEY_RESTRICTION_LIMITS.domains
-                          }
-                          className="accent-cyan-500"
-                        />
-                        <span className="font-mono text-xs">{d.hostname}</span>
-                        {!d.isVerified && (
-                          <span className="text-xs text-zinc-500">
-                            (unverified)
-                          </span>
-                        )}
-                      </label>
-                    );
-                  })}
-                </div>
-                <p className="text-xs text-zinc-500 mt-1.5">
-                  Certificates, domains and endpoints outside these are hidden
-                  from the key. {domainIds.length} of up to{' '}
-                  {API_KEY_RESTRICTION_LIMITS.domains} selected.
-                </p>
-              </>
-            )}
-          </fieldset>
+          <DomainChecklist
+            form={form}
+            disabled={disabled}
+            help="Certificates, domains and endpoints outside these are hidden from the key."
+          />
 
-          <fieldset disabled={disabled}>
-            <legend className={legendClass}>Limit to certificates</legend>
-            {certs === null ? (
-              <p className="text-xs text-zinc-500">
-                {certsFailed
-                  ? 'Could not load your certificates.'
-                  : 'Loading certificates...'}
-              </p>
-            ) : certs.length === 0 ? (
-              <p className="text-xs text-zinc-500">No certificates yet.</p>
-            ) : (
-              <>
-                <div className={checkListClass}>
-                  {certs.map((c) => {
-                    const checked = certIds.includes(c.id);
-                    return (
-                      <label key={c.id} className={checkRowClass}>
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleCert(c.id)}
-                          disabled={
-                            !checked &&
-                            certIds.length >= API_KEY_RESTRICTION_LIMITS.certs
-                          }
-                          className="accent-cyan-500"
-                        />
-                        <span className="font-mono text-xs">
-                          {certLabel(c)}
-                        </span>
-                        <span className="text-xs text-zinc-500">
-                          ({c.status})
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
-                <p className="text-xs text-zinc-500 mt-1.5">
-                  A key limited to certificates can't request new certificates.
-                  Renewing keeps the same certificate, so the limit still
-                  applies. {certIds.length} of up to{' '}
-                  {API_KEY_RESTRICTION_LIMITS.certs} selected.
-                </p>
-              </>
-            )}
-          </fieldset>
+          <CertChecklist
+            form={form}
+            disabled={disabled}
+            help="A key limited to certificates can't request new certificates. Renewing keeps the same certificate, so the limit still applies."
+          />
 
           {probeWithResourceLimits && (
             <p className="text-xs text-amber-400 flex items-start gap-1.5">
@@ -308,6 +220,122 @@ export function RestrictionFields({
         </div>
       )}
     </div>
+  );
+}
+
+/** Checkboxes for the account's domains, with a count and help text. */
+export function DomainChecklist({
+  form,
+  disabled,
+  help,
+  legend = 'Limit to domains',
+}: {
+  form: AccessForm;
+  disabled?: boolean;
+  help: string;
+  legend?: string;
+}) {
+  const { domains, domainsFailed, domainIds, toggleDomain } = form;
+  return (
+    <fieldset disabled={disabled}>
+      <legend className={legendClass}>{legend}</legend>
+      {domains === null ? (
+        <p className="text-xs text-zinc-500">
+          {domainsFailed
+            ? 'Could not load your domains.'
+            : 'Loading domains...'}
+        </p>
+      ) : domains.length === 0 ? (
+        <p className="text-xs text-zinc-500">No domains yet.</p>
+      ) : (
+        <>
+          <div className={checkListClass}>
+            {domains.map((d) => {
+              const checked = domainIds.includes(d.id);
+              return (
+                <label key={d.id} className={checkRowClass}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleDomain(d.id)}
+                    disabled={
+                      !checked &&
+                      domainIds.length >= API_KEY_RESTRICTION_LIMITS.domains
+                    }
+                    className="accent-cyan-500"
+                  />
+                  <span className="font-mono text-xs">{d.hostname}</span>
+                  {!d.isVerified && (
+                    <span className="text-xs text-zinc-500">(unverified)</span>
+                  )}
+                </label>
+              );
+            })}
+          </div>
+          <p className="text-xs text-zinc-500 mt-1.5">
+            {help} {domainIds.length} of up to{' '}
+            {API_KEY_RESTRICTION_LIMITS.domains} selected.
+          </p>
+        </>
+      )}
+    </fieldset>
+  );
+}
+
+/** Checkboxes for the account's certificates, with a count and help text. */
+export function CertChecklist({
+  form,
+  disabled,
+  help,
+  legend = 'Limit to certificates',
+}: {
+  form: AccessForm;
+  disabled?: boolean;
+  help: string;
+  legend?: string;
+}) {
+  const { certs, certsFailed, certIds, toggleCert } = form;
+  return (
+    <fieldset disabled={disabled}>
+      <legend className={legendClass}>{legend}</legend>
+      {certs === null ? (
+        <p className="text-xs text-zinc-500">
+          {certsFailed
+            ? 'Could not load your certificates.'
+            : 'Loading certificates...'}
+        </p>
+      ) : certs.length === 0 ? (
+        <p className="text-xs text-zinc-500">No certificates yet.</p>
+      ) : (
+        <>
+          <div className={checkListClass}>
+            {certs.map((c) => {
+              const checked = certIds.includes(c.id);
+              return (
+                <label key={c.id} className={checkRowClass}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleCert(c.id)}
+                    disabled={
+                      !checked &&
+                      certIds.length >= API_KEY_RESTRICTION_LIMITS.certs
+                    }
+                    className="accent-cyan-500"
+                  />
+                  <span className="font-mono text-xs">{certLabel(c)}</span>
+                  <span className="text-xs text-zinc-500">({c.status})</span>
+                </label>
+              );
+            })}
+          </div>
+          <p className="text-xs text-zinc-500 mt-1.5">
+            {help} {certIds.length} of up to {API_KEY_RESTRICTION_LIMITS.certs}{' '}
+            selected.
+          </p>
+        </>
+      )}
+    </fieldset>
   );
 }
 

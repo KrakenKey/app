@@ -19,6 +19,8 @@ import Organizations from './pages/Organizations';
 import Reports from './pages/Reports';
 import ReportDetail from './pages/ReportDetail';
 import SharedReport from './pages/SharedReport';
+import Connectors from './pages/Connectors';
+import ConnectorDetail from './pages/ConnectorDetail';
 
 const ProtectedRoute = ({ children }: { children: {} & ReactNode }) => {
   const { isAuthenticated, isLoading } = useAuth();
@@ -62,6 +64,8 @@ function AppRoutes() {
         <Route path="reports" element={<Reports />} />
         <Route path="reports/:id" element={<ReportDetail />} />
         <Route path="api-keys" element={<ApiKeys />} />
+        <Route path="connectors" element={<Connectors />} />
+        <Route path="connectors/:id" element={<ConnectorDetail />} />
         <Route path="billing" element={<Billing />} />
         <Route path="organizations" element={<Organizations />} />
         <Route path="feedback" element={<Feedback />} />

@@ -13,6 +13,7 @@ import {
   Building2,
   Activity,
   FileBarChart,
+  Plug,
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { PlanBadge } from './ui/PlanBadge';
@@ -24,6 +25,7 @@ const navItems = [
   { to: '/dashboard/endpoints', icon: Activity, label: 'Endpoints' },
   { to: '/dashboard/reports', icon: FileBarChart, label: 'Reports' },
   { to: '/dashboard/api-keys', icon: Key, label: 'API Keys' },
+  { to: '/dashboard/connectors', icon: Plug, label: 'Connectors' },
   { to: '/dashboard/organizations', icon: Building2, label: 'Organization' },
   { to: '/dashboard/billing', icon: CreditCard, label: 'Billing' },
   { to: '/dashboard/feedback', icon: MessageSquare, label: 'Feedback' },

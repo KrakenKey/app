@@ -140,6 +140,7 @@ export function useAccessForm() {
     certs,
     certsFailed,
     loadDomains,
+    loadCerts,
     domainNames,
     reset,
     resolveScopes,
