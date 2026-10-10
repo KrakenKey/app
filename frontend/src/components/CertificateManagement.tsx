@@ -12,16 +12,17 @@ import {
   ChevronRight,
   Eye,
   EyeOff,
+  Info,
 } from 'lucide-react';
 import { toast } from '../utils/toast';
-import { CertStatus } from '@krakenkey/shared';
+import { CertStatus, MAX_REQUESTED_NAMES } from '@krakenkey/shared';
 import type { TlsCert, TlsCertDetails } from '@krakenkey/shared';
 import {
   STATUS_LABEL,
   STATUS_BADGE_VARIANT,
   STATUS_ORDER,
 } from '../utils/statusMappings';
-import { getCertDomains } from '../utils/certDomains';
+import { getCertDomains, parseNameList } from '../utils/certDomains';
 import { getExpirationInfo } from '../utils/expiration';
 import { copyToClipboard } from '../utils/clipboard';
 import { downloadPem } from '../utils/download';
@@ -29,12 +30,21 @@ import { usePolling } from '../hooks/usePolling';
 import { useActionSet } from '../hooks/useActionSet';
 import * as certService from '../services/certificateService';
 import CsrGenerator from './CsrGenerator';
+import { CertificateDeployments } from './connectors/CertificateDeployments';
 import { Card } from './ui/Card';
 import { Button } from './ui/Button';
 import { Badge } from './ui/Badge';
+import { Textarea } from './ui/Textarea';
 import { Table, TableHeader, TableRow, TableHead, TableCell } from './ui/Table';
 import { PageHeader } from './ui/PageHeader';
 import { EmptyState } from './ui/EmptyState';
+
+const requestModeCardClass = (selected: boolean) =>
+  `flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+    selected
+      ? 'border-cyan-500/50 bg-cyan-500/5'
+      : 'border-zinc-800 hover:border-zinc-700 hover:bg-zinc-800/30'
+  }`;
 
 export default function CertificateManagement() {
   const [certs, setCerts] = useState<TlsCert[]>([]);
@@ -43,6 +53,9 @@ export default function CertificateManagement() {
   const [csrPem, setCsrPem] = useState('');
   const [showCsrGenerator, setShowCsrGenerator] = useState(false);
   const [viewMode, setViewMode] = useState<'card' | 'table'>('card');
+  const [requestMode, setRequestMode] = useState<'csr' | 'connector'>('csr');
+  const [namesText, setNamesText] = useState('');
+  const [namesError, setNamesError] = useState<string | null>(null);
 
   const pollingIds = useActionSet<number>();
   const renewing = useActionSet<number>();
@@ -142,6 +155,38 @@ export default function CertificateManagement() {
       await fetchCerts();
     } catch (error) {
       console.error('Failed to submit CSR:', error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleCreatePending = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const { names, invalid } = parseNameList(namesText);
+    if (names.length === 0) {
+      setNamesError('Enter at least one name.');
+      return;
+    }
+    if (invalid.length > 0) {
+      setNamesError(`Not a valid DNS name: ${invalid.join(', ')}`);
+      return;
+    }
+    if (names.length > MAX_REQUESTED_NAMES) {
+      setNamesError(`Enter at most ${MAX_REQUESTED_NAMES} names.`);
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      const response = await certService.createPendingCertificate(names);
+      toast.success(
+        `Pending certificate #${response.id} created. Add id ${response.id} to the connector's config.`,
+      );
+      setNamesText('');
+      await fetchCerts();
+    } catch (error) {
+      // The API client already shows the server's message.
+      console.error('Failed to create pending certificate:', error);
     } finally {
       setSubmitting(false);
     }
@@ -287,13 +332,101 @@ export default function CertificateManagement() {
         icon={<Shield className="w-6 h-6" />}
       />
 
-      {/* Submit CSR Form */}
+      {/* Request Form */}
       <Card className="mb-6">
         <h3 className="text-sm font-medium text-zinc-400 mb-4">
-          Submit Certificate Signing Request
+          Request a Certificate
         </h3>
 
-        {showCsrGenerator ? (
+        <fieldset disabled={submitting} className="mb-5">
+          <legend className="sr-only">How the key is created</legend>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label className={requestModeCardClass(requestMode === 'csr')}>
+              <input
+                type="radio"
+                name="cert-request-mode"
+                value="csr"
+                checked={requestMode === 'csr'}
+                onChange={() => setRequestMode('csr')}
+                className="accent-cyan-500 mt-0.5"
+              />
+              <span>
+                <span className="block text-sm font-medium text-zinc-200">
+                  With a CSR
+                </span>
+                <span className="block text-xs text-zinc-500">
+                  Generate a key and CSR in your browser, or paste a CSR you
+                  made yourself.
+                </span>
+              </span>
+            </label>
+            <label
+              className={requestModeCardClass(requestMode === 'connector')}
+            >
+              <input
+                type="radio"
+                name="cert-request-mode"
+                value="connector"
+                checked={requestMode === 'connector'}
+                onChange={() => {
+                  setRequestMode('connector');
+                  setShowCsrGenerator(false);
+                }}
+                className="accent-cyan-500 mt-0.5"
+              />
+              <span>
+                <span className="block text-sm font-medium text-zinc-200">
+                  Issued by a connector
+                </span>
+                <span className="block text-xs text-zinc-500">
+                  Give the names. A connector creates the key on its own server
+                  and issues the certificate.
+                </span>
+              </span>
+            </label>
+          </div>
+        </fieldset>
+
+        {requestMode === 'connector' ? (
+          <form
+            onSubmit={handleCreatePending}
+            aria-label="Create pending certificate"
+            className="space-y-4"
+          >
+            <Textarea
+              id="pending-cert-names"
+              label="Names"
+              placeholder={'app.example.com\nwww.example.com'}
+              rows={4}
+              value={namesText}
+              onChange={(e) => {
+                setNamesText(e.target.value);
+                setNamesError(null);
+              }}
+              disabled={submitting}
+              error={namesError ?? undefined}
+              aria-invalid={namesError ? true : undefined}
+              helpText={`One per line, or separated by commas. Wildcards such as *.example.com are allowed. Each name must be on one of your verified domains. Up to ${MAX_REQUESTED_NAMES}.`}
+              className="font-mono"
+            />
+            <p className="text-xs text-zinc-500 flex items-start gap-1.5">
+              <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <span>
+                The certificate waits as Awaiting CSR. The connector creates the
+                private key, which never leaves its server, and sends a CSR for
+                exactly these names; its first pass issues the certificate.
+                Nothing is sent to the CA until then. Add the certificate's id
+                to the connector's config, and make sure the connector's
+                restrictions cover it. A connector limited to the domain covers
+                it automatically; otherwise add the certificate under Edit
+                restrictions on the connector's page.
+              </span>
+            </p>
+            <Button type="submit" variant="primary" disabled={submitting}>
+              {submitting ? 'Creating...' : 'Create Pending Certificate'}
+            </Button>
+          </form>
+        ) : showCsrGenerator ? (
           <CsrGenerator
             onCsrGenerated={handleCsrGenerated}
             onCancel={() => setShowCsrGenerator(false)}
@@ -584,6 +717,14 @@ function CertCard({
             <span className="text-zinc-300">{domains.join(', ')}</span>
           </div>
         )}
+        {cert.managedBy === 'connector' && (
+          <div className="flex gap-2">
+            <span className="text-zinc-500">Managed by:</span>
+            <span className="text-zinc-300">
+              A connector, which renews it with its own keys
+            </span>
+          </div>
+        )}
         {cert.status === CertStatus.AWAITING_CSR && (
           <div className="flex gap-2">
             <span className="text-zinc-500">State:</span>
@@ -652,6 +793,10 @@ function CertCard({
           </div>
         )}
       </div>
+
+      {cert.managedBy === 'connector' && (
+        <CertificateDeployments certificateId={cert.id} />
+      )}
 
       {/* Parsed Certificate Details */}
       {cert.crtPem && (
@@ -863,10 +1008,16 @@ function CertTable({
                     {pollingIds.has(cert.id) && (
                       <Loader2 className="w-3 h-3 ml-1 inline animate-spin text-cyan-400" />
                     )}
-                    {cert.status === CertStatus.AWAITING_CSR && (
+                    {cert.status === CertStatus.AWAITING_CSR ? (
                       <div className="text-xs font-normal text-zinc-500">
                         Awaiting CSR from connector
                       </div>
+                    ) : (
+                      cert.managedBy === 'connector' && (
+                        <div className="text-xs font-normal text-zinc-500">
+                          Managed by a connector
+                        </div>
+                      )
                     )}
                   </TableCell>
                   <TableCell>

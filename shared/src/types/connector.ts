@@ -74,6 +74,18 @@ export interface Connector {
   createdAt: string;
   /** Only on `GET /connectors/:id`. */
   deployments?: ConnectorDeployment[];
+  /** Only on `GET /connectors`: counts of what the connector last reported. */
+  deploymentSummary?: ConnectorDeploymentSummary;
+}
+
+/** Counts of a connector's reported deployments, for the connector list. */
+export interface ConnectorDeploymentSummary {
+  /** Certificates with at least one reported target. */
+  certificates: number;
+  /** Targets across all of those certificates. */
+  targets: number;
+  /** Targets whose state is `failed` or `rolled_back`. */
+  failing: number;
 }
 
 /** Where a connector installs a certificate, and how that went. */

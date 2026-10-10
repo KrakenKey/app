@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CertStatus } from '@krakenkey/shared';
-import { getCertDomains } from '../certDomains';
+import { getCertDomains, parseNameList } from '../certDomains';
 import { STATUS_LABEL, STATUS_ORDER } from '../statusMappings';
 import { mockAwaitingCsrCert, mockCerts } from '../../test/mocks/data';
 
@@ -35,5 +35,35 @@ describe('status mappings', () => {
     expect(STATUS_ORDER[CertStatus.AWAITING_CSR]).toBeLessThan(
       STATUS_ORDER[CertStatus.PENDING],
     );
+  });
+});
+
+describe('parseNameList', () => {
+  it('splits on lines, commas and spaces, lowercases and drops duplicates', () => {
+    expect(
+      parseNameList(
+        'App.Example.com, *.example.com\napp.example.com  www.example.com.',
+      ),
+    ).toEqual({
+      names: ['app.example.com', '*.example.com', 'www.example.com'],
+      invalid: [],
+    });
+  });
+
+  it('lists entries that are not DNS names', () => {
+    expect(
+      parseNameList(
+        'ok.example.com\nlocalhost\nbad_name.example.com\n*.*.example.com\n-a.example.com',
+      ).invalid,
+    ).toEqual([
+      'localhost',
+      'bad_name.example.com',
+      '*.*.example.com',
+      '-a.example.com',
+    ]);
+  });
+
+  it('returns nothing for blank text', () => {
+    expect(parseNameList(' \n , ')).toEqual({ names: [], invalid: [] });
   });
 });

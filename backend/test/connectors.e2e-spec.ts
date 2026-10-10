@@ -781,6 +781,11 @@ describe('Connectors (e2e)', () => {
         },
       ]);
 
+      const list = await session().get('/connectors').expect(200);
+      expect(
+        list.body.find((c: { id: string }) => c.id === id).deploymentSummary,
+      ).toEqual({ certificates: 1, targets: 2, failing: 0 });
+
       const byCert = await session()
         .get('/connectors/deployments?certificateId=7')
         .expect(200);

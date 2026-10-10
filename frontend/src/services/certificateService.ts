@@ -44,6 +44,21 @@ export async function submitCsr(
   return response.data;
 }
 
+/**
+ * Creates a certificate a connector issues with its own key: it waits in
+ * `awaiting_csr` until the connector sends a CSR for exactly these names.
+ */
+export async function createPendingCertificate(
+  names: string[],
+): Promise<CreateTlsCertResponse> {
+  const payload: CreateTlsCertRequest = { names, managedBy: 'connector' };
+  const response = await api.post<CreateTlsCertResponse>(
+    API_ROUTES.TLS_CERTS.BASE,
+    payload,
+  );
+  return response.data;
+}
+
 export async function renewCertificate(
   id: number,
 ): Promise<RenewTlsCertResponse> {

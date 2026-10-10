@@ -16,13 +16,19 @@ export type AccessChoice = ApiKeyPreset | 'custom';
  * keys and GitHub Actions trust policies. Domains and certificates are
  * fetched on demand, the first time the restrictions are opened.
  */
-export function useAccessForm() {
+export function useAccessForm(
+  initial: { domainIds?: readonly string[]; certIds?: readonly number[] } = {},
+) {
   const [access, setAccess] = useState<AccessChoice>('full');
   const [selectedScopes, setSelectedScopes] = useState<ApiKeyScope[]>([]);
   const [scopeError, setScopeError] = useState<string | null>(null);
   const [restrictionsOpen, setRestrictionsOpen] = useState(false);
-  const [domainIds, setDomainIds] = useState<string[]>([]);
-  const [certIds, setCertIds] = useState<number[]>([]);
+  const [domainIds, setDomainIds] = useState<string[]>(() => [
+    ...(initial.domainIds ?? []),
+  ]);
+  const [certIds, setCertIds] = useState<number[]>(() => [
+    ...(initial.certIds ?? []),
+  ]);
 
   const [domains, setDomains] = useState<Domain[] | null>(null);
   const [domainsFailed, setDomainsFailed] = useState(false);
@@ -140,6 +146,7 @@ export function useAccessForm() {
     certs,
     certsFailed,
     loadDomains,
+    loadCerts,
     domainNames,
     reset,
     resolveScopes,

@@ -62,10 +62,21 @@ export class ConnectorsController {
   @UseGuards(JwtOrApiKeyGuard)
   @RequireScope('account:read')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'List connectors, including revoked ones' })
+  @ApiOperation({
+    summary:
+      'List connectors, including revoked ones, with counts of their deployments',
+  })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
-  list(@Req() req: RequestWithUser): Promise<Connector[]> {
-    return this.connectors.list(req.user.userId);
+  async list(@Req() req: RequestWithUser): Promise<Connector[]> {
+    const connectors = await this.connectors.list(req.user.userId);
+    const summaries = await this.reports.summaries(
+      req.user,
+      connectors.map((c) => c.id),
+    );
+    return connectors.map((c) => ({
+      ...c,
+      deploymentSummary: summaries.get(c.id),
+    }));
   }
 
   // Declared before :id so "deployments" isn't taken for an id

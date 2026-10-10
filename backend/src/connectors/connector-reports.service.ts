@@ -11,6 +11,7 @@ import {
   CONNECTOR_FAILED_STATES,
   CONNECTOR_STALE_AFTER_HOURS,
   type ConnectorDeployment as ConnectorDeploymentDto,
+  type ConnectorDeploymentSummary,
   type ConnectorDeploymentState,
   type ConnectorReportResponse,
 } from '@krakenkey/shared';
@@ -159,6 +160,42 @@ export class ConnectorReportsService {
     }
     const allowed = await this.keyAccess.filterCerts(user, certs);
     return new Set(allowed.map((c) => c.id));
+  }
+
+  /**
+   * Counts of what each connector last reported, for the connector list,
+   * over the same deployments forConnector() would show the caller.
+   * Connectors without visible deployments get zeros.
+   */
+  async summaries(
+    user: KeyUser & { userId: string },
+    connectorIds: string[],
+  ): Promise<Map<string, ConnectorDeploymentSummary>> {
+    const result = new Map<string, ConnectorDeploymentSummary>();
+    if (!connectorIds.length) return result;
+    for (const id of connectorIds) {
+      result.set(id, { certificates: 0, targets: 0, failing: 0 });
+    }
+    const rows = await this.deploymentRepo.find({
+      where: { connectorId: In(connectorIds) },
+      select: ['connectorId', 'certificateId', 'state'],
+    });
+    if (!rows.length) return result;
+    const visible = await this.visibleCertIds(user, [
+      ...new Set(rows.map((d) => d.certificateId)),
+    ]);
+    const certs = new Map<string, Set<number>>();
+    for (const row of rows) {
+      const summary = result.get(row.connectorId);
+      if (!summary || !visible.has(row.certificateId)) continue;
+      summary.targets++;
+      if (FAILED.has(row.state)) summary.failing++;
+      const seen = certs.get(row.connectorId) ?? new Set<number>();
+      seen.add(row.certificateId);
+      certs.set(row.connectorId, seen);
+    }
+    for (const [id, seen] of certs) result.get(id)!.certificates = seen.size;
+    return result;
   }
 
   // --- Report ----------------------------------------------------------------

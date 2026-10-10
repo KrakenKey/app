@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { render } from '../../test/test-utils';
 import { mockUser } from '../../test/mocks/data';
@@ -194,5 +194,30 @@ describe('Settings', () => {
     await user.click(screen.getByText('Cancel'));
     expect(screen.queryByText('Cancel')).not.toBeInTheDocument();
     expect(screen.getByText('Delete Account')).toBeInTheDocument();
+  });
+
+  it('lists the connector email alerts and turns one off', async () => {
+    const user = userEvent.setup();
+    mockApi.patch.mockResolvedValue({
+      data: {
+        ...mockProfile,
+        notificationPreferences: { deploy_failed: false },
+      },
+    });
+    render(<Settings />);
+    await screen.findByText('Deployment Failed');
+    expect(screen.getByText('Connector Offline')).toBeInTheDocument();
+
+    const toggle = within(
+      screen.getByText('Deployment Failed').closest('label')!,
+    ).getByRole('switch');
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+    await user.click(toggle);
+
+    await waitFor(() =>
+      expect(mockApi.patch).toHaveBeenCalledWith('/auth/profile', {
+        notificationPreferences: { deploy_failed: false },
+      }),
+    );
   });
 });

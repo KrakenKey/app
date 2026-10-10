@@ -1,12 +1,18 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 
+const sizeClasses = {
+  md: 'max-w-lg',
+  lg: 'max-w-2xl',
+} as const;
+
 interface ModalProps {
   open: boolean;
   onClose: () => void;
   title?: string;
   children: ReactNode;
   className?: string;
+  size?: keyof typeof sizeClasses;
 }
 
 export function Modal({
@@ -15,6 +21,7 @@ export function Modal({
   title,
   children,
   className = '',
+  size = 'md',
 }: ModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
 
@@ -44,7 +51,7 @@ export function Modal({
   return (
     <dialog
       ref={dialogRef}
-      className={`backdrop:bg-black/60 bg-zinc-900 border border-zinc-800 rounded-xl p-0 text-zinc-100 max-w-lg w-full shadow-2xl ${className}`}
+      className={`m-auto backdrop:bg-black/60 bg-zinc-900 border border-zinc-800 rounded-xl p-0 text-zinc-100 ${sizeClasses[size]} w-full shadow-2xl ${className}`}
       onClick={(e) => {
         if (e.target === dialogRef.current) onClose();
       }}

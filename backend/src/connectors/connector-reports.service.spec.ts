@@ -537,6 +537,59 @@ describe('ConnectorReportsService', () => {
       expect(deploymentRepo.find).not.toHaveBeenCalled();
     });
 
+    it('counts certificates, targets and failing targets per connector', async () => {
+      deploymentRepo.find.mockResolvedValue([
+        { connectorId: CID, certificateId: 7, state: 'verified' },
+        { connectorId: CID, certificateId: 7, state: 'failed' },
+        { connectorId: CID, certificateId: 8, state: 'rolled_back' },
+        { connectorId: CID, certificateId: 8, state: 'staged' },
+      ]);
+      const result = await svc.summaries(user(), [CID, 'c2']);
+      expect(result.get(CID)).toEqual({
+        certificates: 2,
+        targets: 4,
+        failing: 2,
+      });
+      expect(result.get('c2')).toEqual({
+        certificates: 0,
+        targets: 0,
+        failing: 0,
+      });
+      expect(deploymentRepo.find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: ['connectorId', 'certificateId', 'state'],
+        }),
+      );
+    });
+
+    it('counts only certificates the caller can still see', async () => {
+      deploymentRepo.find.mockResolvedValue([
+        { connectorId: CID, certificateId: 7, state: 'verified' },
+        { connectorId: CID, certificateId: 8, state: 'failed' },
+        { connectorId: CID, certificateId: 9, state: 'failed' },
+      ]);
+      // 9 left with the organization; 8 is outside the key's restrictions
+      certs = [cert(7), cert(8)];
+      keyAccess.filterCerts.mockImplementation(
+        async (_u: unknown, c: { id: number }[]) => c.filter((x) => x.id !== 8),
+      );
+      const result = await svc.summaries(user(), [CID]);
+      expect(result.get(CID)).toEqual({
+        certificates: 1,
+        targets: 1,
+        failing: 0,
+      });
+      expect(keyAccess.filterCerts).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'u1' }),
+        [cert(7), cert(8)],
+      );
+    });
+
+    it('does not query deployments for an empty list', async () => {
+      await expect(svc.summaries(user(), [])).resolves.toEqual(new Map());
+      expect(deploymentRepo.find).not.toHaveBeenCalled();
+    });
+
     it('returns nothing for a certificate the caller cannot see', async () => {
       connectorRepo.find.mockResolvedValue([{ id: CID, name: 'web-01' }]);
       keyAccess.filterCerts.mockResolvedValue([]);
