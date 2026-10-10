@@ -48,6 +48,17 @@ const NOTIFICATION_OPTIONS = [
     label: 'Domain Verification Failed',
     description: 'When a domain loses its DNS verification',
   },
+  {
+    type: 'deploy_failed' as const,
+    label: 'Deployment Failed',
+    description:
+      'When a connector fails to install a certificate on a target, or rolls it back',
+  },
+  {
+    type: 'connector_stale' as const,
+    label: 'Connector Offline',
+    description: 'When a connector has not checked in for 24 hours',
+  },
 ];
 
 const Settings: React.FC = () => {

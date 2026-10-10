@@ -37,6 +37,8 @@ export const NotificationType = {
   AUTO_RENEWAL_PAUSED: 'auto_renewal_paused',
   WELCOME: 'welcome',
   ACTIVATION_REMINDER: 'activation_reminder',
+  DEPLOY_FAILED: 'deploy_failed',
+  CONNECTOR_STALE: 'connector_stale',
 } as const;
 
 export type NotificationType =

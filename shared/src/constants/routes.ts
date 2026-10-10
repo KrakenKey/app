@@ -83,6 +83,18 @@ export const API_ROUTES = {
   PUBLIC_SCAN: {
     SCAN: '/public-scan',
   },
+  CONNECTORS: {
+    BASE: '/connectors',
+    BY_ID: (id: string) => `/connectors/${id}`,
+    ENROLLMENT_TOKEN: (id: string) => `/connectors/${id}/enrollment-token`,
+    DEPLOYMENTS: '/connectors/deployments',
+    DEPLOYMENTS_FOR_CERT: (certificateId: number) =>
+      `/connectors/deployments?certificateId=${certificateId}`,
+    ENROLL: '/connectors/enroll',
+    TOKEN: '/connectors/token',
+    ROTATE: '/connectors/rotate',
+    REPORT: '/connectors/report',
+  },
   REPORTS: {
     BASE: '/reports',
     BY_ID: (id: string) => `/reports/${id}`,

@@ -11,6 +11,8 @@ export interface ApiKeyContext {
   scopes: ApiKeyScope[] | null;
   allowedDomainIds: string[] | null;
   allowedCertIds: number[] | null;
+  /** Set when the key was issued to a connector. */
+  connectorId?: string | null;
 }
 
 /** True when the key is limited to specific domains or certificates. */

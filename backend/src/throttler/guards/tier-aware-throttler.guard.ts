@@ -14,7 +14,10 @@ import { TIER_RESOLVER } from '../interfaces/tier-resolver.interface';
 import type { TierResolver } from '../interfaces/tier-resolver.interface';
 import { API_KEY_USER_RESOLVER } from '../interfaces/api-key-user-resolver.interface';
 import type { ApiKeyUserResolver } from '../interfaces/api-key-user-resolver.interface';
-import { RateLimitCategory } from '../interfaces/rate-limit-category.enum';
+import {
+  RateLimitCategory,
+  isPublicCategory,
+} from '../interfaces/rate-limit-category.enum';
 import {
   RATE_LIMIT_TIERS,
   DEFAULT_TIER,
@@ -53,7 +56,7 @@ export class TierAwareThrottlerGuard extends ThrottlerGuard {
     // Public routes never look at the token: it is unverified and nothing
     // rejects it later, so a caller could mint a new bucket per request.
     const userId =
-      context && this.resolveCategory(context) === RateLimitCategory.PUBLIC
+      context && isPublicCategory(this.resolveCategory(context))
         ? null
         : await this.tryExtractUserId(req);
     if (userId) {
@@ -82,10 +85,9 @@ export class TierAwareThrottlerGuard extends ThrottlerGuard {
 
     // 2. Determine user's subscription tier (public routes always use the
     //    default tier; see getTracker)
-    const userId =
-      category === RateLimitCategory.PUBLIC
-        ? null
-        : await this.tryExtractUserId(req);
+    const userId = isPublicCategory(category)
+      ? null
+      : await this.tryExtractUserId(req);
     let tier = DEFAULT_TIER;
     if (userId) {
       try {

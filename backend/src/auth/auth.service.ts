@@ -100,6 +100,14 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
+   * Hashes a secret other than an API key (such as a connector enrollment
+   * token) the same way API keys are hashed, for storage and lookup.
+   */
+  hashSecret(raw: string): string {
+    return this.hashKey(raw);
+  }
+
+  /**
    * Seeds a service key from KK_PROBE_API_KEY env var on startup.
    * Idempotent: skips if the hash already exists.
    */
@@ -417,7 +425,7 @@ export class AuthService implements OnModuleInit {
     if (limits.apiKeys !== Infinity) {
       const memberIds =
         await this.billingService.getResourceCountUserIds(userId);
-      // Short-lived keys from GitHub OIDC don't take a plan slot
+      // Short-lived keys (GitHub OIDC, connectors) don't take a plan slot
       const count = await this.userApiKeyRepo.count({
         where: { userId: In(memberIds), revokedAt: IsNull(), source: IsNull() },
       });
@@ -444,8 +452,8 @@ export class AuthService implements OnModuleInit {
     userId: string,
     opts: { includeRevoked?: boolean } = {},
   ): Promise<ApiKey[]> {
-    // Short-lived GitHub OIDC keys are left out; their trust policy shows
-    // when it was last used.
+    // Short-lived keys are left out; the GitHub trust policy or connector
+    // they were issued to shows when it was last used.
     const where = opts.includeRevoked
       ? [
           { userId, revokedAt: IsNull(), source: IsNull() },
@@ -505,9 +513,10 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
-   * Creates a short-lived key for a machine exchange such as GitHub OIDC.
-   * It isn't listed, doesn't count toward the plan's key limit, and expires
-   * after ttlSeconds. Restrictions must already be validated.
+   * Creates a short-lived key for a machine exchange such as GitHub OIDC or
+   * a connector. It isn't listed, doesn't count toward the plan's key
+   * limit, and expires after ttlSeconds. Restrictions must already be
+   * validated. A key issued to a connector records its connectorId.
    */
   async createEphemeralApiKey(
     userId: string,
@@ -519,6 +528,7 @@ export class AuthService implements OnModuleInit {
       allowedDomainIds: string[] | null;
       allowedCertIds: number[] | null;
     },
+    options: { connectorId?: string } = {},
   ): Promise<{ id: string; apiKey: string; expiresAt: Date }> {
     const rawKey = `kk_${randomBytes(24).toString('hex')}`;
     const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
@@ -532,9 +542,22 @@ export class AuthService implements OnModuleInit {
       allowedDomainIds: restrictions.allowedDomainIds,
       allowedCertIds: restrictions.allowedCertIds,
       allowedIps: null,
+      connectorId: options.connectorId ?? null,
     });
     await this.userApiKeyRepo.save(key);
     return { id: key.id, apiKey: rawKey, expiresAt };
+  }
+
+  /**
+   * Revokes every live key issued to a connector. Returns how many were
+   * revoked.
+   */
+  async revokeConnectorKeys(connectorId: string): Promise<number> {
+    const result = await this.userApiKeyRepo.update(
+      { connectorId, revokedAt: IsNull() },
+      { revokedAt: new Date() },
+    );
+    return result.affected ?? 0;
   }
 
   /** Hourly: delete short-lived keys that expired more than an hour ago. */
@@ -703,7 +726,7 @@ export class AuthService implements OnModuleInit {
       this.domainRepo.count({ where: { userId: In(memberIds) } }),
       this.tlsCrtRepo.count({ where: { userId: In(memberIds) } }),
       this.userApiKeyRepo.count({
-        where: { userId: In(memberIds), revokedAt: IsNull() },
+        where: { userId: In(memberIds), revokedAt: IsNull(), source: IsNull() },
       }),
     ]);
 
