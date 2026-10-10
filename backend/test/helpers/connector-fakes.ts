@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import {
   createHash,
   generateKeyPairSync,
@@ -184,7 +184,7 @@ export class FakeAuthService {
     private readonly owned: { certIds: number[]; domainIds: string[] },
   ) {}
 
-  hashSecret(raw: string): string {
+  hmacSecret(raw: string): string {
     return createHash('sha256').update(raw).digest('hex');
   }
 
@@ -276,10 +276,15 @@ export class FakeAuthService {
     return n;
   }
 
+  /** Mirrors AuthService: dead short-lived keys throw instead of returning null. */
   async validateApiKey(raw: string) {
     const k = this.keys.get(raw);
-    if (!k || k.revokedAt) return null;
-    if (k.expiresAt && k.expiresAt < new Date()) return null;
+    if (!k) return null;
+    const expired = Boolean(k.expiresAt && k.expiresAt < new Date());
+    if (k.source && (k.revokedAt || expired)) {
+      throw new UnauthorizedException('Invalid API key');
+    }
+    if (k.revokedAt || expired) return null;
     return k;
   }
 }

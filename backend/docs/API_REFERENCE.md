@@ -899,7 +899,7 @@ The three connector routes are limited to 10 requests per minute per IP each (se
 { "connector": { "...": "connector object" }, "enrollmentToken": "kkce_..." }
 ```
 
-The token is shown once. It is `kkce_` followed by 32 random bytes (base64url), stored only as a hash, works once, and expires after 24 hours.
+The token is shown once. It is `kkce_` followed by 32 random bytes (base64url), stored only as an HMAC-SHA256 keyed with `KK_HMAC_SECRET`, works once, and expires after 24 hours. `name` and `clientLabel` may not contain control or invisible format characters (newlines, bidi overrides); `allowedCertIds` entries must fit a 32-bit integer.
 
 ### POST /connectors/:id/enrollment-token
 
@@ -907,7 +907,7 @@ Issues a new token for a connector that hasn't enrolled yet, for example because
 
 ### PATCH /connectors/:id
 
-`{ "name": "web-02", "clientLabel": null }`. Both fields are optional; `clientLabel: null` clears the label. Scopes and restrictions can't be changed; create a new connector instead.
+`{ "name": "web-02", "clientLabel": null }`. Both fields are optional; `clientLabel: null` clears the label. Scopes and restrictions can't be changed; create a new connector instead. A revoked connector can't be changed (`409`).
 
 ### DELETE /connectors/:id
 
@@ -925,7 +925,7 @@ Revokes the connector: it can no longer enroll, get keys or rotate, and every ke
 }
 ```
 
-`publicKey` is standard base64 with padding (44 characters). `version` (up to 64 characters), `os` and `arch` (up to 32) are printable ASCII without spaces. A malformed field is a `400` and does not use up the token.
+`publicKey` is standard base64 with padding (44 characters) of a canonical point outside the small-order subgroup; the eight small-order points (the identity and the all-zero key among them) are refused, since signatures under them can be forged. `version` (up to 64 characters), `os` and `arch` (up to 32) are printable ASCII without spaces. A malformed field is a `400` and does not use up the token.
 
 **Response `200`:** `{ "connectorId": "uuid", "name": "web-01" }`
 
@@ -936,7 +936,7 @@ The token is consumed by a single conditional update, so of several requests wit
 `/connectors/token` and `/connectors/rotate` carry an Ed25519 signature instead of a bearer token:
 
 - `timestamp`: RFC 3339 UTC with second precision, `2026-10-10T14:00:00Z`. Refused when more than 300 seconds from the server's clock.
-- `nonce`: base64url without padding of at least 16 random bytes, at most 64 characters. Each nonce works once per connector within 10 minutes.
+- `nonce`: base64url without padding of at least 16 random bytes, at most 64 characters. Each nonce works once per connector; used nonces are kept for 11 minutes (twice the allowed skew plus a minute), longer than any timestamp stays acceptable.
 - `signature`: standard base64 of the 64-byte signature over the UTF-8 message below, lines joined with `\n` and no trailing newline.
 
 Any failure (unknown, unenrolled or revoked connector, bad signature, stale timestamp, reused nonce) returns `401` `Invalid connector credentials`. Malformed fields return `400`. If the nonce store (Redis) is unavailable the request fails with `503` rather than skipping the replay check.
@@ -976,7 +976,9 @@ KRAKENKEY-CONNECTOR-ROTATE-V1
 <nonce>
 ```
 
-Returns `204`. From then on only the new key is accepted. Keys already issued stay valid until they expire.
+Returns `204`. From then on only the new key is accepted, and every API key issued to the connector so far is revoked, so rotating after a suspected compromise of the host also cuts off any key taken from it. The connector gets a fresh key with the new key pair. `newPublicKey` must differ from the current key (`400`) and follows the same rules as at enrollment.
+
+A key issued to a connector that has been revoked or has expired gets `401` but does not count toward the per-IP failed-key lockout (10 failures in 15 minutes): it is a known key, not a guess, and many connectors at one site using their keys after a revocation must not lock that site's address out of API key auth. Failed `/connectors/token` and `/connectors/rotate` requests don't count toward it either.
 
 ### POST /connectors/report
 

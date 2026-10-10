@@ -15,7 +15,7 @@ import { Cron } from '@nestjs/schedule';
 import { UserApiKey } from './entities/user-api-key.entity';
 import { ServiceApiKey } from './entities/service-api-key.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { scryptSync, randomBytes } from 'crypto';
+import { createHmac, scryptSync, randomBytes } from 'crypto';
 import { User } from '../users/entities/user.entity';
 import { Domain } from '../domains/entities/domain.entity';
 import { TlsCrt } from '../certs/tls/entities/tls-crt.entity';
@@ -100,11 +100,18 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
-   * Hashes a secret other than an API key (such as a connector enrollment
-   * token) the same way API keys are hashed, for storage and lookup.
+   * HMAC-SHA256 of a high-entropy secret other than an API key (such as a
+   * connector enrollment token: 256 random bits), keyed with
+   * KK_HMAC_SECRET, for storage and lookup. Unlike hashKey this is cheap,
+   * so public routes can afford it on every request; the secret's own
+   * entropy, not a slow hash, is what stops guessing.
    */
-  hashSecret(raw: string): string {
-    return this.hashKey(raw);
+  hmacSecret(raw: string): string {
+    const secret = this.config.get<string>('KK_HMAC_SECRET');
+    if (!secret) {
+      throw new Error('KK_HMAC_SECRET must be set to hash secrets');
+    }
+    return createHmac('sha256', secret).update(raw).digest('hex');
   }
 
   /**
@@ -597,15 +604,22 @@ export class AuthService implements OnModuleInit {
       relations: ['user'],
     });
     if (!record) return null;
+    const expired = Boolean(record.expiresAt && record.expiresAt < new Date());
     if (record.revokedAt) {
       this.logger.warn(
         `Revoked API key ${record.id} presented${meta?.ip ? ` from ${meta.ip}` : ''}`,
       );
-      return null;
     }
-    if (record.expiresAt && record.expiresAt < new Date()) {
-      // Short-lived machine keys expire by design; don't email about them
-      if (!record.source) await this.notifyExpiredKeyUse(record, meta?.ip);
+    // A revoked or expired short-lived key (GitHub OIDC, connector) is a
+    // known key, not a guess: refuse it without counting toward the per-IP
+    // brute-force lockout, so revoking a site's connectors can't lock that
+    // site's address out of API key auth for every other key and user.
+    if (record.source && (record.revokedAt || expired)) {
+      throw new UnauthorizedException('Invalid API key');
+    }
+    if (record.revokedAt) return null;
+    if (expired) {
+      await this.notifyExpiredKeyUse(record, meta?.ip);
       return null;
     }
     // A valid key from the wrong address: 403, not 401, and not counted

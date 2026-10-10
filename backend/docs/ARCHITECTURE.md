@@ -190,13 +190,15 @@ Approve, deny and lookup require a dashboard (JWT) session; an API key gets 403,
 **Providers**:
 - `ConnectorsService` — Connector CRUD, enrollment, signed key exchange and key rotation, revocation
 - `ConnectorReportsService` — Stores deployment status reports, sends `deploy.failed` on transitions, and runs the hourly `connector.stale` check (at :45)
-- `ConnectorNonceStore` — Remembers used nonces per connector in Redis (`connector-nonce:` prefix, 10 minutes); fails closed
+- `ConnectorNonceStore` — Remembers used nonces per connector in Redis (`connector-nonce:` prefix, 11 minutes); fails closed
 - `ConnectorsController` — REST endpoints
 
 **Key behaviors**:
-- A connector enrolls once with a single-use `kkce_` token (scrypt hash stored, consumed by one conditional `UPDATE ... RETURNING`), registering an Ed25519 public key
+- A connector enrolls once with a single-use `kkce_` token (HMAC-SHA256 stored, consumed by one conditional `UPDATE ... RETURNING`), registering an Ed25519 public key; small-order points are refused
 - `POST /connectors/token` verifies a signature over `KRAKENKEY-CONNECTOR-TOKEN-V1`, the connector id, a timestamp (300 seconds of skew) and a nonce, then mints a one-hour key through `AuthService.createEphemeralApiKey` (`source: 'connector'`, `connectorId` set) with the connector's scopes and restrictions
 - Revoking a connector revokes every key it was issued; a key minted while the revocation runs is caught by a second check after the insert
+- Rotating the connector's key also revokes every key it was issued
+- Revoked or expired short-lived keys throw from `AuthService.validateApiKey` instead of returning null, so `ApiKeyStrategy` doesn't count them toward the per-IP lockout
 - Enroll, token and rotate are public routes limited per IP (`PUBLIC_STRICT`, 10/min)
 - `POST /connectors/report` only accepts keys issued to a connector; a report is applied in one transaction with the connector row locked, so concurrent reports can't double-alert. `connector.stale` claims stale connectors with one `UPDATE ... RETURNING` on `staleAlertedAt`, so it alerts once across replicas, and any contact from the connector clears it
 

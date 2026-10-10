@@ -31,8 +31,13 @@ export const CONNECTOR_MAX_CLOCK_SKEW_SECONDS = 300;
  */
 export const CONNECTOR_STALE_AFTER_HOURS = 24;
 
-/** How long a used nonce is remembered, per connector. */
-export const CONNECTOR_NONCE_TTL_SECONDS = 600;
+/**
+ * How long a used nonce is remembered, per connector: longer than the whole
+ * window a signed timestamp is accepted in (skew either side), plus a
+ * margin, so a request can't be replayed once its nonce is forgotten.
+ */
+export const CONNECTOR_NONCE_TTL_SECONDS =
+  2 * CONNECTOR_MAX_CLOCK_SKEW_SECONDS + 60;
 
 /**
  * First line of the message signed for `POST /connectors/token`. The full

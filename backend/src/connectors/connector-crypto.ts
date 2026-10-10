@@ -16,15 +16,49 @@ export const TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 /** base64url without padding, 16 bytes (22 characters) or more, at most 64. */
 export const NONCE_PATTERN = /^[A-Za-z0-9_-]{22,64}$/;
 
+/** The Ed25519 field prime, 2^255 - 19. */
+const P = (1n << 255n) - 19n;
+
+/**
+ * y-coordinates of the eight small-order points of Ed25519 (the torsion
+ * subgroup): the identity (y = 1), the order-2 point (y = -1), the two
+ * order-4 points (y = 0) and the four order-8 points (y = ±y8). Any public
+ * key on one of them makes signatures forgeable: with the identity, the
+ * signature R = identity, S = 0 verifies for every message.
+ */
+const SMALL_ORDER_Y = new Set<bigint>([
+  0n,
+  1n,
+  P - 1n,
+  2707385501144840649318225287225658788936804267575313519463743609750303402022n,
+  55188659117513257062467267217118295137698188065244968500265048394206261417927n,
+]);
+
+/**
+ * True when 32 bytes are a canonical encoding of a point outside the
+ * small-order subgroup. Rejects y >= p (non-canonical) and every
+ * small-order y, whatever the sign bit, so all encodings of the eight
+ * small-order points are refused.
+ */
+export function isAcceptablePoint(raw: Buffer): boolean {
+  if (raw.length !== 32) return false;
+  const bytes = Buffer.from(raw);
+  bytes[31] &= 0x7f; // drop the x sign bit
+  const y = BigInt(`0x${Buffer.from(bytes).reverse().toString('hex')}`);
+  if (y >= P) return false;
+  return !SMALL_ORDER_Y.has(y);
+}
+
 /**
  * Builds an Ed25519 public key from the base64 of its raw 32 bytes.
- * Returns null for anything else: wrong length, non-canonical base64, or
- * bytes OpenSSL refuses as a key.
+ * Returns null for anything else: wrong length, non-canonical base64 or
+ * point encoding, a small-order point, or bytes OpenSSL refuses as a key.
  */
 export function parsePublicKey(b64: string): KeyObject | null {
   if (typeof b64 !== 'string' || !PUBLIC_KEY_PATTERN.test(b64)) return null;
   const raw = Buffer.from(b64, 'base64');
   if (raw.length !== 32 || raw.toString('base64') !== b64) return null;
+  if (!isAcceptablePoint(raw)) return null;
   try {
     return createPublicKey({
       key: { kty: 'OKP', crv: 'Ed25519', x: raw.toString('base64url') },
