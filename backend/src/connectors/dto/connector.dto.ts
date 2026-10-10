@@ -105,8 +105,10 @@ export class UpdateConnectorDto {
   clientLabel?: string | null;
 }
 
-export class ConnectorEnrolDto {
-  @ApiProperty({ description: 'Enrolment token from the dashboard (kkce_...)' })
+export class ConnectorEnrollDto {
+  @ApiProperty({
+    description: 'Enrollment token from the dashboard (kkce_...)',
+  })
   @IsString()
   @IsNotEmpty()
   @MaxLength(128)

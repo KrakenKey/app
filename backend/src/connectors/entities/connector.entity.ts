@@ -12,7 +12,7 @@ import { User } from '../../users/entities/user.entity';
 
 /**
  * A customer-hosted connector. Created in the dashboard with a single-use
- * enrolment token; enrolment stores the connector's Ed25519 public key,
+ * enrollment token; enrollment stores the connector's Ed25519 public key,
  * which it then signs short-lived key requests with.
  */
 @Entity()
@@ -50,12 +50,12 @@ export class Connector {
   @Column({ type: 'text', nullable: true })
   publicKey: string | null;
 
-  /** scrypt hash of the unused enrolment token; cleared when used. */
+  /** scrypt hash of the unused enrollment token; cleared when used. */
   @Column({ type: 'text', nullable: true, select: false })
-  enrolmentTokenHash?: string | null;
+  enrollmentTokenHash?: string | null;
 
   @Column({ type: 'timestamp', nullable: true })
-  enrolmentTokenExpiresAt: Date | null;
+  enrollmentTokenExpiresAt: Date | null;
 
   @Column({ type: 'timestamp', nullable: true })
   enrolledAt: Date | null;
@@ -63,7 +63,7 @@ export class Connector {
   @Column({ type: 'timestamp', nullable: true })
   revokedAt: Date | null;
 
-  /** Last enrolment, key exchange, rotation or status report. */
+  /** Last enrollment, key exchange, rotation or status report. */
   @Column({ type: 'timestamp', nullable: true })
   lastSeenAt: Date | null;
 

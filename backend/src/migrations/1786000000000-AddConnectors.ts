@@ -1,12 +1,12 @@
 import type { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
- * Connectors: customer-hosted agents that enrol with a single-use token,
+ * Connectors: customer-hosted agents that enroll with a single-use token,
  * authenticate with an Ed25519 key, and report where they installed each
  * certificate.
  *
- * - `connector`: one row per connector, with the hashed enrolment token
- *   (cleared when used or replaced) and the public key set at enrolment.
+ * - `connector`: one row per connector, with the hashed enrollment token
+ *   (cleared when used or replaced) and the public key set at enrollment.
  * - `connector_deployment`: the latest reported state of each
  *   (connector, certificate, target label).
  * - `user_api_key.connectorId`: the connector a short-lived key was issued
@@ -26,8 +26,8 @@ export class AddConnectors1786000000000 implements MigrationInterface {
         "allowedCertIds"          INTEGER[],
         "allowedDomainIds"        UUID[],
         "publicKey"               TEXT,
-        "enrolmentTokenHash"      TEXT,
-        "enrolmentTokenExpiresAt" TIMESTAMP,
+        "enrollmentTokenHash"      TEXT,
+        "enrollmentTokenExpiresAt" TIMESTAMP,
         "enrolledAt"              TIMESTAMP,
         "revokedAt"               TIMESTAMP,
         "lastSeenAt"              TIMESTAMP,
@@ -45,7 +45,7 @@ export class AddConnectors1786000000000 implements MigrationInterface {
       `CREATE INDEX IF NOT EXISTS "IDX_connector_userId" ON "connector" ("userId")`,
     );
     await queryRunner.query(
-      `CREATE UNIQUE INDEX IF NOT EXISTS "UQ_connector_enrolmentTokenHash" ON "connector" ("enrolmentTokenHash") WHERE "enrolmentTokenHash" IS NOT NULL`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS "UQ_connector_enrollmentTokenHash" ON "connector" ("enrollmentTokenHash") WHERE "enrollmentTokenHash" IS NOT NULL`,
     );
 
     await queryRunner.query(`

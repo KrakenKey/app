@@ -192,17 +192,17 @@ describe('Connectors (e2e)', () => {
     const res = await session().post('/connectors').send(body).expect(201);
     return res.body as {
       connector: { id: string; name: string };
-      enrolmentToken: string;
+      enrollmentToken: string;
     };
   }
 
   async function enrolled(body: Record<string, unknown> = BODY) {
-    const { connector, enrolmentToken } = await createConnector(body);
+    const { connector, enrollmentToken } = await createConnector(body);
     const key = connectorKey();
     await anon()
-      .post('/connectors/enrol')
+      .post('/connectors/enroll')
       .send({
-        token: enrolmentToken,
+        token: enrollmentToken,
         publicKey: key.publicB64,
         version: '0.2.0',
         os: 'linux',
@@ -212,7 +212,7 @@ describe('Connectors (e2e)', () => {
     return { id: connector.id, key };
   }
 
-  const enrolBody = (token: string, publicKey = connectorKey().publicB64) => ({
+  const enrollBody = (token: string, publicKey = connectorKey().publicB64) => ({
     token,
     publicKey,
     version: '0.2.0',
@@ -222,8 +222,8 @@ describe('Connectors (e2e)', () => {
 
   describe('dashboard', () => {
     it('creates a connector and shows the token once', async () => {
-      const { connector, enrolmentToken } = await createConnector();
-      expect(enrolmentToken).toMatch(/^kkce_[A-Za-z0-9_-]{43}$/);
+      const { connector, enrollmentToken } = await createConnector();
+      expect(enrollmentToken).toMatch(/^kkce_[A-Za-z0-9_-]{43}$/);
       expect(connector).toMatchObject({
         name: 'web-01',
         clientLabel: 'Acme',
@@ -235,14 +235,14 @@ describe('Connectors (e2e)', () => {
         lastSeenAt: null,
       });
       const list = await session().get('/connectors').expect(200);
-      expect(JSON.stringify(list.body)).not.toContain(enrolmentToken);
+      expect(JSON.stringify(list.body)).not.toContain(enrollmentToken);
       expect(list.body.map((c: { id: string }) => c.id)).toContain(
         connector.id,
       );
       const one = await session()
         .get(`/connectors/${connector.id}`)
         .expect(200);
-      expect(one.body).not.toHaveProperty('enrolmentTokenHash');
+      expect(one.body).not.toHaveProperty('enrollmentTokenHash');
     });
 
     it.each([
@@ -306,20 +306,20 @@ describe('Connectors (e2e)', () => {
     });
   });
 
-  describe('enrolment', () => {
-    it('enrols once; the token is single use', async () => {
-      const { connector, enrolmentToken } = await createConnector();
+  describe('enrollment', () => {
+    it('enrolls once; the token is single use', async () => {
+      const { connector, enrollmentToken } = await createConnector();
       const res = await anon()
-        .post('/connectors/enrol')
-        .send(enrolBody(enrolmentToken))
+        .post('/connectors/enroll')
+        .send(enrollBody(enrollmentToken))
         .expect(200);
       expect(res.body).toEqual({ connectorId: connector.id, name: 'web-01' });
 
       const again = await anon()
-        .post('/connectors/enrol')
-        .send(enrolBody(enrolmentToken))
+        .post('/connectors/enroll')
+        .send(enrollBody(enrollmentToken))
         .expect(401);
-      expect(again.body.message).toBe('Invalid enrolment token');
+      expect(again.body.message).toBe('Invalid enrollment token');
 
       const shown = await session()
         .get(`/connectors/${connector.id}`)
@@ -333,86 +333,89 @@ describe('Connectors (e2e)', () => {
       expect(shown.body.lastSeenAt).toEqual(expect.any(String));
     });
 
-    it('lets only one of two simultaneous enrolments win', async () => {
-      const { enrolmentToken } = await createConnector();
+    it('lets only one of two simultaneous enrollments win', async () => {
+      const { enrollmentToken } = await createConnector();
       const results = await Promise.all(
         [1, 2, 3].map(() =>
-          anon().post('/connectors/enrol').send(enrolBody(enrolmentToken)),
+          anon().post('/connectors/enroll').send(enrollBody(enrollmentToken)),
         ),
       );
       expect(results.map((r) => r.status).sort()).toEqual([200, 401, 401]);
     });
 
     it('refuses an expired token', async () => {
-      const { connector, enrolmentToken } = await createConnector();
-      repo.rows.find((r) => r.id === connector.id)!.enrolmentTokenExpiresAt =
+      const { connector, enrollmentToken } = await createConnector();
+      repo.rows.find((r) => r.id === connector.id)!.enrollmentTokenExpiresAt =
         new Date(Date.now() - 1000);
       await anon()
-        .post('/connectors/enrol')
-        .send(enrolBody(enrolmentToken))
+        .post('/connectors/enroll')
+        .send(enrollBody(enrollmentToken))
         .expect(401);
     });
 
     it('refuses unknown, malformed and revoked-connector tokens alike', async () => {
-      const { connector, enrolmentToken } = await createConnector();
+      const { connector, enrollmentToken } = await createConnector();
       await session().delete(`/connectors/${connector.id}`).expect(204);
       for (const token of [
-        enrolmentToken,
+        enrollmentToken,
         `kkce_${'A'.repeat(43)}`,
-        'kk_not_an_enrolment_token',
+        'kk_not_an_enrollment_token',
       ]) {
         const res = await anon()
-          .post('/connectors/enrol')
-          .send(enrolBody(token))
+          .post('/connectors/enroll')
+          .send(enrollBody(token))
           .expect(401);
-        expect(res.body.message).toBe('Invalid enrolment token');
+        expect(res.body.message).toBe('Invalid enrollment token');
       }
     });
 
-    it('replaces the token until the connector enrols, then 409s', async () => {
-      const { connector, enrolmentToken: first } = await createConnector();
+    it('replaces the token until the connector enrolls, then 409s', async () => {
+      const { connector, enrollmentToken: first } = await createConnector();
       const res = await session()
-        .post(`/connectors/${connector.id}/enrolment-token`)
+        .post(`/connectors/${connector.id}/enrollment-token`)
         .expect(201);
-      const second = res.body.enrolmentToken as string;
+      const second = res.body.enrollmentToken as string;
       expect(second).not.toBe(first);
-      await anon().post('/connectors/enrol').send(enrolBody(first)).expect(401);
       await anon()
-        .post('/connectors/enrol')
-        .send(enrolBody(second))
+        .post('/connectors/enroll')
+        .send(enrollBody(first))
+        .expect(401);
+      await anon()
+        .post('/connectors/enroll')
+        .send(enrollBody(second))
         .expect(200);
       await session()
-        .post(`/connectors/${connector.id}/enrolment-token`)
+        .post(`/connectors/${connector.id}/enrollment-token`)
         .expect(409);
     });
 
     it('400s a malformed public key without using up the token', async () => {
-      const { enrolmentToken } = await createConnector();
+      const { enrollmentToken } = await createConnector();
       for (const publicKey of [
         'AAAA',
         Buffer.alloc(32, 1).toString('base64url'),
         Buffer.alloc(33, 1).toString('base64'),
       ]) {
         await anon()
-          .post('/connectors/enrol')
-          .send(enrolBody(enrolmentToken, publicKey))
+          .post('/connectors/enroll')
+          .send(enrollBody(enrollmentToken, publicKey))
           .expect(400);
       }
       await anon()
-        .post('/connectors/enrol')
-        .send(enrolBody(enrolmentToken))
+        .post('/connectors/enroll')
+        .send(enrollBody(enrollmentToken))
         .expect(200);
     });
 
     it('validates the agent details', async () => {
-      const { enrolmentToken } = await createConnector();
+      const { enrollmentToken } = await createConnector();
       await anon()
-        .post('/connectors/enrol')
-        .send({ ...enrolBody(enrolmentToken), os: 'linux\nx' })
+        .post('/connectors/enroll')
+        .send({ ...enrollBody(enrollmentToken), os: 'linux\nx' })
         .expect(400);
       await anon()
-        .post('/connectors/enrol')
-        .send({ ...enrolBody(enrolmentToken), version: 'v'.repeat(65) })
+        .post('/connectors/enroll')
+        .send({ ...enrollBody(enrollmentToken), version: 'v'.repeat(65) })
         .expect(400);
     });
   });
@@ -862,7 +865,7 @@ describe('Connectors (e2e)', () => {
           .send({ name: 'x' })
           .expect(403);
         await anon()
-          .post(`/connectors/${connector.id}/enrolment-token`)
+          .post(`/connectors/${connector.id}/enrollment-token`)
           .set(h)
           .expect(403);
         await anon().delete(`/connectors/${connector.id}`).set(h).expect(403);

@@ -30,7 +30,7 @@ API keys work for domains, certificates and endpoints, but some routes only acce
 - `PATCH /users/:id`, `DELETE /users/:id`
 - `POST /organizations` and every organization change: members, roles, settings, deletion, ownership transfer
 - `POST /billing/checkout`, `POST /billing/portal`, `POST /billing/upgrade`
-- `POST /connectors`, `POST /connectors/:id/enrolment-token`, `PATCH /connectors/:id`, `DELETE /connectors/:id`
+- `POST /connectors`, `POST /connectors/:id/enrollment-token`, `PATCH /connectors/:id`, `DELETE /connectors/:id`
 
 Admin rights also need a session; an admin's API key acts as a regular user. The routes are marked with `@SessionOnly()` and enforced by `JwtOrApiKeyGuard`.
 
@@ -835,7 +835,7 @@ Remove a hosted region.
 
 ## Connectors
 
-A connector is an agent that runs on your own machines. It keeps private keys there, renews certificates with fresh CSRs, and installs them on local targets. It has no long-lived credential: it enrols once with a single-use token, keeps an Ed25519 key pair, and signs a request for a short-lived API key whenever it needs one.
+A connector is an agent that runs on your own machines. It keeps private keys there, renews certificates with fresh CSRs, and installs them on local targets. It has no long-lived credential: it enrolls once with a single-use token, keeps an Ed25519 key pair, and signs a request for a short-lived API key whenever it needs one.
 
 Connectors belong to the user who creates them, like API keys and GitHub trust policies. Up to 50 active (not revoked) connectors per user; the 51st returns `402` `Connector limit reached`.
 
@@ -844,11 +844,11 @@ Connectors belong to the user who creates them, like API keys and GitHub trust p
 | GET | `/connectors` | JWT or key with `account:read` | read | List connectors, revoked ones included |
 | GET | `/connectors/:id` | JWT or key with `account:read` | read | Get one connector with its deployments |
 | GET | `/connectors/deployments?certificateId=` | JWT or key with `account:read` | read | Where one certificate is deployed |
-| POST | `/connectors` | Dashboard session only | write | Create a connector and its enrolment token |
-| POST | `/connectors/:id/enrolment-token` | Dashboard session only | write | New enrolment token for a connector that has not enrolled |
+| POST | `/connectors` | Dashboard session only | write | Create a connector and its enrollment token |
+| POST | `/connectors/:id/enrollment-token` | Dashboard session only | write | New enrollment token for a connector that has not enrolled |
 | PATCH | `/connectors/:id` | Dashboard session only | write | Change `name` or `clientLabel` |
 | DELETE | `/connectors/:id` | Dashboard session only | write | Revoke the connector and its keys (`204`) |
-| POST | `/connectors/enrol` | None (enrolment token in the body) | public-strict | Enrol with the token and a public key |
+| POST | `/connectors/enroll` | None (enrollment token in the body) | public-strict | Enroll with the token and a public key |
 | POST | `/connectors/token` | None (signed body) | public-strict | Get an API key that lasts one hour |
 | POST | `/connectors/rotate` | None (signed body) | public-strict | Replace the connector's public key |
 | POST | `/connectors/report` | Key issued to a connector | write | Report deployment status |
@@ -875,7 +875,7 @@ The three connector routes are limited to 10 requests per minute per IP each (se
 }
 ```
 
-`lastSeenAt` is the last enrolment, key exchange, rotation or status report. `version`, `os` and `arch` are what the connector last sent. `GET /connectors/:id` adds `deployments`, every target the connector last reported (see [below](#post-connectorsreport)); the list does not include it.
+`lastSeenAt` is the last enrollment, key exchange, rotation or status report. `version`, `os` and `arch` are what the connector last sent. `GET /connectors/:id` adds `deployments`, every target the connector last reported (see [below](#post-connectorsreport)); the list does not include it.
 
 ### POST /connectors
 
@@ -896,14 +896,14 @@ The three connector routes are limited to 10 requests per minute per IP each (se
 **Response `201`:**
 
 ```json
-{ "connector": { "...": "connector object" }, "enrolmentToken": "kkce_..." }
+{ "connector": { "...": "connector object" }, "enrollmentToken": "kkce_..." }
 ```
 
 The token is shown once. It is `kkce_` followed by 32 random bytes (base64url), stored only as a hash, works once, and expires after 24 hours.
 
-### POST /connectors/:id/enrolment-token
+### POST /connectors/:id/enrollment-token
 
-Issues a new token for a connector that hasn't enrolled yet, for example because the first one expired. The previous token stops working. Returns `201` `{ "enrolmentToken": "kkce_..." }`, or `409` once the connector has enrolled or been revoked.
+Issues a new token for a connector that hasn't enrolled yet, for example because the first one expired. The previous token stops working. Returns `201` `{ "enrollmentToken": "kkce_..." }`, or `409` once the connector has enrolled or been revoked.
 
 ### PATCH /connectors/:id
 
@@ -911,9 +911,9 @@ Issues a new token for a connector that hasn't enrolled yet, for example because
 
 ### DELETE /connectors/:id
 
-Revokes the connector: it can no longer enrol, get keys or rotate, and every key it was issued stops working at once. The connector stays listed with `revokedAt` set. Revoking a revoked connector returns `204` again.
+Revokes the connector: it can no longer enroll, get keys or rotate, and every key it was issued stops working at once. The connector stays listed with `revokedAt` set. Revoking a revoked connector returns `204` again.
 
-### POST /connectors/enrol
+### POST /connectors/enroll
 
 ```json
 {
@@ -929,7 +929,7 @@ Revokes the connector: it can no longer enrol, get keys or rotate, and every key
 
 **Response `200`:** `{ "connectorId": "uuid", "name": "web-01" }`
 
-The token is consumed by a single conditional update, so of several requests with the same token exactly one succeeds. An unknown, expired, already used or replaced token, or one for a revoked connector, returns `401` `Invalid enrolment token` with no further detail.
+The token is consumed by a single conditional update, so of several requests with the same token exactly one succeeds. An unknown, expired, already used or replaced token, or one for a revoked connector, returns `401` `Invalid enrollment token` with no further detail.
 
 ### Signed requests
 

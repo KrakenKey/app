@@ -62,7 +62,7 @@ describe('@SessionOnly routes', () => {
         'POST /auth/github-oidc/trusts',
         'DELETE /auth/github-oidc/trusts/:id',
         'POST /connectors',
-        'POST /connectors/:id/enrolment-token',
+        'POST /connectors/:id/enrollment-token',
         'PATCH /connectors/:id',
         'DELETE /connectors/:id',
       ].sort(),

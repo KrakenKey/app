@@ -12,7 +12,7 @@ export type TierRateLimits = Record<RateLimitCategory, RateLimitRule>;
  *
  * Categories:
  *   public    — Unauthenticated endpoints (/, /health, /auth/*)
- *   public-strict — Unauthenticated credential exchanges (/connectors/enrol,
+ *   public-strict — Unauthenticated credential exchanges (/connectors/enroll,
  *               /connectors/token, /connectors/rotate); 10/min per IP
  *   read      — Authenticated GET requests (list domains, view certs, etc.)
  *   write     — Authenticated mutations (create domain, delete cert, etc.)

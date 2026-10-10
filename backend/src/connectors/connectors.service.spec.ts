@@ -131,12 +131,12 @@ describe('ConnectorsService', () => {
 
     it('stores only the hash of a kkce_ token that expires in 24 hours', async () => {
       const res = await svc.create('u1', dto({ clientLabel: 'Acme' }));
-      expect(res.enrolmentToken).toMatch(/^kkce_[A-Za-z0-9_-]{43}$/);
+      expect(res.enrollmentToken).toMatch(/^kkce_[A-Za-z0-9_-]{43}$/);
       const saved = repo.save.mock.calls[0][0];
-      expect(saved.enrolmentTokenHash).toBe(`hash(${res.enrolmentToken})`);
-      expect(JSON.stringify(saved)).not.toContain(res.enrolmentToken + '"');
+      expect(saved.enrollmentTokenHash).toBe(`hash(${res.enrollmentToken})`);
+      expect(JSON.stringify(saved)).not.toContain(res.enrollmentToken + '"');
       expect(
-        saved.enrolmentTokenExpiresAt.getTime() - Date.now(),
+        saved.enrollmentTokenExpiresAt.getTime() - Date.now(),
       ).toBeGreaterThan(24 * 3600_000 - 5000);
       expect(res.connector).toMatchObject({
         id: ID,
@@ -148,7 +148,7 @@ describe('ConnectorsService', () => {
         enrolledAt: null,
         revokedAt: null,
       });
-      expect(res.connector).not.toHaveProperty('enrolmentTokenHash');
+      expect(res.connector).not.toHaveProperty('enrollmentTokenHash');
     });
 
     it('requires certs:read', async () => {
@@ -195,37 +195,37 @@ describe('ConnectorsService', () => {
     });
   });
 
-  describe('reissueEnrolmentToken', () => {
+  describe('reissueEnrollmentToken', () => {
     it('replaces the token of a connector that has not enrolled', async () => {
       row = enrolled({ enrolledAt: null, publicKey: null });
-      const res = await svc.reissueEnrolmentToken('u1', ID);
-      expect(res.enrolmentToken).toMatch(/^kkce_/);
+      const res = await svc.reissueEnrollmentToken('u1', ID);
+      expect(res.enrollmentToken).toMatch(/^kkce_/);
       expect(repo.update).toHaveBeenCalledWith(
         expect.objectContaining({ id: ID, userId: 'u1' }),
         expect.objectContaining({
-          enrolmentTokenHash: `hash(${res.enrolmentToken})`,
+          enrollmentTokenHash: `hash(${res.enrollmentToken})`,
         }),
       );
     });
 
     it('refuses enrolled or revoked connectors with 409', async () => {
-      await expect(svc.reissueEnrolmentToken('u1', ID)).rejects.toThrow(
+      await expect(svc.reissueEnrollmentToken('u1', ID)).rejects.toThrow(
         ConflictException,
       );
       row = enrolled({ enrolledAt: null, revokedAt: new Date() });
-      await expect(svc.reissueEnrolmentToken('u1', ID)).rejects.toThrow(
+      await expect(svc.reissueEnrollmentToken('u1', ID)).rejects.toThrow(
         ConflictException,
       );
       row = enrolled({ enrolledAt: null });
       repo.update.mockResolvedValue({ affected: 0 });
-      await expect(svc.reissueEnrolmentToken('u1', ID)).rejects.toThrow(
+      await expect(svc.reissueEnrollmentToken('u1', ID)).rejects.toThrow(
         ConflictException,
       );
     });
 
     it('404s for another user', async () => {
       row = null as any;
-      await expect(svc.reissueEnrolmentToken('u2', ID)).rejects.toThrow(
+      await expect(svc.reissueEnrollmentToken('u2', ID)).rejects.toThrow(
         NotFoundException,
       );
     });
@@ -253,7 +253,7 @@ describe('ConnectorsService', () => {
         expect.objectContaining({ id: ID, userId: 'u1' }),
         expect.objectContaining({
           revokedAt: expect.any(Date),
-          enrolmentTokenHash: null,
+          enrollmentTokenHash: null,
         }),
       );
       expect(auth.revokeConnectorKeys).toHaveBeenCalledWith(ID);
@@ -273,7 +273,7 @@ describe('ConnectorsService', () => {
     });
   });
 
-  describe('enrol', () => {
+  describe('enroll', () => {
     const token = `kkce_${'a'.repeat(43)}`;
     const dto = (over: Record<string, unknown> = {}) =>
       ({
@@ -289,22 +289,22 @@ describe('ConnectorsService', () => {
       qb.execute.mockResolvedValue({
         raw: [{ id: ID, name: 'web-01', userId: 'u1' }],
       });
-      await expect(svc.enrol(dto())).resolves.toEqual({
+      await expect(svc.enroll(dto())).resolves.toEqual({
         connectorId: ID,
         name: 'web-01',
       });
-      expect(qb.where).toHaveBeenCalledWith('"enrolmentTokenHash" = :hash', {
+      expect(qb.where).toHaveBeenCalledWith('"enrollmentTokenHash" = :hash', {
         hash: `hash(${token})`,
       });
       const conditions = qb.andWhere.mock.calls.map((c) => c[0]);
       expect(conditions).toEqual([
-        '"enrolmentTokenExpiresAt" > :now',
+        '"enrollmentTokenExpiresAt" > :now',
         '"enrolledAt" IS NULL',
         '"revokedAt" IS NULL',
       ]);
       expect(qb.set).toHaveBeenCalledWith(
         expect.objectContaining({
-          enrolmentTokenHash: null,
+          enrollmentTokenHash: null,
           publicKey: key.publicB64,
           enrolledAt: expect.any(Date),
           version: '0.2.0',
@@ -313,22 +313,22 @@ describe('ConnectorsService', () => {
     });
 
     it('gives the same 401 for any token that matches nothing', async () => {
-      const err = await svc.enrol(dto()).catch((e) => e);
+      const err = await svc.enroll(dto()).catch((e) => e);
       expect(err).toBeInstanceOf(UnauthorizedException);
-      expect(err.message).toBe('Invalid enrolment token');
+      expect(err.message).toBe('Invalid enrollment token');
     });
 
     it('refuses malformed tokens without hashing them', async () => {
       for (const bad of ['kk_abc', 'kkce_short', 'x'.repeat(60)]) {
-        await expect(svc.enrol(dto({ token: bad }))).rejects.toThrow(
-          'Invalid enrolment token',
+        await expect(svc.enroll(dto({ token: bad }))).rejects.toThrow(
+          'Invalid enrollment token',
         );
       }
       expect(auth.hashSecret).not.toHaveBeenCalled();
     });
 
     it('checks the public key before touching the token', async () => {
-      await expect(svc.enrol(dto({ publicKey: 'AAAA' }))).rejects.toThrow(
+      await expect(svc.enroll(dto({ publicKey: 'AAAA' }))).rejects.toThrow(
         BadRequestException,
       );
       expect(qb.execute).not.toHaveBeenCalled();

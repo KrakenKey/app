@@ -86,11 +86,11 @@ export const API_ROUTES = {
   CONNECTORS: {
     BASE: '/connectors',
     BY_ID: (id: string) => `/connectors/${id}`,
-    ENROLMENT_TOKEN: (id: string) => `/connectors/${id}/enrolment-token`,
+    ENROLLMENT_TOKEN: (id: string) => `/connectors/${id}/enrollment-token`,
     DEPLOYMENTS: '/connectors/deployments',
     DEPLOYMENTS_FOR_CERT: (certificateId: number) =>
       `/connectors/deployments?certificateId=${certificateId}`,
-    ENROL: '/connectors/enrol',
+    ENROLL: '/connectors/enroll',
     TOKEN: '/connectors/token',
     ROTATE: '/connectors/rotate',
     REPORT: '/connectors/report',

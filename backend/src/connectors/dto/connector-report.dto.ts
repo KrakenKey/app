@@ -20,7 +20,7 @@ import {
   type ConnectorDeploymentState,
 } from '@krakenkey/shared';
 
-/** Printable ASCII without spaces, as at enrolment. */
+/** Printable ASCII without spaces, as at enrollment. */
 const AGENT_INFO_PATTERN = /^[\x21-\x7E]+$/;
 
 /** Control characters become spaces, so an error can't break a log line or an email. */
