@@ -434,6 +434,26 @@ describe('TierAwareThrottlerGuard', () => {
       expect(await (guard as any).getTracker(req, context)).toBe('5.6.7.8');
     });
 
+    it('keeps strict public routes on IP tracking at the lower limit', async () => {
+      const { req, context } = apiKeyContext(
+        STARTER_KEY,
+        RateLimitCategory.PUBLIC_STRICT,
+      );
+
+      await (guard as any).handleRequest({ context });
+
+      expect(findApiKeyOwner).not.toHaveBeenCalled();
+      const strict =
+        RATE_LIMIT_TIERS[DEFAULT_TIER][RateLimitCategory.PUBLIC_STRICT];
+      expect(strict.limit).toBeLessThan(
+        RATE_LIMIT_TIERS[DEFAULT_TIER][RateLimitCategory.PUBLIC].limit,
+      );
+      expect(parentHandleRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: strict.limit, ttl: strict.ttl }),
+      );
+      expect(await (guard as any).getTracker(req, context)).toBe('5.6.7.8');
+    });
+
     it('looks a key up once per request', async () => {
       const { req, context } = apiKeyContext(STARTER_KEY);
 

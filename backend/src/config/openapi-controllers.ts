@@ -3,6 +3,7 @@ import { AppController } from '../app.controller';
 import { AuthController } from '../auth/auth.controller';
 import { GithubOidcController } from '../auth/oidc/github-oidc.controller';
 import { BillingController } from '../billing/billing.controller';
+import { ConnectorsController } from '../connectors/connectors.controller';
 import { TlsController } from '../certs/tls/tls.controller';
 import { DomainsController } from '../domains/domains.controller';
 import { EndpointsController } from '../endpoints/endpoints.controller';
@@ -27,6 +28,7 @@ export const OPENAPI_CONTROLLERS: Type<unknown>[] = [
   AuthController,
   GithubOidcController,
   BillingController,
+  ConnectorsController,
   TlsController,
   DomainsController,
   EndpointsController,

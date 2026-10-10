@@ -59,11 +59,19 @@ export class UserApiKey {
 
   /**
    * How the key was created: null for keys made in the dashboard or by CLI
-   * login, 'github-oidc' for short-lived keys from a GitHub OIDC exchange
-   * (hidden from the key list and not counted toward the plan limit).
+   * login, 'github-oidc' for short-lived keys from a GitHub OIDC exchange,
+   * 'connector' for short-lived keys issued to a connector. Short-lived
+   * keys are hidden from the key list and not counted toward the plan limit.
    */
   @Column({ type: 'text', nullable: true })
   source?: string | null;
+
+  /**
+   * The connector a short-lived key was issued to. Revoking the connector
+   * revokes its keys, and only these keys may send connector reports.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  connectorId?: string | null;
 
   @CreateDateColumn()
   createdAt: Date;

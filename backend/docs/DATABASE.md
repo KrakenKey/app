@@ -162,6 +162,8 @@ CREATE INDEX idx_api_key_user ON user_api_key("userId");
 
 Key format: `kk_` prefix followed by random bytes. The raw key is only returned once at creation time.
 
+Later migrations added `revokedAt`, `lastUsedAt`, `lastUsedIp`, the restriction arrays (`scopes`, `allowedDomainIds`, `allowedCertIds`, `allowedIps`), `source` (`github-oidc` or `connector` for short-lived keys, null otherwise) and `connectorId` (the connector a short-lived key was issued to; `ON DELETE CASCADE`, partial index where not null).
+
 ---
 
 ### ServiceApiKey
@@ -351,6 +353,53 @@ CREATE TABLE "report_host" (
 );
 ```
 
+### Connector
+
+A customer-hosted connector (migration `AddConnectors1786000000000`). Created with a single-use enrolment token, stored only as a scrypt hash with `KK_HMAC_SECRET` (the same hashing as API keys) and cleared when used, replaced or revoked. Enrolment stores the connector's Ed25519 public key. Revoked rows are kept.
+
+```sql
+CREATE TABLE "connector" (
+  "id" UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  "userId" TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+  "name" VARCHAR(64) NOT NULL,
+  "clientLabel" VARCHAR(64),
+  "scopes" TEXT[] NOT NULL,                       -- certs:read, optionally certs:renew
+  "allowedCertIds" INTEGER[],
+  "allowedDomainIds" UUID[],                      -- at least one of the two is set
+  "publicKey" TEXT,                               -- base64 of the raw Ed25519 key
+  "enrolmentTokenHash" TEXT,                      -- unique where not null
+  "enrolmentTokenExpiresAt" TIMESTAMP,
+  "enrolledAt" TIMESTAMP,
+  "revokedAt" TIMESTAMP,
+  "lastSeenAt" TIMESTAMP,
+  "staleAlertedAt" TIMESTAMP,                     -- set when a connector.stale alert is sent
+  "version" VARCHAR(64),
+  "os" VARCHAR(32),
+  "arch" VARCHAR(32),
+  "createdAt" TIMESTAMP NOT NULL DEFAULT now()
+);
+```
+
+### ConnectorDeployment
+
+The latest reported state of each target a connector installs a certificate on, one row per (connector, certificate, label).
+
+```sql
+CREATE TABLE "connector_deployment" (
+  "connectorId" UUID NOT NULL REFERENCES "connector"(id) ON DELETE CASCADE,
+  "certificateId" INTEGER NOT NULL REFERENCES "tls_crt"(id) ON DELETE CASCADE,
+  "label" VARCHAR(64) NOT NULL,
+  "state" VARCHAR(32) NOT NULL,                   -- pending, staged, activated, verified,
+                                                  -- activated_unverifiable, failed, rolled_back
+  "serial" VARCHAR(64),
+  "error" VARCHAR(200),
+  "updatedAt" TIMESTAMP NOT NULL,                 -- as reported by the connector
+  "reportedAt" TIMESTAMP NOT NULL,                -- when the report arrived
+  PRIMARY KEY ("connectorId", "certificateId", "label")
+);
+CREATE INDEX "IDX_connector_deployment_certificateId" ON "connector_deployment" ("certificateId");
+```
+
 ---
 
 ## Entity Relationship Diagram
@@ -362,6 +411,7 @@ CREATE TABLE "report_host" (
 │          │──1:N──│  UserApiKey  │       └───────┬───────┘
 │          │──N:1──│ Organization │──1:1──Subscription
 │          │──1:N──│  Endpoint    │
+│          │──1:N──│  Connector   │──1:N── ConnectorDeployment, UserApiKey
 └──────────┘       └──────────────┘
                           │
                    ┌──────┴──────┐

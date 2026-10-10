@@ -30,6 +30,7 @@ API keys work for domains, certificates and endpoints, but some routes only acce
 - `PATCH /users/:id`, `DELETE /users/:id`
 - `POST /organizations` and every organization change: members, roles, settings, deletion, ownership transfer
 - `POST /billing/checkout`, `POST /billing/portal`, `POST /billing/upgrade`
+- `POST /connectors`, `POST /connectors/:id/enrolment-token`, `PATCH /connectors/:id`, `DELETE /connectors/:id`
 
 Admin rights also need a session; an admin's API key acts as a regular user. The routes are marked with `@SessionOnly()` and enforced by `JwtOrApiKeyGuard`.
 
@@ -50,7 +51,7 @@ A key can be limited when it is created. None of the limits can be changed after
 | `endpoints:read` | `GET /endpoints`, `GET /endpoints/:id`, results, export, latest, `GET /endpoints/probes/mine` |
 | `endpoints:write` | every other `/endpoints` route (create, update, delete, probes, regions, scan) |
 | `probes:report` | `POST /probes/register`, `POST /probes/report`, `GET /probes/:probeId/config` |
-| `account:read` | `GET /auth/profile`, `GET /auth/api-keys`, `GET /users/:id`, `GET /billing/subscription`, `POST /billing/upgrade/preview`, `GET /organizations/:id` |
+| `account:read` | `GET /auth/profile`, `GET /auth/api-keys`, `GET /users/:id`, `GET /billing/subscription`, `POST /billing/upgrade/preview`, `GET /organizations/:id`, `GET /connectors`, `GET /connectors/:id` |
 | `account:write` | `PATCH /auth/profile`, `POST /auth/confirm-auto-renewal`, `POST /feedback` |
 
 The dashboard and CLI offer presets: **read-only** (`certs:read`, `domains:read`, `endpoints:read`, `account:read`), **cert renewal** (`certs:read`, `certs:renew`, `account:read`), **probe** (`probes:report`) and **full** (no scopes). The lists live in `API_KEY_SCOPES` and `API_KEY_PRESETS` in `@krakenkey/shared`. A new route is refused to scoped keys until it declares a scope with `@RequireScope()`, and `require-scope.coverage.spec.ts` fails if a route that accepts keys declares neither a scope nor `@SessionOnly()`.
@@ -789,6 +790,151 @@ Add a hosted probe region.
 ### DELETE /endpoints/:id/regions/:region
 
 Remove a hosted region.
+
+---
+
+## Connectors
+
+A connector is an agent that runs on your own machines. It keeps private keys there, renews certificates with fresh CSRs, and installs them on local targets. It has no long-lived credential: it enrols once with a single-use token, keeps an Ed25519 key pair, and signs a request for a short-lived API key whenever it needs one.
+
+Connectors belong to the user who creates them, like API keys and GitHub trust policies. Up to 50 active (not revoked) connectors per user; the 51st returns `402` `Connector limit reached`.
+
+| Method | Path | Auth | Rate limit | Description |
+|--------|------|------|------------|-------------|
+| GET | `/connectors` | JWT or key with `account:read` | read | List connectors, revoked ones included |
+| GET | `/connectors/:id` | JWT or key with `account:read` | read | Get one connector |
+| POST | `/connectors` | Dashboard session only | write | Create a connector and its enrolment token |
+| POST | `/connectors/:id/enrolment-token` | Dashboard session only | write | New enrolment token for a connector that has not enrolled |
+| PATCH | `/connectors/:id` | Dashboard session only | write | Change `name` or `clientLabel` |
+| DELETE | `/connectors/:id` | Dashboard session only | write | Revoke the connector and its keys (`204`) |
+| POST | `/connectors/enrol` | None (enrolment token in the body) | public-strict | Enrol with the token and a public key |
+| POST | `/connectors/token` | None (signed body) | public-strict | Get an API key that lasts one hour |
+| POST | `/connectors/rotate` | None (signed body) | public-strict | Replace the connector's public key |
+
+The three connector routes are limited to 10 requests per minute per IP each (see [RATE_LIMITING.md](../../docs/RATE_LIMITING.md)). A connector belonging to someone else returns `404`.
+
+### Connector object
+
+```json
+{
+  "id": "uuid",
+  "name": "web-01",
+  "clientLabel": "Acme Corp",
+  "scopes": ["certs:read", "certs:renew"],
+  "allowedCertIds": [42],
+  "allowedDomainIds": null,
+  "enrolledAt": "2026-10-10T14:00:00.000Z",
+  "revokedAt": null,
+  "lastSeenAt": "2026-10-10T15:00:00.000Z",
+  "version": "0.2.0",
+  "os": "linux",
+  "arch": "amd64",
+  "createdAt": "2026-10-10T13:55:00.000Z"
+}
+```
+
+`lastSeenAt` is the last enrolment, key exchange or rotation. `version`, `os` and `arch` are what the connector sent when it enrolled.
+
+### POST /connectors
+
+```json
+{
+  "name": "web-01",
+  "clientLabel": "Acme Corp",
+  "scopes": ["certs:read", "certs:renew"],
+  "allowedCertIds": [42],
+  "allowedDomainIds": ["3f1c2b9e-..."]
+}
+```
+
+- `name`: 1 to 64 characters. `clientLabel`: optional, 1 to 64 characters, for the customer or site the connector serves.
+- `scopes`: `certs:read` and optionally `certs:renew`. `certs:read` is required.
+- `allowedCertIds` and `allowedDomainIds` work as for [API keys](#api-key-scopes-and-restrictions), up to 50 each, and must belong to your account or organization. At least one of them must be set: there are no unrestricted connectors.
+
+**Response `201`:**
+
+```json
+{ "connector": { "...": "connector object" }, "enrolmentToken": "kkce_..." }
+```
+
+The token is shown once. It is `kkce_` followed by 32 random bytes (base64url), stored only as a hash, works once, and expires after 24 hours.
+
+### POST /connectors/:id/enrolment-token
+
+Issues a new token for a connector that hasn't enrolled yet, for example because the first one expired. The previous token stops working. Returns `201` `{ "enrolmentToken": "kkce_..." }`, or `409` once the connector has enrolled or been revoked.
+
+### PATCH /connectors/:id
+
+`{ "name": "web-02", "clientLabel": null }`. Both fields are optional; `clientLabel: null` clears the label. Scopes and restrictions can't be changed; create a new connector instead.
+
+### DELETE /connectors/:id
+
+Revokes the connector: it can no longer enrol, get keys or rotate, and every key it was issued stops working at once. The connector stays listed with `revokedAt` set. Revoking a revoked connector returns `204` again.
+
+### POST /connectors/enrol
+
+```json
+{
+  "token": "kkce_...",
+  "publicKey": "<base64 of the raw 32-byte Ed25519 public key>",
+  "version": "0.2.0",
+  "os": "linux",
+  "arch": "amd64"
+}
+```
+
+`publicKey` is standard base64 with padding (44 characters). `version` (up to 64 characters), `os` and `arch` (up to 32) are printable ASCII without spaces. A malformed field is a `400` and does not use up the token.
+
+**Response `200`:** `{ "connectorId": "uuid", "name": "web-01" }`
+
+The token is consumed by a single conditional update, so of several requests with the same token exactly one succeeds. An unknown, expired, already used or replaced token, or one for a revoked connector, returns `401` `Invalid enrolment token` with no further detail.
+
+### Signed requests
+
+`/connectors/token` and `/connectors/rotate` carry an Ed25519 signature instead of a bearer token:
+
+- `timestamp`: RFC 3339 UTC with second precision, `2026-10-10T14:00:00Z`. Refused when more than 300 seconds from the server's clock.
+- `nonce`: base64url without padding of at least 16 random bytes, at most 64 characters. Each nonce works once per connector within 10 minutes.
+- `signature`: standard base64 of the 64-byte signature over the UTF-8 message below, lines joined with `\n` and no trailing newline.
+
+Any failure (unknown, unenrolled or revoked connector, bad signature, stale timestamp, reused nonce) returns `401` `Invalid connector credentials`. Malformed fields return `400`. If the nonce store (Redis) is unavailable the request fails with `503` rather than skipping the replay check.
+
+### POST /connectors/token
+
+```json
+{ "connectorId": "uuid", "timestamp": "2026-10-10T14:00:00Z", "nonce": "...", "signature": "..." }
+```
+
+Signed message:
+
+```
+KRAKENKEY-CONNECTOR-TOKEN-V1
+<connectorId>
+<timestamp>
+<nonce>
+```
+
+**Response `200`:** `{ "apiKey": "kk_...", "expiresAt": "2026-10-10T15:00:00.000Z" }`
+
+The key lasts one hour and carries the connector's scopes, `allowedCertIds` and `allowedDomainIds`, enforced by the same guards as any other key. Like GitHub OIDC keys, it is not listed under `GET /auth/api-keys`, doesn't count toward the plan's key limit, and is deleted an hour after it expires.
+
+### POST /connectors/rotate
+
+```json
+{ "connectorId": "uuid", "newPublicKey": "...", "timestamp": "...", "nonce": "...", "signature": "..." }
+```
+
+Signed with the **current** key over:
+
+```
+KRAKENKEY-CONNECTOR-ROTATE-V1
+<connectorId>
+<newPublicKey>
+<timestamp>
+<nonce>
+```
+
+Returns `204`. From then on only the new key is accepted. Keys already issued stay valid until they expire.
 
 ---
 

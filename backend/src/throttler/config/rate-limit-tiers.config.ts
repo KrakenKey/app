@@ -12,6 +12,8 @@ export type TierRateLimits = Record<RateLimitCategory, RateLimitRule>;
  *
  * Categories:
  *   public    — Unauthenticated endpoints (/, /health, /auth/*)
+ *   public-strict — Unauthenticated credential exchanges (/connectors/enrol,
+ *               /connectors/token, /connectors/rotate); 10/min per IP
  *   read      — Authenticated GET requests (list domains, view certs, etc.)
  *   write     — Authenticated mutations (create domain, delete cert, etc.)
  *   expensive — Resource-heavy operations (issue cert, renew cert, verify domain)
@@ -36,6 +38,7 @@ export const RATE_LIMIT_TIERS: Record<string, TierRateLimits> = {
   // Free tier: basic ACME automation only
   free: {
     [RateLimitCategory.PUBLIC]: { limit: 30, ttl: 60_000 }, // 30 req/min
+    [RateLimitCategory.PUBLIC_STRICT]: { limit: 10, ttl: 60_000 }, // 10 req/min
     [RateLimitCategory.AUTHENTICATED_READ]: { limit: 60, ttl: 60_000 }, // 60 req/min
     [RateLimitCategory.AUTHENTICATED_WRITE]: { limit: 20, ttl: 60_000 }, // 20 req/min
     [RateLimitCategory.EXPENSIVE]: { limit: 5, ttl: 3_600_000 }, // 5 req/hr
@@ -44,6 +47,7 @@ export const RATE_LIMIT_TIERS: Record<string, TierRateLimits> = {
   // Starter / Pro ($29/mo): small projects, freelancers
   starter: {
     [RateLimitCategory.PUBLIC]: { limit: 60, ttl: 60_000 }, // 60 req/min
+    [RateLimitCategory.PUBLIC_STRICT]: { limit: 10, ttl: 60_000 }, // 10 req/min
     [RateLimitCategory.AUTHENTICATED_READ]: { limit: 120, ttl: 60_000 }, // 120 req/min
     [RateLimitCategory.AUTHENTICATED_WRITE]: { limit: 40, ttl: 60_000 }, // 40 req/min
     [RateLimitCategory.EXPENSIVE]: { limit: 10, ttl: 3_600_000 }, // 10 req/hr
@@ -52,6 +56,7 @@ export const RATE_LIMIT_TIERS: Record<string, TierRateLimits> = {
   // Team ($79/mo): SMEs, DevOps teams
   team: {
     [RateLimitCategory.PUBLIC]: { limit: 60, ttl: 60_000 }, // 60 req/min
+    [RateLimitCategory.PUBLIC_STRICT]: { limit: 10, ttl: 60_000 }, // 10 req/min
     [RateLimitCategory.AUTHENTICATED_READ]: { limit: 300, ttl: 60_000 }, // 300 req/min
     [RateLimitCategory.AUTHENTICATED_WRITE]: { limit: 60, ttl: 60_000 }, // 60 req/min
     [RateLimitCategory.EXPENSIVE]: { limit: 30, ttl: 3_600_000 }, // 30 req/hr
@@ -60,6 +65,7 @@ export const RATE_LIMIT_TIERS: Record<string, TierRateLimits> = {
   // Business ($99-199/mo): dedicated rate limits, mid-market
   business: {
     [RateLimitCategory.PUBLIC]: { limit: 120, ttl: 60_000 }, // 120 req/min
+    [RateLimitCategory.PUBLIC_STRICT]: { limit: 10, ttl: 60_000 }, // 10 req/min
     [RateLimitCategory.AUTHENTICATED_READ]: { limit: 600, ttl: 60_000 }, // 600 req/min
     [RateLimitCategory.AUTHENTICATED_WRITE]: { limit: 120, ttl: 60_000 }, // 120 req/min
     [RateLimitCategory.EXPENSIVE]: { limit: 60, ttl: 3_600_000 }, // 60 req/hr
@@ -68,6 +74,7 @@ export const RATE_LIMIT_TIERS: Record<string, TierRateLimits> = {
   // Enterprise ($499+/mo): large orgs, MSPs, hosting providers
   enterprise: {
     [RateLimitCategory.PUBLIC]: { limit: 120, ttl: 60_000 }, // 120 req/min
+    [RateLimitCategory.PUBLIC_STRICT]: { limit: 10, ttl: 60_000 }, // 10 req/min
     [RateLimitCategory.AUTHENTICATED_READ]: { limit: 1000, ttl: 60_000 }, // 1000 req/min
     [RateLimitCategory.AUTHENTICATED_WRITE]: { limit: 200, ttl: 60_000 }, // 200 req/min
     [RateLimitCategory.EXPENSIVE]: { limit: 100, ttl: 3_600_000 }, // 100 req/hr

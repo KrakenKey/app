@@ -44,6 +44,7 @@ KrakenKey is a modular NestJS backend for TLS certificate lifecycle management, 
 - `BillingModule` — Stripe subscriptions and plan limits
 - `OrganizationsModule` — Team management
 - `EndpointsModule` — TLS endpoint monitoring
+- `ConnectorsModule` — Customer-hosted connectors: enrolment, Ed25519-signed key exchange, revocation
 - `HealthModule` — Health checks
 - `MetricsModule` — Prometheus metrics
 - `NotificationsModule` — Email notifications, plus Slack, Teams and webhook channels (`notifications` BullMQ queue, `AlertsService.emit`)
@@ -181,6 +182,21 @@ Approve, deny and lookup require a dashboard (JWT) session; an API key gets 403,
 - Dual scanning: managed (hosted) cloud probes and user-connected probes
 - Plan-based limits on endpoint count, hosted regions, hosted endpoints
 - Organization-scoped resource sharing
+
+### Connectors Module
+
+**File**: `src/connectors/connectors.module.ts`
+
+**Providers**:
+- `ConnectorsService` — Connector CRUD, enrolment, signed key exchange and key rotation, revocation
+- `ConnectorNonceStore` — Remembers used nonces per connector in Redis (`connector-nonce:` prefix, 10 minutes); fails closed
+- `ConnectorsController` — REST endpoints
+
+**Key behaviors**:
+- A connector enrols once with a single-use `kkce_` token (scrypt hash stored, consumed by one conditional `UPDATE ... RETURNING`), registering an Ed25519 public key
+- `POST /connectors/token` verifies a signature over `KRAKENKEY-CONNECTOR-TOKEN-V1`, the connector id, a timestamp (300 seconds of skew) and a nonce, then mints a one-hour key through `AuthService.createEphemeralApiKey` (`source: 'connector'`, `connectorId` set) with the connector's scopes and restrictions
+- Revoking a connector revokes every key it was issued; a key minted while the revocation runs is caught by a second check after the insert
+- Enrol, token and rotate are public routes limited per IP (`PUBLIC_STRICT`, 10/min)
 
 ---
 
