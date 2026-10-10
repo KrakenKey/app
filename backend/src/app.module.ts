@@ -22,6 +22,7 @@ import { ProbesModule } from './probes/probes.module';
 import { EndpointsModule } from './endpoints/endpoints.module';
 import { PublicScanModule } from './public-scan/public-scan.module';
 import { ReportsModule } from './reports/reports.module';
+import { ConnectorsModule } from './connectors/connectors.module';
 
 @Module({
   imports: [
@@ -80,6 +81,7 @@ import { ReportsModule } from './reports/reports.module';
     EndpointsModule,
     PublicScanModule,
     ReportsModule,
+    ConnectorsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

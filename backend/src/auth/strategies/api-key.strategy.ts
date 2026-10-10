@@ -51,6 +51,7 @@ export class ApiKeyStrategy extends PassportStrategy(Strategy, 'api-key') {
       scopes: record.scopes ?? null,
       allowedDomainIds: record.allowedDomainIds ?? null,
       allowedCertIds: record.allowedCertIds ?? null,
+      connectorId: record.connectorId ?? null,
     };
     return {
       userId: record.user.id,

@@ -8,6 +8,8 @@ import { BillingController } from '../../billing/billing.controller';
 import { DomainsController } from '../../domains/domains.controller';
 import { TlsController } from '../../certs/tls/tls.controller';
 import { EndpointsController } from '../../endpoints/endpoints.controller';
+import { ConnectorsController } from '../../connectors/connectors.controller';
+import { GithubOidcController } from '../oidc/github-oidc.controller';
 
 // Pins which routes refuse API keys. Adding or dropping one should be a
 // deliberate change to this list, not a side effect.
@@ -19,6 +21,8 @@ const controllers = [
   DomainsController,
   TlsController,
   EndpointsController,
+  GithubOidcController,
+  ConnectorsController,
 ];
 
 function sessionOnlyRoutes(): string[] {
@@ -38,7 +42,7 @@ function sessionOnlyRoutes(): string[] {
 }
 
 describe('@SessionOnly routes', () => {
-  it('covers key management, account, org and billing changes', () => {
+  it('covers key and connector management, account, org and billing changes', () => {
     expect(sessionOnlyRoutes()).toEqual(
       [
         'POST /auth/api-keys',
@@ -55,6 +59,12 @@ describe('@SessionOnly routes', () => {
         'POST /billing/checkout',
         'POST /billing/portal',
         'POST /billing/upgrade',
+        'POST /auth/github-oidc/trusts',
+        'DELETE /auth/github-oidc/trusts/:id',
+        'POST /connectors',
+        'POST /connectors/:id/enrollment-token',
+        'PATCH /connectors/:id',
+        'DELETE /connectors/:id',
       ].sort(),
     );
   });

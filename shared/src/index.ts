@@ -4,6 +4,7 @@ export * from './types/tls-cert';
 export * from './types/csr-generator';
 export * from './types/api-key';
 export * from './types/github-oidc';
+export * from './types/connector';
 export * from './types/device-auth';
 export * from './types/api-error';
 export * from './types/auth';
