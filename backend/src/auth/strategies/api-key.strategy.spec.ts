@@ -36,12 +36,35 @@ describe('ApiKeyStrategy', () => {
           scopes: null,
           allowedDomainIds: null,
           allowedCertIds: null,
+          connectorId: null,
         },
       });
       expect(mockAuthService.validateApiKey).toHaveBeenCalledWith('kk_abc123', {
         ip: '10.0.0.1',
       });
       expect(mockSecurity.recordFailure).not.toHaveBeenCalled();
+    });
+
+    it('carries the connector a key was issued to', async () => {
+      mockAuthService.validateApiKey.mockResolvedValue({
+        id: 'key-2',
+        user: { id: 'user-1' },
+        source: 'connector',
+        connectorId: 'conn-1',
+        scopes: ['certs:read'],
+        allowedCertIds: [7],
+      });
+      const result = await strategy.validate({
+        ip: '10.0.0.1',
+        headers: { authorization: 'Bearer kk_conn' },
+      } as any);
+      expect(result?.apiKey).toEqual({
+        id: 'key-2',
+        scopes: ['certs:read'],
+        allowedDomainIds: null,
+        allowedCertIds: [7],
+        connectorId: 'conn-1',
+      });
     });
 
     it('throws UnauthorizedException and records failure when API key is invalid', async () => {

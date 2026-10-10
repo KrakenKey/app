@@ -138,6 +138,8 @@ describe('@RequireScope coverage', () => {
       'GET /auth/profile': 'account:read',
       'GET /billing/subscription': 'account:read',
       'GET /certs/tls': 'certs:read',
+      'GET /connectors': 'account:read',
+      'GET /connectors/:id': 'account:read',
       'GET /certs/tls/:id': 'certs:read',
       'GET /certs/tls/:id/chain': 'certs:read',
       'GET /certs/tls/:id/details': 'certs:read',

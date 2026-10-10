@@ -1,3 +1,4 @@
+import { IsNull } from 'typeorm';
 import { scryptSync } from 'crypto';
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { AuthService } from './auth.service';
@@ -185,6 +186,115 @@ describe('AuthService short-lived keys', () => {
         allowedIps: null,
       }),
     );
+  });
+
+  it('records the connector a key was issued to', async () => {
+    const keyRepo = {
+      create: jest.fn((v) => ({ id: 'eph', ...v })),
+      save: jest.fn((v) => Promise.resolve(v)),
+    };
+    const service = new AuthService(
+      { get: jest.fn(() => 'secret') } as any,
+      keyRepo as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    await service.createEphemeralApiKey(
+      'u1',
+      'Connector: web-01',
+      'connector',
+      3600,
+      { scopes: ['certs:read'], allowedDomainIds: null, allowedCertIds: [3] },
+      { connectorId: 'c1' },
+    );
+    expect(keyRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'connector', connectorId: 'c1' }),
+    );
+    await service.createEphemeralApiKey('u1', 'x', 'github-oidc', 900, {
+      scopes: null,
+      allowedDomainIds: null,
+      allowedCertIds: null,
+    });
+    expect(keyRepo.create).toHaveBeenLastCalledWith(
+      expect.objectContaining({ connectorId: null }),
+    );
+  });
+
+  it('revokes only the live keys of one connector', async () => {
+    const keyRepo = { update: jest.fn().mockResolvedValue({ affected: 2 }) };
+    const service = new AuthService(
+      { get: jest.fn(() => 'secret') } as any,
+      keyRepo as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    await expect(service.revokeConnectorKeys('c1')).resolves.toBe(2);
+    expect(keyRepo.update).toHaveBeenCalledWith(
+      { connectorId: 'c1', revokedAt: IsNull() },
+      { revokedAt: expect.any(Date) },
+    );
+  });
+
+  it('leaves short-lived keys out of the profile key count', async () => {
+    const keyRepo = { count: jest.fn().mockResolvedValue(1) };
+    const service = new AuthService(
+      { get: jest.fn(() => 'secret') } as any,
+      keyRepo as any,
+      {} as any,
+      {
+        findOneBy: jest.fn().mockResolvedValue({
+          id: 'u1',
+          createdAt: new Date(),
+          notificationPreferences: {},
+        }),
+      } as any,
+      { count: jest.fn().mockResolvedValue(0) } as any,
+      { count: jest.fn().mockResolvedValue(0) } as any,
+      {
+        getResourceCountUserIds: jest.fn().mockResolvedValue(['u1']),
+        resolveUserTier: jest.fn().mockResolvedValue('free'),
+      } as any,
+      {} as any,
+      {} as any,
+    );
+    const profile = await service.getFullProfile('u1');
+    expect(profile.resourceCounts.apiKeys).toBe(1);
+    expect(keyRepo.count).toHaveBeenCalledWith({
+      where: {
+        userId: expect.anything(),
+        revokedAt: IsNull(),
+        source: IsNull(),
+      },
+    });
+  });
+
+  it('hashes other secrets the same way as API keys', () => {
+    const keyRepo = { findOne: jest.fn() };
+    const service = new AuthService(
+      { get: jest.fn(() => 'secret') } as any,
+      keyRepo as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    const h = service.hashSecret('kkce_abc');
+    expect(h).toMatch(/^[0-9a-f]{128}$/);
+    expect(service.hashSecret('kkce_abc')).toBe(h);
+    expect(service.hashSecret('kkce_abd')).not.toBe(h);
   });
 
   it('does not email about an expired short-lived key', async () => {
