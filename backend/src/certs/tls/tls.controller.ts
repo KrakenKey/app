@@ -74,17 +74,45 @@ export class TlsController {
 
   @Post()
   @RequireScope('certs:issue')
-  @ApiOperation({ summary: 'Request a new TLS certificate' })
-  @ApiResponse({ status: 201, description: 'Certificate request submitted' })
+  @ApiOperation({
+    summary: 'Request a new TLS certificate',
+    description:
+      'Send `csrPem` to issue a certificate now (status `pending`). Or send ' +
+      "`names` with `managedBy: 'connector'` to create a certificate a " +
+      'connector will issue with its own key (status `awaiting_csr`); ' +
+      'nothing is sent to the CA until the connector posts a CSR to ' +
+      '`POST /certs/tls/:id/renew`. Exactly one of `csrPem` and `names`.',
+  })
+  @ApiResponse({
+    status: 201,
+    description:
+      "Certificate request submitted: { id, status: 'pending' }, or " +
+      "{ id, status: 'awaiting_csr' } for a request by names",
+  })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Invalid CSR or names, both or neither of csrPem and names, ' +
+      "names without managedBy: 'connector', or a name outside the " +
+      "account's verified domains",
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({
+    status: 402,
+    description:
+      'Plan limit reached (total active, monthly or concurrent pending ' +
+      'certificates; requests by names skip the concurrent pending limit)',
+  })
+  @ApiResponse({
     status: 403,
-    description: 'Viewers cannot request certificates',
+    description:
+      'Viewers cannot request certificates; API keys limited to certificates ' +
+      'cannot request new ones, and keys limited to domains only for names under them',
   })
   @ApiResponse({
     status: 409,
     description:
-      'An identical certificate request (same CSR) is already being processed. ' +
+      'An identical certificate request (same CSR, or same set of names) is already being processed. ' +
       'Duplicate requests within 15 minutes return the original certificate instead of creating a new one.',
   })
   @Roles('owner', 'admin', 'member')
@@ -198,12 +226,14 @@ export class TlsController {
 
   @Delete(':id')
   @RequireScope('certs:revoke')
-  @ApiOperation({ summary: 'Delete a failed or revoked certificate' })
+  @ApiOperation({
+    summary: 'Delete a failed, revoked or awaiting_csr certificate',
+  })
   @ApiParam({ name: 'id', description: 'Certificate ID' })
   @ApiResponse({ status: 200, description: 'Certificate deleted' })
   @ApiResponse({
     status: 400,
-    description: 'Certificate not in failed or revoked state',
+    description: 'Certificate not in failed, revoked or awaiting_csr state',
   })
   @ApiResponse({
     status: 403,
@@ -224,7 +254,10 @@ export class TlsController {
     description:
       'Queues a renewal. Without a body the CSR stored at first issuance is ' +
       'used again. With { csrPem } the certificate is renewed with that CSR ' +
-      '(for example a new key) and it replaces the stored CSR.',
+      '(for example a new key) and it replaces the stored CSR. For an ' +
+      '`awaiting_csr` certificate, { csrPem } is required and its names must ' +
+      'equal `requestedNames`; the certificate is then issued like a new ' +
+      "request (status 'pending'), and ifDue always treats it as due.",
   })
   @ApiParam({ name: 'id', description: 'Certificate ID' })
   @ApiQuery({
@@ -252,8 +285,14 @@ export class TlsController {
   @ApiResponse({
     status: 400,
     description:
-      'Certificate not issued or missing CSR data, invalid CSR, or ' +
-      "'CSR names must match the certificate'",
+      'Certificate not issued or missing CSR data, invalid CSR, ' +
+      "'CSR names must match the certificate', or 'This certificate is " +
+      "waiting for a CSR' (awaiting_csr without csrPem)",
+  })
+  @ApiResponse({
+    status: 409,
+    description:
+      'The awaiting_csr certificate was completed by another request meanwhile',
   })
   @ApiResponse({
     status: 403,

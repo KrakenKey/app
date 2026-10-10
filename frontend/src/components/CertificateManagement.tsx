@@ -537,7 +537,8 @@ function CertCard({
               </Button>
             </>
           )}
-          {cert.status === CertStatus.REVOKED && (
+          {(cert.status === CertStatus.REVOKED ||
+            cert.status === CertStatus.AWAITING_CSR) && (
             <Button
               size="sm"
               variant="danger"
@@ -583,6 +584,15 @@ function CertCard({
             <span className="text-zinc-300">{domains.join(', ')}</span>
           </div>
         )}
+        {cert.status === CertStatus.AWAITING_CSR && (
+          <div className="flex gap-2">
+            <span className="text-zinc-500">State:</span>
+            <span className="text-zinc-300 min-w-0">
+              Awaiting CSR from connector. The connector creates the key and
+              sends a CSR for these names; nothing is sent to the CA until then.
+            </span>
+          </div>
+        )}
         {cert.status === CertStatus.FAILED && cert.failureReason && (
           <div className="flex gap-2">
             <span className="text-zinc-500">Reason:</span>
@@ -624,21 +634,23 @@ function CertCard({
             <span className="text-zinc-300">{cert.renewalCount}</span>
           </div>
         )}
-        <div className="flex gap-2 items-center">
-          <span className="text-zinc-500">Auto-Renew:</span>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={cert.autoRenew}
-              disabled={isTogglingAutoRenew}
-              onChange={() => onToggleAutoRenew(cert)}
-              className="accent-cyan-500"
-            />
-            <span className="text-zinc-300 text-sm">
-              {cert.autoRenew ? 'Enabled' : 'Disabled'}
-            </span>
-          </label>
-        </div>
+        {cert.status !== CertStatus.AWAITING_CSR && (
+          <div className="flex gap-2 items-center">
+            <span className="text-zinc-500">Auto-Renew:</span>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={cert.autoRenew}
+                disabled={isTogglingAutoRenew}
+                onChange={() => onToggleAutoRenew(cert)}
+                className="accent-cyan-500"
+              />
+              <span className="text-zinc-300 text-sm">
+                {cert.autoRenew ? 'Enabled' : 'Disabled'}
+              </span>
+            </label>
+          </div>
+        )}
       </div>
 
       {/* Parsed Certificate Details */}
@@ -851,6 +863,11 @@ function CertTable({
                     {pollingIds.has(cert.id) && (
                       <Loader2 className="w-3 h-3 ml-1 inline animate-spin text-cyan-400" />
                     )}
+                    {cert.status === CertStatus.AWAITING_CSR && (
+                      <div className="text-xs font-normal text-zinc-500">
+                        Awaiting CSR from connector
+                      </div>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Badge variant={STATUS_BADGE_VARIANT[cert.status]} dot>
@@ -870,18 +887,22 @@ function CertTable({
                     )}
                   </TableCell>
                   <TableCell>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={cert.autoRenew}
-                        disabled={togglingAutoRenewIds.has(cert.id)}
-                        onChange={() => onToggleAutoRenew(cert)}
-                        className="accent-cyan-500"
-                      />
-                      <span className="text-sm">
-                        {cert.autoRenew ? 'On' : 'Off'}
-                      </span>
-                    </label>
+                    {cert.status === CertStatus.AWAITING_CSR ? (
+                      <span className="text-zinc-600">&mdash;</span>
+                    ) : (
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={cert.autoRenew}
+                          disabled={togglingAutoRenewIds.has(cert.id)}
+                          onChange={() => onToggleAutoRenew(cert)}
+                          className="accent-cyan-500"
+                        />
+                        <span className="text-sm">
+                          {cert.autoRenew ? 'On' : 'Off'}
+                        </span>
+                      </label>
+                    )}
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-wrap gap-1.5">
@@ -925,7 +946,8 @@ function CertTable({
                           </Button>
                         </>
                       )}
-                      {cert.status === CertStatus.REVOKED && (
+                      {(cert.status === CertStatus.REVOKED ||
+                        cert.status === CertStatus.AWAITING_CSR) && (
                         <Button
                           size="sm"
                           variant="danger"

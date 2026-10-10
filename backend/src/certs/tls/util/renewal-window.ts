@@ -39,6 +39,7 @@ export interface RenewAfterInput {
   ariWindowStart?: Date | string | null;
   ariReplacementRequestedAt?: Date | string | null;
   managedBy?: CertManagedBy | null;
+  createdAt?: Date | string | null;
 }
 
 /**
@@ -51,12 +52,17 @@ export interface RenewAfterInput {
  * - everything else: only when the CA asked for early replacement
  *   (ariReplacementRequestedAt), the one case the server renews early.
  *
- * Null when there is no expiry yet, or the certificate is revoked.
+ * An awaiting_csr certificate has never been issued, so it is due from the
+ * moment it was created. Otherwise null when there is no expiry yet, or the
+ * certificate is revoked.
  */
 export function renewAfter(
   cert: RenewAfterInput,
   windowDays: number,
 ): Date | null {
+  if (cert.status === CertStatus.AWAITING_CSR) {
+    return cert.createdAt ? new Date(cert.createdAt) : null;
+  }
   if (!cert.expiresAt) return null;
   if (
     cert.status === CertStatus.REVOKED ||

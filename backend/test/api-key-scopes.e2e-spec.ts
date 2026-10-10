@@ -36,6 +36,19 @@ function csr(...names: string[]) {
 
 const LAB_CERT = { id: 1, status: 'issued', parsedCsr: csr('labxp.io') };
 const OTHER_CERT = { id: 2, status: 'issued', parsedCsr: csr('example.com') };
+// Pending certificates: no CSR yet, judged by their requested names
+const AWAITING_LAB = {
+  id: 3,
+  status: 'awaiting_csr',
+  parsedCsr: null,
+  requestedNames: ['app.labxp.io'],
+};
+const AWAITING_OTHER = {
+  id: 4,
+  status: 'awaiting_csr',
+  parsedCsr: null,
+  requestedNames: ['app.example.com'],
+};
 const DOMAINS = [
   { id: '11111111-1111-4111-8111-111111111111', hostname: 'labxp.io' },
   { id: '22222222-2222-4222-8222-222222222222', hostname: 'example.com' },
@@ -48,7 +61,10 @@ describe('Scoped API keys (e2e)', () => {
   const tlsService = {
     findAll: jest.fn().mockResolvedValue([LAB_CERT, OTHER_CERT]),
     findOne: jest.fn((id: number) =>
-      Promise.resolve(id === 1 ? LAB_CERT : OTHER_CERT),
+      Promise.resolve(
+        [LAB_CERT, AWAITING_LAB, AWAITING_OTHER].find((c) => c.id === id) ??
+          OTHER_CERT,
+      ),
     ),
     getChain: jest.fn().mockResolvedValue({ chain: [] }),
     renew: jest.fn().mockResolvedValue({ id: 1, status: 'renewing' }),
@@ -244,6 +260,78 @@ describe('Scoped API keys (e2e)', () => {
         .send({ csrPem: MOCK_CSR_PEM })
         .expect(403);
       expect(tlsService.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('pending certificates', () => {
+    it('a key limited to an awaiting_csr cert can complete it but not create one', async () => {
+      asKey({
+        scopes: ['certs:read', 'certs:issue', 'certs:renew'],
+        allowedCertIds: [3],
+      });
+
+      await request(server())
+        .post('/certs/tls/3/renew')
+        .set('Authorization', KEY)
+        .send({ csrPem: MOCK_CSR_PEM })
+        .expect(201);
+      expect(tlsService.renew).toHaveBeenCalledWith(3, MOCK_USER.userId, {
+        ifDue: false,
+        csrPem: MOCK_CSR_PEM,
+      });
+
+      await request(server())
+        .post('/certs/tls/4/renew')
+        .set('Authorization', KEY)
+        .send({ csrPem: MOCK_CSR_PEM })
+        .expect(404);
+
+      await request(server())
+        .post('/certs/tls')
+        .set('Authorization', KEY)
+        .send({ names: ['app.labxp.io'], managedBy: 'connector' })
+        .expect(403);
+      expect(tlsService.create).not.toHaveBeenCalled();
+    });
+
+    it('certs:renew is enough to complete one; certs:issue is needed to create one', async () => {
+      asKey({ scopes: API_KEY_PRESETS['cert-renewal'] });
+
+      await request(server())
+        .post('/certs/tls/3/renew')
+        .set('Authorization', KEY)
+        .send({ csrPem: MOCK_CSR_PEM })
+        .expect(201);
+      await request(server())
+        .post('/certs/tls')
+        .set('Authorization', KEY)
+        .send({ names: ['app.labxp.io'], managedBy: 'connector' })
+        .expect(403);
+      expect(tlsService.create).not.toHaveBeenCalled();
+    });
+
+    it('a key limited to a domain sees pending certs under it by requested names', async () => {
+      asKey({ allowedDomainIds: [DOMAINS[0].id] });
+
+      await request(server())
+        .get('/certs/tls/3')
+        .set('Authorization', KEY)
+        .expect(200);
+      await request(server())
+        .get('/certs/tls/4')
+        .set('Authorization', KEY)
+        .expect(404);
+
+      await request(server())
+        .post('/certs/tls')
+        .set('Authorization', KEY)
+        .send({ names: ['app.labxp.io'], managedBy: 'connector' })
+        .expect(201);
+      expect(tlsService.create).toHaveBeenCalledWith(
+        MOCK_USER.userId,
+        { names: ['app.labxp.io'], managedBy: 'connector' },
+        { restrictToHostnames: ['labxp.io'] },
+      );
     });
   });
 

@@ -64,6 +64,7 @@ export const mockCerts: TlsCert[] = [
     failureReason: null,
     revokedAt: null,
     managedBy: null,
+    requestedNames: null,
     renewAfter: '2025-12-02T00:00:00.000Z',
     createdAt: '2025-01-01T00:00:00.000Z',
     userId: 'user-1',
@@ -90,10 +91,34 @@ export const mockCerts: TlsCert[] = [
     failureReason: null,
     revokedAt: null,
     managedBy: null,
+    requestedNames: null,
     renewAfter: null,
     createdAt: '2025-01-05T00:00:00.000Z',
     userId: 'user-1',
   },
 ];
+
+/** Created from names; waiting for a connector to send its CSR. */
+export const mockAwaitingCsrCert: TlsCert = {
+  id: 3,
+  rawCsr: null,
+  parsedCsr: null,
+  requestedNames: ['app.example.com', 'api.example.com'],
+  crtPem: null,
+  chainPem: null,
+  status: 'awaiting_csr',
+  expiresAt: null,
+  lastRenewedAt: null,
+  autoRenew: false,
+  renewalCount: 0,
+  lastRenewalAttemptAt: null,
+  revocationReason: null,
+  failureReason: null,
+  revokedAt: null,
+  managedBy: 'connector',
+  renewAfter: '2025-01-06T00:00:00.000Z',
+  createdAt: '2025-01-06T00:00:00.000Z',
+  userId: 'user-1',
+};
 
 export const mockApiKey = 'kk_fake_api_key_abcdef123456';
