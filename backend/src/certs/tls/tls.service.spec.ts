@@ -1273,6 +1273,45 @@ describe('TlsService', () => {
       expect(result).toEqual({ id: 1, status: 'renewing', skipped: false });
     });
 
+    it('renews at the total active certificate limit', async () => {
+      mockRepository.findOneBy.mockResolvedValue({ ...issuedCert });
+      // Free plan: 10 active certs, and this one is among them
+      mockRepository.count.mockImplementation(async ({ where }) =>
+        where.status?.value?.includes?.('issued') ? 10 : 0,
+      );
+
+      const result = await service.renew(1, userId);
+
+      expect(result).toEqual({ id: 1, status: 'renewing', skipped: false });
+      expect(mockQueue.add).toHaveBeenCalled();
+    });
+
+    it('renews after the monthly new-certificate limit is used up', async () => {
+      mockRepository.findOneBy.mockResolvedValue({ ...issuedCert });
+      mockRepository.count.mockImplementation(async ({ where }) =>
+        where.createdAt ? 5 : 0,
+      );
+
+      const result = await service.renew(1, userId);
+
+      expect(result).toEqual({ id: 1, status: 'renewing', skipped: false });
+    });
+
+    it('is still refused by the concurrent pending limit', async () => {
+      mockRepository.findOneBy.mockResolvedValue({ ...issuedCert });
+      mockRepository.count.mockImplementation(async ({ where }) =>
+        where.status?.value?.includes?.('renewing') ? 2 : 0,
+      );
+
+      await expect(service.renew(1, userId)).rejects.toMatchObject({
+        status: 402,
+        response: expect.objectContaining({
+          message: 'Concurrent pending request limit reached',
+        }),
+      });
+      expect(mockQueue.add).not.toHaveBeenCalled();
+    });
+
     it('throws BadRequestException when cert is not issued', async () => {
       mockRepository.findOneBy.mockResolvedValue({
         ...issuedCert,
@@ -1769,6 +1808,24 @@ describe('TlsService', () => {
         'tlsCertRenewal',
         { certId: 1 },
         { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
+      );
+    });
+
+    it('renews after the monthly new-certificate limit is used up', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        id: 1,
+        status: 'issued',
+        rawCsr: 'pem',
+        renewalCount: 0,
+      });
+      mockRepository.count.mockResolvedValue(1000);
+
+      await service.renewInternal(1);
+
+      expect(mockQueue.add).toHaveBeenCalledWith(
+        'tlsCertRenewal',
+        { certId: 1 },
+        expect.any(Object),
       );
     });
 
