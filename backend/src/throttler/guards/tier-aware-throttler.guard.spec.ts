@@ -434,6 +434,70 @@ describe('TierAwareThrottlerGuard', () => {
       expect(await (guard as any).getTracker(req, context)).toBe('5.6.7.8');
     });
 
+    it('counts connector reports per connector, at the same limit on every tier', async () => {
+      findApiKeyOwner.mockImplementation((key: string) =>
+        Promise.resolve(
+          key === 'kk_connector_key'
+            ? {
+                userId: 'user-starter',
+                expiresAt: null,
+                allowedIps: null,
+                connectorId: 'conn-1',
+              }
+            : key === STARTER_KEY
+              ? {
+                  userId: 'user-starter',
+                  expiresAt: null,
+                  allowedIps: null,
+                  connectorId: null,
+                }
+              : null,
+        ),
+      );
+      const conn = apiKeyContext(
+        'kk_connector_key',
+        RateLimitCategory.CONNECTOR_REPORT,
+      );
+      await (guard as any).handleRequest({ context: conn.context });
+      const rule =
+        RATE_LIMIT_TIERS[DEFAULT_TIER][RateLimitCategory.CONNECTOR_REPORT];
+      expect(parentHandleRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: rule.limit, ttl: rule.ttl }),
+      );
+      expect(mockTierResolver.resolve).not.toHaveBeenCalled();
+      expect(await (guard as any).getTracker(conn.req, conn.context)).toBe(
+        'connector:conn-1',
+      );
+      for (const tier of Object.values(RATE_LIMIT_TIERS)) {
+        expect(tier[RateLimitCategory.CONNECTOR_REPORT]).toEqual(rule);
+      }
+
+      // Not a connector's key: falls back to the IP (the route refuses it)
+      const other = apiKeyContext(
+        STARTER_KEY,
+        RateLimitCategory.CONNECTOR_REPORT,
+      );
+      expect(await (guard as any).getTracker(other.req, other.context)).toBe(
+        '5.6.7.8',
+      );
+    });
+
+    it('tracks connector key exchange by IP with room for many connectors', async () => {
+      const { req, context } = apiKeyContext(
+        STARTER_KEY,
+        RateLimitCategory.CONNECTOR_TOKEN,
+      );
+      await (guard as any).handleRequest({ context });
+      expect(findApiKeyOwner).not.toHaveBeenCalled();
+      const rule =
+        RATE_LIMIT_TIERS[DEFAULT_TIER][RateLimitCategory.CONNECTOR_TOKEN];
+      expect(rule.limit).toBe(60);
+      expect(parentHandleRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: 60 }),
+      );
+      expect(await (guard as any).getTracker(req, context)).toBe('5.6.7.8');
+    });
+
     it('keeps strict public routes on IP tracking at the lower limit', async () => {
       const { req, context } = apiKeyContext(
         STARTER_KEY,

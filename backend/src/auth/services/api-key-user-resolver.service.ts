@@ -19,7 +19,11 @@ export const API_KEY_USER_CACHE_MAX_ENTRIES = 10_000;
 
 interface CacheEntry {
   /** null = the key did not resolve to an active key (negative entry). */
-  owner: { userId: string; allowedIps: string[] | null } | null;
+  owner: {
+    userId: string;
+    allowedIps: string[] | null;
+    connectorId: string | null;
+  } | null;
   cachedUntil: number;
 }
 
@@ -44,6 +48,17 @@ export class ApiKeyUserResolverService implements ApiKeyUserResolver {
   ) {}
 
   async resolve(rawKey: string, ip: string): Promise<string | null> {
+    return (await this.resolveOwner(rawKey, ip))?.userId ?? null;
+  }
+
+  async resolveConnector(rawKey: string, ip: string): Promise<string | null> {
+    return (await this.resolveOwner(rawKey, ip))?.connectorId ?? null;
+  }
+
+  private async resolveOwner(
+    rawKey: string,
+    ip: string,
+  ): Promise<CacheEntry['owner']> {
     const cacheKey = createHmac('sha256', this.cacheSecret)
       .update(rawKey)
       .digest('hex');
@@ -62,7 +77,7 @@ export class ApiKeyUserResolverService implements ApiKeyUserResolver {
     const { owner } = entry;
     if (!owner) return null;
     if (owner.allowedIps && !ipAllowed(ip, owner.allowedIps)) return null;
-    return owner.userId;
+    return owner;
   }
 
   /** Returns undefined (and caches nothing) if the lookup itself fails. */
@@ -80,7 +95,11 @@ export class ApiKeyUserResolverService implements ApiKeyUserResolver {
       }
       return {
         owner: found
-          ? { userId: found.userId, allowedIps: found.allowedIps }
+          ? {
+              userId: found.userId,
+              allowedIps: found.allowedIps,
+              connectorId: found.connectorId ?? null,
+            }
           : null,
         cachedUntil,
       };

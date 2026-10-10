@@ -10,6 +10,7 @@ import { ConnectorReportsService } from './connector-reports.service';
 import { ConnectorsController } from './connectors.controller';
 import { ConnectorsService } from './connectors.service';
 import { ConnectorNonceStore } from './connector-nonce.store';
+import { ConnectorAlertGate } from './connector-alert-gate';
 
 @Module({
   imports: [
@@ -18,6 +19,11 @@ import { ConnectorNonceStore } from './connector-nonce.store';
     BillingModule,
   ],
   controllers: [ConnectorsController],
-  providers: [ConnectorsService, ConnectorReportsService, ConnectorNonceStore],
+  providers: [
+    ConnectorsService,
+    ConnectorReportsService,
+    ConnectorNonceStore,
+    ConnectorAlertGate,
+  ],
 })
 export class ConnectorsModule {}

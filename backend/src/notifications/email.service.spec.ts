@@ -405,6 +405,13 @@ describe('EmailService', () => {
       expect(text).toContain('10 more not shown');
     });
 
+    it('mentions failures held back since the last email', async () => {
+      await service.sendDeployFailed({ ...deployCtx, heldBack: 3 });
+      expect(sent().text).toContain(
+        '3 more failed deployments on this connector since the last email',
+      );
+    });
+
     it('escapes connector-supplied values', async () => {
       await service.sendDeployFailed({
         ...deployCtx,

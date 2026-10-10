@@ -17,6 +17,7 @@ import { ConnectorsService } from '../src/connectors/connectors.service';
 import { Connector } from '../src/connectors/entities/connector.entity';
 import { ConnectorDeployment } from '../src/connectors/entities/connector-deployment.entity';
 import { ConnectorReportsService } from '../src/connectors/connector-reports.service';
+import { ConnectorAlertGate } from '../src/connectors/connector-alert-gate';
 import { TlsCrt } from '../src/certs/tls/entities/tls-crt.entity';
 import { User } from '../src/users/entities/user.entity';
 import { AlertsService } from '../src/notifications/channels/alerts.service';
@@ -26,6 +27,7 @@ import { createTestApp } from './helpers/create-test-app';
 import {
   FakeAuthService,
   FakeConnectorRepo,
+  FakeAlertGate,
   FakeDeploymentRepo,
   fixedRepo,
   FakeNonceStore,
@@ -83,6 +85,10 @@ describe('Connectors (e2e)', () => {
     sendDeployFailed: jest.fn().mockResolvedValue(undefined),
     sendConnectorStale: jest.fn().mockResolvedValue(undefined),
   };
+  const security = {
+    isLockedOut: jest.fn().mockResolvedValue(false),
+    recordFailure: jest.fn(),
+  };
 
   const tlsService = {
     findAll: jest.fn().mockResolvedValue(CERTS),
@@ -128,6 +134,7 @@ describe('Connectors (e2e)', () => {
       { provide: ConnectorNonceStore, useValue: nonces },
       { provide: AlertsService, useValue: alerts },
       { provide: EmailService, useValue: email },
+      { provide: ConnectorAlertGate, useValue: new FakeAlertGate() },
       {
         provide: BillingService,
         useValue: {
@@ -154,13 +161,7 @@ describe('Connectors (e2e)', () => {
         ApiKeyStrategy,
         JwtStrategy,
         { provide: TlsService, useValue: tlsService },
-        {
-          provide: ApiKeySecurityService,
-          useValue: {
-            isLockedOut: jest.fn().mockResolvedValue(false),
-            recordFailure: jest.fn(),
-          },
-        },
+        { provide: ApiKeySecurityService, useValue: security },
         {
           provide: ConfigService,
           useValue: { get: () => 'https://auth.example.com/application/o/kk/' },
@@ -222,8 +223,13 @@ describe('Connectors (e2e)', () => {
 
   describe('dashboard', () => {
     it('creates a connector and shows the token once', async () => {
-      const { connector, enrollmentToken } = await createConnector();
+      const res = await session().post('/connectors').send(BODY).expect(201);
+      const { connector, enrollmentToken, expiresAt } = res.body;
       expect(enrollmentToken).toMatch(/^kkce_[A-Za-z0-9_-]{43}$/);
+      expect(Date.parse(expiresAt) - Date.now()).toBeGreaterThan(
+        24 * 3600_000 - 10_000,
+      );
+      expect(connector.enrollmentTokenExpiresAt).toBe(expiresAt);
       expect(connector).toMatchObject({
         name: 'web-01',
         clientLabel: 'Acme',
@@ -261,6 +267,12 @@ describe('Connectors (e2e)', () => {
         'a bad domain id',
         { allowedCertIds: undefined, allowedDomainIds: ['x'] },
       ],
+      ['an out-of-range certificate id', { allowedCertIds: [2147483648] }],
+      ['a newline in the name', { name: 'web\n01' }],
+      [
+        'a bidi override in the client label',
+        { clientLabel: 'Acme\u202Eevil' },
+      ],
     ])('refuses %s with 400', async (_, over) => {
       await session()
         .post('/connectors')
@@ -291,6 +303,15 @@ describe('Connectors (e2e)', () => {
         .patch(`/connectors/${connector.id}`)
         .send({ name: null })
         .expect(400);
+      await session()
+        .patch(`/connectors/${connector.id}`)
+        .send({ clientLabel: 'line\nbreak' })
+        .expect(400);
+      await session().delete(`/connectors/${connector.id}`).expect(204);
+      await session()
+        .patch(`/connectors/${connector.id}`)
+        .send({ name: 'after-revoke' })
+        .expect(409);
       await session().get(`/connectors/${UNKNOWN_ID}`).expect(404);
       await session().get('/connectors/not-a-uuid').expect(400);
     });
@@ -376,6 +397,7 @@ describe('Connectors (e2e)', () => {
         .expect(201);
       const second = res.body.enrollmentToken as string;
       expect(second).not.toBe(first);
+      expect(res.body.expiresAt).toEqual(expect.any(String));
       await anon()
         .post('/connectors/enroll')
         .send(enrollBody(first))
@@ -389,9 +411,11 @@ describe('Connectors (e2e)', () => {
         .expect(409);
     });
 
-    it('400s a malformed public key without using up the token', async () => {
+    it('400s a malformed or small-order public key without using up the token', async () => {
       const { enrollmentToken } = await createConnector();
       for (const publicKey of [
+        'AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+        Buffer.alloc(32).toString('base64'),
         'AAAA',
         Buffer.alloc(32, 1).toString('base64url'),
         Buffer.alloc(33, 1).toString('base64'),
@@ -522,6 +546,44 @@ describe('Connectors (e2e)', () => {
         .expect(200);
     });
 
+    it('revokes keys issued under the old key', async () => {
+      const { id, key } = await enrolled();
+      const res = await anon()
+        .post('/connectors/token')
+        .send(tokenRequest(key, id))
+        .expect(200);
+      const bearer = `Bearer ${res.body.apiKey}`;
+      await anon().get('/certs/tls/7').set('Authorization', bearer).expect(200);
+      const next = connectorKey();
+      await anon()
+        .post('/connectors/rotate')
+        .send(rotateRequest(key, id, next.publicB64))
+        .expect(204);
+      await anon().get('/certs/tls/7').set('Authorization', bearer).expect(401);
+    });
+
+    it('refuses rotating to the same key or a small-order key', async () => {
+      const { id, key } = await enrolled();
+      await anon()
+        .post('/connectors/rotate')
+        .send(rotateRequest(key, id, key.publicB64))
+        .expect(400);
+      await anon()
+        .post('/connectors/rotate')
+        .send(
+          rotateRequest(
+            key,
+            id,
+            'AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+          ),
+        )
+        .expect(400);
+      await anon()
+        .post('/connectors/token')
+        .send(tokenRequest(key, id))
+        .expect(200);
+    });
+
     it('does not accept a token signature as a rotation', async () => {
       const { id, key } = await enrolled();
       const body = tokenRequest(key, id);
@@ -529,6 +591,62 @@ describe('Connectors (e2e)', () => {
         .post('/connectors/rotate')
         .send({ ...body, newPublicKey: connectorKey().publicB64 })
         .expect(401);
+    });
+  });
+
+  describe('editing restrictions', () => {
+    it('applies new limits by revoking live keys; the next key carries them', async () => {
+      const { id, key } = await enrolled();
+      const shown = await session().get(`/connectors/${id}`).expect(200);
+      expect(shown.body.enrollmentTokenExpiresAt).toBeNull();
+      const first = await anon()
+        .post('/connectors/token')
+        .send(tokenRequest(key, id))
+        .expect(200);
+      const oldKey = `Bearer ${first.body.apiKey}`;
+      await anon().get('/certs/tls/7').set('Authorization', oldKey).expect(200);
+
+      const res = await session()
+        .patch(`/connectors/${id}`)
+        .send({ allowedCertIds: [8], scopes: ['certs:read'] })
+        .expect(200);
+      expect(res.body).toMatchObject({
+        allowedCertIds: [8],
+        scopes: ['certs:read'],
+      });
+      await anon().get('/certs/tls/7').set('Authorization', oldKey).expect(401);
+
+      const second = await anon()
+        .post('/connectors/token')
+        .send(tokenRequest(key, id))
+        .expect(200);
+      const newKey = `Bearer ${second.body.apiKey}`;
+      await anon().get('/certs/tls/7').set('Authorization', newKey).expect(404);
+      await anon().get('/certs/tls/8').set('Authorization', newKey).expect(200);
+      expect(auth.keys.get(second.body.apiKey)).toMatchObject({
+        scopes: ['certs:read'],
+        allowedCertIds: [8],
+      });
+    });
+
+    it('validates new limits like creation', async () => {
+      const { id } = await enrolled();
+      for (const body of [
+        { allowedCertIds: [] },
+        { allowedCertIds: null, allowedDomainIds: null },
+        { allowedCertIds: [99] },
+        { allowedCertIds: [2147483648] },
+        { allowedDomainIds: ['x'] },
+        { scopes: ['certs:renew'] },
+        { scopes: ['certs:read', 'certs:issue'] },
+        { scopes: [] },
+      ]) {
+        await session().patch(`/connectors/${id}`).send(body).expect(400);
+      }
+      await session()
+        .patch(`/connectors/${id}`)
+        .send({ allowedCertIds: null, allowedDomainIds: [DOMAIN_ID] })
+        .expect(200);
     });
   });
 
@@ -544,11 +662,20 @@ describe('Connectors (e2e)', () => {
 
       await session().delete(`/connectors/${id}`).expect(204);
 
-      await anon().get('/certs/tls/7').set('Authorization', bearer).expect(401);
+      security.recordFailure.mockClear();
+      for (let i = 0; i < 12; i++) {
+        await anon()
+          .get('/certs/tls/7')
+          .set('Authorization', bearer)
+          .expect(401);
+      }
       await anon()
         .post('/connectors/token')
         .send(tokenRequest(key, id))
         .expect(401);
+      // Neither counts toward the per-IP API key lockout, so revoking a
+      // site's connectors can't lock the site out for other keys
+      expect(security.recordFailure).not.toHaveBeenCalled();
       await anon()
         .post('/connectors/rotate')
         .send(rotateRequest(key, id, connectorKey().publicB64))
@@ -711,13 +838,71 @@ describe('Connectors (e2e)', () => {
       );
       expect(email.sendDeployFailed).toHaveBeenCalledTimes(1);
 
+      // Flapping, or dropping the target and listing it again, doesn't
+      // re-alert inside the target's 6-hour cooldown
+      for (const targets of [
+        [target('nginx-main', 'verified')],
+        [target('nginx-main', 'rolled_back')],
+        [],
+        [target('nginx-main', 'failed')],
+      ]) {
+        await report([{ certificateId: 7, targets }]).expect(200);
+      }
+      expect(alerts.emit).toHaveBeenCalledTimes(1);
+      expect(email.sendDeployFailed).toHaveBeenCalledTimes(1);
+
+      // Another target can still alert, but the email waits for the hour
       await report([
-        { certificateId: 7, targets: [target('nginx-main', 'verified')] },
-      ]).expect(200);
-      await report([
-        { certificateId: 7, targets: [target('nginx-main', 'rolled_back')] },
+        { certificateId: 7, targets: [target('haproxy', 'failed')] },
       ]).expect(200);
       expect(alerts.emit).toHaveBeenCalledTimes(2);
+      expect(email.sendDeployFailed).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects out-of-range ids in the list instead of failing', async () => {
+      const res = await report([
+        { certificateId: 2147483648, targets: [] },
+        { certificateId: 9007199254740991, targets: [] },
+      ]).expect(200);
+      expect(res.body).toEqual({
+        accepted: 0,
+        rejectedCertificateIds: [2147483648, 9007199254740991],
+      });
+      await session()
+        .get('/connectors/deployments?certificateId=2147483648')
+        .expect(400);
+    });
+
+    it('requires UTC updatedAt no more than 5 minutes ahead', async () => {
+      for (const updatedAt of [
+        '2026-10-10T14:00:00+01:00',
+        '2026-10-10',
+        new Date(Date.now() + 10 * 60_000).toISOString(),
+      ]) {
+        await report([
+          {
+            certificateId: 7,
+            targets: [target('x', 'verified', { updatedAt })],
+          },
+        ]).expect(400);
+      }
+    });
+
+    it('only shows deployments a restricted key may see', async () => {
+      auth.addKey('kk_reader_cert8', MOCK_USER.userId, {
+        scopes: ['account:read'],
+        allowedCertIds: [8],
+      });
+      const h = { Authorization: 'Bearer kk_reader_cert8' };
+      const one = await anon().get(`/connectors/${id}`).set(h).expect(200);
+      expect(one.body.deployments).toEqual([]);
+      const byCert = await anon()
+        .get('/connectors/deployments?certificateId=7')
+        .set(h)
+        .expect(200);
+      expect(byCert.body).toEqual([]);
+      const full = await session().get(`/connectors/${id}`).expect(200);
+      expect(full.body.deployments.length).toBeGreaterThan(0);
     });
 
     it('skips certificates outside the connector restrictions and stores the rest', async () => {

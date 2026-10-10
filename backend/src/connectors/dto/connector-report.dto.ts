@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsString,
   Matches,
+  Max,
   MaxLength,
   Min,
   ValidateNested,
@@ -19,6 +20,10 @@ import {
   CONNECTOR_TARGET_LABEL_PATTERN,
   type ConnectorDeploymentState,
 } from '@krakenkey/shared';
+
+/** RFC 3339 in UTC with a time part, optional fractional seconds. */
+const UTC_TIMESTAMP_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/;
 
 /** Printable ASCII without spaces, as at enrollment. */
 const AGENT_INFO_PATTERN = /^[\x21-\x7E]+$/;
@@ -66,8 +71,13 @@ export class ConnectorReportTargetDto {
   error?: string | null;
 
   @ApiProperty({
-    description: 'When the target last changed (RFC 3339)',
+    description:
+      'When the target last changed: RFC 3339 in UTC (Z), seconds or fractional seconds, at most 5 minutes in the future',
     example: '2026-10-10T14:00:00.000Z',
+  })
+  @Matches(UTC_TIMESTAMP_PATTERN, {
+    message:
+      'updatedAt must be an RFC 3339 UTC timestamp such as 2026-10-10T14:00:00.000Z',
   })
   @IsISO8601({ strict: true })
   updatedAt: string;
@@ -127,5 +137,6 @@ export class ConnectorDeploymentsQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(2147483647)
   certificateId: number;
 }

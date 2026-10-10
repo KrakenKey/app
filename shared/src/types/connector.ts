@@ -31,8 +31,13 @@ export const CONNECTOR_MAX_CLOCK_SKEW_SECONDS = 300;
  */
 export const CONNECTOR_STALE_AFTER_HOURS = 24;
 
-/** How long a used nonce is remembered, per connector. */
-export const CONNECTOR_NONCE_TTL_SECONDS = 600;
+/**
+ * How long a used nonce is remembered, per connector: longer than the whole
+ * window a signed timestamp is accepted in (skew either side), plus a
+ * margin, so a request can't be replayed once its nonce is forgotten.
+ */
+export const CONNECTOR_NONCE_TTL_SECONDS =
+  2 * CONNECTOR_MAX_CLOCK_SKEW_SECONDS + 60;
 
 /**
  * First line of the message signed for `POST /connectors/token`. The full
@@ -55,6 +60,11 @@ export interface Connector {
   allowedCertIds: number[] | null;
   allowedDomainIds: string[] | null;
   enrolledAt: string | null;
+  /**
+   * When the current enrollment token expires; null once the connector has
+   * enrolled or been revoked (no token is usable then).
+   */
+  enrollmentTokenExpiresAt: string | null;
   /** Set when the connector is revoked; revoked connectors stay listed. */
   revokedAt: string | null;
   lastSeenAt: string | null;
@@ -124,17 +134,29 @@ export interface CreateConnectorResponse {
   connector: Connector;
   /** Shown once. Single use, expires after 24 hours. */
   enrollmentToken: string;
+  /** When the token expires (24 hours). */
+  expiresAt: string;
 }
 
-/** `PATCH /connectors/:id`. `clientLabel: null` clears it. */
+/**
+ * `PATCH /connectors/:id`. Every field is optional. `clientLabel: null`
+ * clears it. `allowedCertIds` / `allowedDomainIds` replace the current
+ * list (`[]` or `null` clears one), but at least one must remain.
+ * Changing scopes or restrictions revokes the connector's live keys.
+ */
 export interface UpdateConnectorRequest {
   name?: string;
   clientLabel?: string | null;
+  scopes?: ConnectorScope[];
+  allowedCertIds?: number[] | null;
+  allowedDomainIds?: string[] | null;
 }
 
 /** `POST /connectors/:id/enrollment-token`. */
 export interface ConnectorEnrollmentTokenResponse {
   enrollmentToken: string;
+  /** When the token expires (24 hours). */
+  expiresAt: string;
 }
 
 /** `POST /connectors/enroll` (no bearer token). */

@@ -1,3 +1,4 @@
+import { In } from 'typeorm';
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { ConnectorReportsService } from './connector-reports.service';
 import { Connector } from './entities/connector.entity';
@@ -24,11 +25,13 @@ describe('ConnectorReportsService', () => {
   let deploymentRepo: Record<string, jest.Mock>;
   let txConnectorRepo: Record<string, jest.Mock>;
   let txDeploymentRepo: Record<string, jest.Mock>;
-  let keyAccess: { canUseCert: jest.Mock };
+  let keyAccess: { canUseCert: jest.Mock; filterCerts: jest.Mock };
+  let gate: { claimTargetAlert: jest.Mock; claimEmail: jest.Mock };
   let alerts: { emit: jest.Mock };
   let email: { sendDeployFailed: jest.Mock; sendConnectorStale: jest.Mock };
   let userRepo: { findOne: jest.Mock };
   let qb: Record<string, jest.Mock>;
+  let certRepo: { find: jest.Mock };
   let svc: ConnectorReportsService;
 
   const user = (
@@ -90,7 +93,14 @@ describe('ConnectorReportsService', () => {
         }),
       ),
     };
-    keyAccess = { canUseCert: jest.fn().mockResolvedValue(true) };
+    keyAccess = {
+      canUseCert: jest.fn().mockResolvedValue(true),
+      filterCerts: jest.fn(async (_u: unknown, c: unknown[]) => c),
+    };
+    gate = {
+      claimTargetAlert: jest.fn().mockResolvedValue(true),
+      claimEmail: jest.fn().mockResolvedValue(0),
+    };
     alerts = { emit: jest.fn().mockResolvedValue(1) };
     email = {
       sendDeployFailed: jest.fn().mockResolvedValue(undefined),
@@ -103,11 +113,12 @@ describe('ConnectorReportsService', () => {
         email: 'l@example.com',
       }),
     };
+    certRepo = { find: jest.fn(async () => certs) };
     svc = new ConnectorReportsService(
       dataSource as any,
       connectorRepo as any,
       deploymentRepo as any,
-      { find: jest.fn(async () => certs) } as any,
+      certRepo as any,
       userRepo as any,
       {
         getResourceCountUserIds: jest.fn().mockResolvedValue(['u1']),
@@ -115,6 +126,7 @@ describe('ConnectorReportsService', () => {
       keyAccess as any,
       alerts as any,
       email as any,
+      gate as any,
     );
   });
 
@@ -185,17 +197,21 @@ describe('ConnectorReportsService', () => {
       expect(txDeploymentRepo.find).toHaveBeenCalledWith({
         where: { connectorId: CID, certificateId: expect.anything() },
       });
-      expect(txDeploymentRepo.delete).toHaveBeenCalledWith([
-        { connectorId: CID, certificateId: 7, label: 'old' },
-      ]);
+      expect(txDeploymentRepo.delete).toHaveBeenCalledWith({
+        connectorId: CID,
+        certificateId: 7,
+        label: In(['old']),
+      });
     });
 
     it('an empty target list removes every target of that certificate', async () => {
       stored = [{ certificateId: 7, label: 'nginx', state: 'verified' }];
       await svc.report(user(), body({ certificateId: 7, targets: [] }));
-      expect(txDeploymentRepo.delete).toHaveBeenCalledWith([
-        { connectorId: CID, certificateId: 7, label: 'nginx' },
-      ]);
+      expect(txDeploymentRepo.delete).toHaveBeenCalledWith({
+        connectorId: CID,
+        certificateId: 7,
+        label: In(['nginx']),
+      });
       expect(txDeploymentRepo.upsert).not.toHaveBeenCalled();
     });
 
@@ -377,6 +393,98 @@ describe('ConnectorReportsService', () => {
       ).resolves.toEqual({ accepted: 1, rejectedCertificateIds: [] });
     });
 
+    it('skips ids beyond a 32-bit integer instead of querying them', async () => {
+      await expect(
+        svc.report(
+          user(),
+          body(
+            { certificateId: 7, targets: [] },
+            { certificateId: 2147483648, targets: [] },
+          ),
+        ),
+      ).resolves.toEqual({
+        accepted: 1,
+        rejectedCertificateIds: [2147483648],
+      });
+      expect(certRepo.find).toHaveBeenCalledWith({
+        where: {
+          id: expect.objectContaining({ _value: [7] }),
+          userId: expect.anything(),
+        },
+      });
+    });
+
+    it('refuses updatedAt more than 5 minutes in the future', async () => {
+      const ahead = new Date(Date.now() + 6 * 60_000).toISOString();
+      await expect(
+        svc.report(
+          user(),
+          body({
+            certificateId: 7,
+            targets: [target('a', 'verified', { updatedAt: ahead })],
+          }),
+        ),
+      ).rejects.toThrow('more than 5 minutes in the future');
+      const soon = new Date(Date.now() + 2 * 60_000).toISOString();
+      await expect(
+        svc.report(
+          user(),
+          body({
+            certificateId: 7,
+            targets: [target('a', 'verified', { updatedAt: soon })],
+          }),
+        ),
+      ).resolves.toBeDefined();
+    });
+
+    it('does not alert a target inside its cooldown', async () => {
+      gate.claimTargetAlert.mockImplementation(
+        async (_c: string, _id: number, label: string) => label !== 'cooling',
+      );
+      await svc.report(
+        user(),
+        body({
+          certificateId: 7,
+          targets: [target('cooling', 'failed'), target('fresh', 'failed')],
+        }),
+      );
+      expect(gate.claimTargetAlert).toHaveBeenCalledWith(CID, 7, 'cooling');
+      expect(alerts.emit).toHaveBeenCalledTimes(1);
+      expect(alerts.emit.mock.calls[0][2].details.label).toBe('fresh');
+      expect(email.sendDeployFailed.mock.calls[0][0].total).toBe(1);
+    });
+
+    it('sends nothing when every target is cooling down', async () => {
+      gate.claimTargetAlert.mockResolvedValue(false);
+      await svc.report(
+        user(),
+        body({ certificateId: 7, targets: [target('a', 'failed')] }),
+      );
+      expect(alerts.emit).not.toHaveBeenCalled();
+      expect(gate.claimEmail).not.toHaveBeenCalled();
+    });
+
+    it('holds the email back within the hour and counts it into the next one', async () => {
+      gate.claimEmail.mockResolvedValueOnce(null);
+      await svc.report(
+        user(),
+        body({ certificateId: 7, targets: [target('a', 'failed')] }),
+      );
+      expect(alerts.emit).toHaveBeenCalledTimes(1);
+      expect(email.sendDeployFailed).not.toHaveBeenCalled();
+      expect(gate.claimEmail).toHaveBeenCalledWith(CID, 1);
+
+      gate.claimEmail.mockResolvedValueOnce(4);
+      stored = [];
+      await svc.report(
+        user(),
+        body({ certificateId: 7, targets: [target('b', 'failed')] }),
+      );
+      expect(email.sendDeployFailed).toHaveBeenCalledWith(
+        expect.objectContaining({ heldBack: 4, total: 1 }),
+      );
+    });
+
     it('accepts an empty report as a check-in', async () => {
       await expect(svc.report(user(), body())).resolves.toEqual({
         accepted: 0,
@@ -404,7 +512,7 @@ describe('ConnectorReportsService', () => {
         reportedAt: new Date('2026-10-10T14:01:00Z'),
       };
       deploymentRepo.find.mockResolvedValue([d]);
-      await expect(svc.forCertificate('u1', 7)).resolves.toEqual([
+      await expect(svc.forCertificate(user(), 7)).resolves.toEqual([
         {
           connectorId: 'c2',
           connectorName: 'web-02',
@@ -425,7 +533,7 @@ describe('ConnectorReportsService', () => {
     });
 
     it('returns nothing without connectors', async () => {
-      await expect(svc.forCertificate('u1', 7)).resolves.toEqual([]);
+      await expect(svc.forCertificate(user(), 7)).resolves.toEqual([]);
       expect(deploymentRepo.find).not.toHaveBeenCalled();
     });
 
@@ -436,7 +544,7 @@ describe('ConnectorReportsService', () => {
         { connectorId: CID, certificateId: 8, state: 'rolled_back' },
         { connectorId: CID, certificateId: 8, state: 'staged' },
       ]);
-      const result = await svc.summaries([CID, 'c2']);
+      const result = await svc.summaries(user(), [CID, 'c2']);
       expect(result.get(CID)).toEqual({
         certificates: 2,
         targets: 4,
@@ -454,9 +562,69 @@ describe('ConnectorReportsService', () => {
       );
     });
 
+    it('counts only certificates the caller can still see', async () => {
+      deploymentRepo.find.mockResolvedValue([
+        { connectorId: CID, certificateId: 7, state: 'verified' },
+        { connectorId: CID, certificateId: 8, state: 'failed' },
+        { connectorId: CID, certificateId: 9, state: 'failed' },
+      ]);
+      // 9 left with the organization; 8 is outside the key's restrictions
+      certs = [cert(7), cert(8)];
+      keyAccess.filterCerts.mockImplementation(
+        async (_u: unknown, c: { id: number }[]) => c.filter((x) => x.id !== 8),
+      );
+      const result = await svc.summaries(user(), [CID]);
+      expect(result.get(CID)).toEqual({
+        certificates: 1,
+        targets: 1,
+        failing: 0,
+      });
+      expect(keyAccess.filterCerts).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'u1' }),
+        [cert(7), cert(8)],
+      );
+    });
+
     it('does not query deployments for an empty list', async () => {
-      await expect(svc.summaries([])).resolves.toEqual(new Map());
+      await expect(svc.summaries(user(), [])).resolves.toEqual(new Map());
       expect(deploymentRepo.find).not.toHaveBeenCalled();
+    });
+
+    it('returns nothing for a certificate the caller cannot see', async () => {
+      connectorRepo.find.mockResolvedValue([{ id: CID, name: 'web-01' }]);
+      keyAccess.filterCerts.mockResolvedValue([]);
+      await expect(svc.forCertificate(user(), 7)).resolves.toEqual([]);
+      certs = [];
+      keyAccess.filterCerts.mockImplementation(async (_u, c) => c);
+      await expect(svc.forCertificate(user(), 7)).resolves.toEqual([]);
+      expect(deploymentRepo.find).not.toHaveBeenCalled();
+    });
+
+    it("hides a connector's deployments for certificates the caller can no longer see", async () => {
+      const row = (certificateId: number) => ({
+        connectorId: CID,
+        certificateId,
+        label: 'nginx',
+        state: 'verified',
+        serial: null,
+        error: null,
+        updatedAt: new Date(),
+        reportedAt: new Date(),
+      });
+      deploymentRepo.find.mockResolvedValue([row(7), row(8), row(9)]);
+      // 9 left with the organization; 8 is outside the key's restrictions
+      certs = [cert(7), cert(8)];
+      keyAccess.filterCerts.mockImplementation(
+        async (_u: unknown, c: { id: number }[]) => c.filter((x) => x.id !== 8),
+      );
+      const res = await svc.forConnector(user(), { id: CID, name: 'web-01' });
+      expect(res.map((d) => d.certificateId)).toEqual([7]);
+      expect(certRepo.find).toHaveBeenCalledWith({
+        where: {
+          id: expect.objectContaining({ _value: [7, 8, 9] }),
+          userId: expect.objectContaining({ _value: ['u1'] }),
+        },
+      });
     });
   });
 

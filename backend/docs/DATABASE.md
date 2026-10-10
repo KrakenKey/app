@@ -357,7 +357,7 @@ CREATE TABLE "report_host" (
 
 ### Connector
 
-A customer-hosted connector (migration `AddConnectors1786000000000`). Created with a single-use enrollment token, stored only as a scrypt hash with `KK_HMAC_SECRET` (the same hashing as API keys) and cleared when used, replaced or revoked. Enrollment stores the connector's Ed25519 public key. Revoked rows are kept.
+A customer-hosted connector (migration `AddConnectors1786000000000`). Created with a single-use enrollment token, stored only as an HMAC-SHA256 keyed with `KK_HMAC_SECRET` (the token is 256 random bits, so a fast keyed hash is enough and keeps the public enroll route cheap) and cleared when used, replaced or revoked. Enrollment stores the connector's Ed25519 public key. Revoked rows are kept.
 
 ```sql
 CREATE TABLE "connector" (
@@ -368,7 +368,7 @@ CREATE TABLE "connector" (
   "scopes" TEXT[] NOT NULL,                       -- certs:read, optionally certs:renew
   "allowedCertIds" INTEGER[],
   "allowedDomainIds" UUID[],                      -- at least one of the two is set
-  "publicKey" TEXT,                               -- base64 of the raw Ed25519 key
+  "publicKey" TEXT,                               -- base64 of the raw Ed25519 key (never small order)
   "enrollmentTokenHash" TEXT,                      -- unique where not null
   "enrollmentTokenExpiresAt" TIMESTAMP,
   "enrolledAt" TIMESTAMP,

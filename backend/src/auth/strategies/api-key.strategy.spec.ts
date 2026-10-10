@@ -67,6 +67,19 @@ describe('ApiKeyStrategy', () => {
       });
     });
 
+    it('does not record a lockout failure when validation itself refuses a known key', async () => {
+      mockAuthService.validateApiKey.mockRejectedValue(
+        new UnauthorizedException('Invalid API key'),
+      );
+      await expect(
+        strategy.validate({
+          ip: '10.0.0.1',
+          headers: { authorization: 'Bearer kk_revoked_connector_key' },
+        } as any),
+      ).rejects.toThrow(UnauthorizedException);
+      expect(mockSecurity.recordFailure).not.toHaveBeenCalled();
+    });
+
     it('throws UnauthorizedException and records failure when API key is invalid', async () => {
       mockAuthService.validateApiKey.mockResolvedValue(null);
 

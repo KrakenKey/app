@@ -1,5 +1,6 @@
 import { generateKeyPairSync, sign } from 'node:crypto';
 import {
+  isAcceptablePoint,
   parsePublicKey,
   parseTimestamp,
   rotateMessage,
@@ -103,5 +104,52 @@ describe('signed messages', () => {
     expect(rotateMessage('id', 'KEY=', '2026-10-10T14:00:00Z', 'n')).toBe(
       'KRAKENKEY-CONNECTOR-ROTATE-V1\nid\nKEY=\n2026-10-10T14:00:00Z\nn',
     );
+  });
+});
+
+describe('small-order public keys', () => {
+  const P = (1n << 255n) - 19n;
+  const y8 =
+    2707385501144840649318225287225658788936804267575313519463743609750303402022n;
+  const encode = (y: bigint, sign = 0) => {
+    const hex = y.toString(16).padStart(64, '0');
+    const b = Buffer.from(hex, 'hex').reverse();
+    b[31] |= sign << 7;
+    return b;
+  };
+  const smallOrder = [0n, 1n, P - 1n, y8, P - y8];
+
+  it.each(
+    smallOrder.flatMap((y) => [
+      [`y=${y} sign 0`, encode(y, 0)],
+      [`y=${y} sign 1`, encode(y, 1)],
+    ]),
+  )('refuses %s', (_, raw) => {
+    expect(isAcceptablePoint(raw)).toBe(false);
+    expect(parsePublicKey(raw.toString('base64'))).toBeNull();
+  });
+
+  it.each([
+    ['y = p (non-canonical 0)', encode(P)],
+    ['y = p + 1 (non-canonical 1)', encode(P + 1n)],
+    ['y = 2^255 - 1', encode((1n << 255n) - 1n)],
+  ])('refuses non-canonical %s', (_, raw) => {
+    expect(isAcceptablePoint(raw)).toBe(false);
+  });
+
+  it('refuses the identity and all-zero keys', () => {
+    // Under the identity key the signature R = identity, S = 0 verifies for
+    // every message on OpenSSL builds that don't reject small-order keys
+    // themselves (some do, some don't), so the check can't be left to them.
+    expect(
+      parsePublicKey('AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='),
+    ).toBeNull();
+    expect(parsePublicKey(Buffer.alloc(32).toString('base64'))).toBeNull();
+  });
+
+  it('accepts real keys', () => {
+    for (let i = 0; i < 20; i++) {
+      expect(parsePublicKey(keyPair().publicB64)).not.toBeNull();
+    }
   });
 });

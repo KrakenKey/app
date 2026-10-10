@@ -69,7 +69,10 @@ export class ConnectorsController {
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
   async list(@Req() req: RequestWithUser): Promise<Connector[]> {
     const connectors = await this.connectors.list(req.user.userId);
-    const summaries = await this.reports.summaries(connectors.map((c) => c.id));
+    const summaries = await this.reports.summaries(
+      req.user,
+      connectors.map((c) => c.id),
+    );
     return connectors.map((c) => ({
       ...c,
       deploymentSummary: summaries.get(c.id),
@@ -90,7 +93,7 @@ export class ConnectorsController {
     @Req() req: RequestWithUser,
     @Query() query: ConnectorDeploymentsQueryDto,
   ): Promise<ConnectorDeployment[]> {
-    return this.reports.forCertificate(req.user.userId, query.certificateId);
+    return this.reports.forCertificate(req.user, query.certificateId);
   }
 
   @Get(':id')
@@ -107,7 +110,7 @@ export class ConnectorsController {
     const connector = await this.connectors.get(req.user.userId, id);
     return {
       ...connector,
-      deployments: await this.reports.forConnector(connector),
+      deployments: await this.reports.forConnector(req.user, connector),
     };
   }
 
@@ -205,7 +208,7 @@ export class ConnectorsController {
       'Stored; certificates outside the connector restrictions are skipped and listed in rejectedCertificateIds',
   })
   @ApiResponse({ status: 403, description: 'Not a connector-issued key' })
-  @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
+  @RateLimitCategoryDecorator(RateLimitCategory.CONNECTOR_REPORT)
   report(
     @Req() req: RequestWithUser,
     @Body() dto: ConnectorReportDto,
@@ -237,7 +240,7 @@ export class ConnectorsController {
   })
   @ApiResponse({ status: 200, description: 'Short-lived API key' })
   @ApiResponse({ status: 401, description: 'Invalid connector credentials' })
-  @RateLimitCategoryDecorator(RateLimitCategory.PUBLIC_STRICT)
+  @RateLimitCategoryDecorator(RateLimitCategory.CONNECTOR_TOKEN)
   token(
     @Body() dto: ConnectorTokenDto,
     @Req() req: Request,

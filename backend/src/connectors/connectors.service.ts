@@ -125,7 +125,7 @@ export class ConnectorsService {
       allowedCertIds: limits.allowedCertIds,
       allowedDomainIds: limits.allowedDomainIds,
       publicKey: null,
-      enrollmentTokenHash: this.authService.hashSecret(enrollmentToken),
+      enrollmentTokenHash: this.authService.hmacSecret(enrollmentToken),
       enrollmentTokenExpiresAt: tokenExpiry(),
       enrolledAt: null,
       revokedAt: null,
@@ -137,7 +137,11 @@ export class ConnectorsService {
     });
     await this.connectorRepo.save(connector);
     this.logger.log(`Connector ${connector.id} created by user ${userId}`);
-    return { connector: toDto(connector), enrollmentToken };
+    return {
+      connector: toDto(connector),
+      enrollmentToken,
+      expiresAt: connector.enrollmentTokenExpiresAt!.toISOString(),
+    };
   }
 
   /**
@@ -156,32 +160,99 @@ export class ConnectorsService {
       throw new ConflictException('This connector has already enrolled');
     }
     const enrollmentToken = newEnrollmentToken();
+    const expiresAt = tokenExpiry();
     const result = await this.connectorRepo.update(
       { id, userId, enrolledAt: IsNull(), revokedAt: IsNull() },
       {
-        enrollmentTokenHash: this.authService.hashSecret(enrollmentToken),
-        enrollmentTokenExpiresAt: tokenExpiry(),
+        enrollmentTokenHash: this.authService.hmacSecret(enrollmentToken),
+        enrollmentTokenExpiresAt: expiresAt,
       },
     );
     if (!result.affected) {
       // Enrolled or revoked since the read above
       throw new ConflictException('This connector has already enrolled');
     }
-    return { enrollmentToken };
+    return { enrollmentToken, expiresAt: expiresAt.toISOString() };
   }
 
+  /**
+   * Changes a connector's name, client label, scopes or restrictions.
+   * Scopes and restrictions get the same checks as at creation. Changing
+   * any of them revokes the connector's live keys, so its next key
+   * exchange carries the new limits.
+   */
   async update(
     userId: string,
     id: string,
     dto: UpdateConnectorDto,
   ): Promise<ConnectorDto> {
     const connector = await this.findOwned(userId, id);
-    const changes: { name?: string; clientLabel?: string | null } = {};
+    if (connector.revokedAt) {
+      throw new ConflictException('This connector has been revoked');
+    }
+    const changes: {
+      name?: string;
+      clientLabel?: string | null;
+      scopes?: ConnectorScope[];
+      allowedCertIds?: number[] | null;
+      allowedDomainIds?: string[] | null;
+    } = {};
     if (dto.name !== undefined) changes.name = dto.name;
     if (dto.clientLabel !== undefined) changes.clientLabel = dto.clientLabel;
+
+    if (dto.scopes !== undefined && dto.scopes !== null) {
+      const scopes = [...new Set(dto.scopes)];
+      if (!scopes.includes('certs:read')) {
+        throw new BadRequestException('scopes must include certs:read');
+      }
+      if (!sameSet(scopes, connector.scopes)) changes.scopes = scopes;
+    }
+    const certsGiven = dto.allowedCertIds !== undefined;
+    const domainsGiven = dto.allowedDomainIds !== undefined;
+    if (certsGiven || domainsGiven) {
+      // Only the lists being replaced are checked against the account
+      const limits = await this.authService.validateRestrictions(userId, {
+        allowedCertIds: dto.allowedCertIds ?? undefined,
+        allowedDomainIds: dto.allowedDomainIds ?? undefined,
+      });
+      const certIds = certsGiven
+        ? limits.allowedCertIds
+        : connector.allowedCertIds;
+      const domainIds = domainsGiven
+        ? limits.allowedDomainIds
+        : connector.allowedDomainIds;
+      if (!certIds && !domainIds) {
+        throw new BadRequestException(
+          'A connector must be limited to specific certificates or domains: keep allowedCertIds or allowedDomainIds',
+        );
+      }
+      if (certsGiven && !sameSet(certIds, connector.allowedCertIds)) {
+        changes.allowedCertIds = certIds;
+      }
+      if (domainsGiven && !sameSet(domainIds, connector.allowedDomainIds)) {
+        changes.allowedDomainIds = domainIds;
+      }
+    }
+
     if (Object.keys(changes).length) {
-      await this.connectorRepo.update({ id, userId }, changes);
+      const result = await this.connectorRepo.update(
+        { id, userId, revokedAt: IsNull() },
+        changes,
+      );
+      if (!result.affected) {
+        throw new ConflictException('This connector has been revoked');
+      }
       Object.assign(connector, changes);
+    }
+    const limitsChanged =
+      'scopes' in changes ||
+      'allowedCertIds' in changes ||
+      'allowedDomainIds' in changes;
+    if (limitsChanged) {
+      const keys = await this.authService.revokeConnectorKeys(id);
+      this.logger.log(
+        `Connector ${id} limits changed by user ${userId}; ${keys} live key(s) revoked`,
+      );
     }
     return toDto(connector);
   }
@@ -236,13 +307,9 @@ export class ConnectorsService {
         'publicKey is not a valid Ed25519 public key',
       );
     }
-    if (
-      !dto.token.startsWith(CONNECTOR_ENROLLMENT_TOKEN_PREFIX) ||
-      dto.token.length < CONNECTOR_ENROLLMENT_TOKEN_PREFIX.length + 43
-    ) {
-      this.refuseEnrollment('malformed token', ip);
-    }
-
+    // Every token, well-formed or not, gets the same HMAC and the same
+    // conditional UPDATE, so a refusal takes the same work whatever the
+    // reason.
     const now = new Date();
     const result = await this.connectorRepo
       .createQueryBuilder()
@@ -259,7 +326,7 @@ export class ConnectorsService {
         arch: dto.arch,
       })
       .where('"enrollmentTokenHash" = :hash', {
-        hash: this.authService.hashSecret(dto.token),
+        hash: this.authService.hmacSecret(dto.token),
       })
       .andWhere('"enrollmentTokenExpiresAt" > :now', { now })
       .andWhere('"enrolledAt" IS NULL')
@@ -271,7 +338,10 @@ export class ConnectorsService {
       result.raw as { id: string; name: string; userId: string }[]
     )[0];
     if (!row) {
-      this.refuseEnrollment('unknown, used, expired or revoked token', ip);
+      this.refuseEnrollment(
+        'unknown, malformed, used, expired or revoked token',
+        ip,
+      );
     }
     this.logger.log(
       `Connector ${row.id} (user ${row.userId}) enrolled${ip ? ` from ${ip}` : ''}`,
@@ -328,7 +398,13 @@ export class ConnectorsService {
     return { apiKey: key.apiKey, expiresAt: key.expiresAt.toISOString() };
   }
 
-  /** Replaces the connector's public key, signed by the current one. */
+  /**
+   * Replaces the connector's public key, signed by the current one, and
+   * revokes every key issued so far. Rotating is what a connector does
+   * after a suspected compromise of its host, so keys minted under the old
+   * key must not outlive it; the connector gets a fresh one with the new
+   * key right after.
+   */
   async rotate(dto: ConnectorRotateDto, ip?: string): Promise<void> {
     if (!parsePublicKey(dto.newPublicKey)) {
       throw new BadRequestException(
@@ -345,6 +421,12 @@ export class ConnectorsService {
       ),
       ip,
     );
+    // Checked after the signature, so only the connector learns this
+    if (dto.newPublicKey === connector.publicKey) {
+      throw new BadRequestException(
+        'newPublicKey must differ from the current key',
+      );
+    }
     const result = await this.connectorRepo.update(
       {
         id: connector.id,
@@ -360,8 +442,9 @@ export class ConnectorsService {
     if (!result.affected) {
       this.refuseCredentials(connector.id, 'key changed or revoked', ip);
     }
+    const keys = await this.authService.revokeConnectorKeys(connector.id);
     this.logger.log(
-      `Connector ${connector.id} rotated its key${ip ? ` from ${ip}` : ''}`,
+      `Connector ${connector.id} rotated its key${ip ? ` from ${ip}` : ''}; ${keys} live key(s) revoked`,
     );
   }
 
@@ -438,6 +521,13 @@ export class ConnectorsService {
   }
 }
 
+/** Same members, ignoring order; null and [] both mean "none". */
+function sameSet<T>(a: T[] | null, b: T[] | null): boolean {
+  const x = new Set(a ?? []);
+  const y = new Set(b ?? []);
+  return x.size === y.size && [...x].every((v) => y.has(v));
+}
+
 function tokenExpiry(): Date {
   return new Date(Date.now() + CONNECTOR_ENROLLMENT_TOKEN_TTL_SECONDS * 1000);
 }
@@ -451,6 +541,10 @@ export function toDto(c: Connector): ConnectorDto {
     allowedCertIds: c.allowedCertIds,
     allowedDomainIds: c.allowedDomainIds,
     enrolledAt: c.enrolledAt ? c.enrolledAt.toISOString() : null,
+    enrollmentTokenExpiresAt:
+      !c.enrolledAt && !c.revokedAt && c.enrollmentTokenExpiresAt
+        ? c.enrollmentTokenExpiresAt.toISOString()
+        : null,
     revokedAt: c.revokedAt ? c.revokedAt.toISOString() : null,
     lastSeenAt: c.lastSeenAt ? c.lastSeenAt.toISOString() : null,
     version: c.version,

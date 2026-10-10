@@ -10,6 +10,7 @@ import {
   IsString,
   IsUUID,
   Matches,
+  Max,
   MaxLength,
   Min,
   ValidateIf,
@@ -30,11 +31,24 @@ import {
 /** Printable ASCII without spaces, for version, os and arch. */
 const AGENT_INFO_PATTERN = /^[\x21-\x7E]+$/;
 
+/**
+ * Names and labels: any printable text, but no control or invisible format
+ * characters (newlines, bidi overrides), which could forge log lines or
+ * disguise a name in emails and alerts.
+ */
+export const DISPLAY_TEXT_PATTERN = /^[^\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}]+$/u;
+const DISPLAY_TEXT_MESSAGE = (field: string) =>
+  `${field} must not contain control or invisible characters`;
+
+/** Largest id Postgres INTEGER columns hold. */
+export const MAX_INT4 = 2147483647;
+
 export class CreateConnectorDto {
   @ApiProperty({ example: 'web-01', minLength: 1, maxLength: 64 })
   @IsString()
   @IsNotEmpty()
   @MaxLength(64)
+  @Matches(DISPLAY_TEXT_PATTERN, { message: DISPLAY_TEXT_MESSAGE('name') })
   name: string;
 
   @ApiPropertyOptional({
@@ -47,6 +61,9 @@ export class CreateConnectorDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(64)
+  @Matches(DISPLAY_TEXT_PATTERN, {
+    message: DISPLAY_TEXT_MESSAGE('clientLabel'),
+  })
   clientLabel?: string;
 
   @ApiProperty({
@@ -71,6 +88,7 @@ export class CreateConnectorDto {
   @ArrayMaxSize(API_KEY_RESTRICTION_LIMITS.certs)
   @IsInt({ each: true })
   @Min(1, { each: true })
+  @Max(MAX_INT4, { each: true })
   allowedCertIds?: number[];
 
   @ApiPropertyOptional({
@@ -91,6 +109,7 @@ export class UpdateConnectorDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(64)
+  @Matches(DISPLAY_TEXT_PATTERN, { message: DISPLAY_TEXT_MESSAGE('name') })
   name?: string;
 
   @ApiPropertyOptional({
@@ -102,7 +121,49 @@ export class UpdateConnectorDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(64)
+  @Matches(DISPLAY_TEXT_PATTERN, {
+    message: DISPLAY_TEXT_MESSAGE('clientLabel'),
+  })
   clientLabel?: string | null;
+
+  @ApiPropertyOptional({
+    enum: CONNECTOR_SCOPES,
+    isArray: true,
+    description:
+      'Replaces the scopes. Must include certs:read. Changing it revokes live keys.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayUnique()
+  @IsIn(CONNECTOR_SCOPES, { each: true })
+  scopes?: ConnectorScope[];
+
+  @ApiPropertyOptional({
+    type: [Number],
+    nullable: true,
+    description:
+      'Replaces the certificate restriction; [] or null clears it. At least one restriction must remain. Changing it revokes live keys.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(API_KEY_RESTRICTION_LIMITS.certs)
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  @Max(MAX_INT4, { each: true })
+  allowedCertIds?: number[] | null;
+
+  @ApiPropertyOptional({
+    type: [String],
+    nullable: true,
+    description:
+      'Replaces the domain restriction; [] or null clears it. At least one restriction must remain. Changing it revokes live keys.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(API_KEY_RESTRICTION_LIMITS.domains)
+  @IsUUID('all', { each: true })
+  allowedDomainIds?: string[] | null;
 }
 
 export class ConnectorEnrollDto {

@@ -102,6 +102,16 @@ export function buildSlackBody(msg: AlertMessage, link: string) {
   };
 }
 
+/**
+ * Teams renders TextBlock text as Markdown, so text from a payload
+ * (certificate names, connector labels and error messages) could otherwise
+ * add disguised links (`[text](url)`) or formatting. Backslash-escapes the
+ * characters that start links, emphasis, code, headings and HTML.
+ */
+export function teamsEscape(text: string): string {
+  return text.replace(/[\\`*_[\]()#<>~|]/g, '\\$&');
+}
+
 export function buildTeamsBody(msg: AlertMessage, link: string) {
   const title = ALERT_TITLES[msg.event];
   return {
@@ -122,10 +132,14 @@ export function buildTeamsBody(msg: AlertMessage, link: string) {
               size: 'Medium',
               wrap: true,
             },
-            { type: 'TextBlock', text: msg.payload.subject, wrap: true },
+            {
+              type: 'TextBlock',
+              text: teamsEscape(msg.payload.subject),
+              wrap: true,
+            },
             ...detailEntries(msg.payload).map(([k, v]) => ({
               type: 'TextBlock',
-              text: `**${k}:** ${v}`,
+              text: `**${teamsEscape(k)}:** ${teamsEscape(v)}`,
               wrap: true,
               spacing: 'Small',
             })),

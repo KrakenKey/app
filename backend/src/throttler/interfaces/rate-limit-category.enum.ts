@@ -6,6 +6,13 @@ export enum RateLimitCategory {
    * limit.
    */
   PUBLIC_STRICT = 'public-strict',
+  /**
+   * POST /connectors/token: unauthenticated like PUBLIC_STRICT, but a site
+   * with many connectors behind one address needs more room.
+   */
+  CONNECTOR_TOKEN = 'connector-token',
+  /** POST /connectors/report: counted per connector, not per owner. */
+  CONNECTOR_REPORT = 'connector-report',
   AUTHENTICATED_READ = 'read',
   AUTHENTICATED_WRITE = 'write',
   EXPENSIVE = 'expensive',
@@ -15,6 +22,7 @@ export enum RateLimitCategory {
 export function isPublicCategory(category: RateLimitCategory): boolean {
   return (
     category === RateLimitCategory.PUBLIC ||
-    category === RateLimitCategory.PUBLIC_STRICT
+    category === RateLimitCategory.PUBLIC_STRICT ||
+    category === RateLimitCategory.CONNECTOR_TOKEN
   );
 }

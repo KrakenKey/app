@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import {
   createHash,
   generateKeyPairSync,
@@ -139,9 +139,10 @@ export class FakeDeploymentRepo {
       .map((r) => ({ ...r }));
   }
 
-  async delete(criteria: Row[]) {
+  async delete(criteria: Row | Row[]) {
+    const list = Array.isArray(criteria) ? criteria : [criteria];
     const before = this.rows.length;
-    this.rows = this.rows.filter((r) => !criteria.some((c) => matches(r, c)));
+    this.rows = this.rows.filter((r) => !list.some((c) => matches(r, c)));
     return { affected: before - this.rows.length };
   }
 
@@ -184,7 +185,7 @@ export class FakeAuthService {
     private readonly owned: { certIds: number[]; domainIds: string[] },
   ) {}
 
-  hashSecret(raw: string): string {
+  hmacSecret(raw: string): string {
     return createHash('sha256').update(raw).digest('hex');
   }
 
@@ -276,11 +277,41 @@ export class FakeAuthService {
     return n;
   }
 
+  /** Mirrors AuthService: dead short-lived keys throw instead of returning null. */
   async validateApiKey(raw: string) {
     const k = this.keys.get(raw);
-    if (!k || k.revokedAt) return null;
-    if (k.expiresAt && k.expiresAt < new Date()) return null;
+    if (!k) return null;
+    const expired = Boolean(k.expiresAt && k.expiresAt < new Date());
+    if (k.source && (k.revokedAt || expired)) {
+      throw new UnauthorizedException('Invalid API key');
+    }
+    if (k.revokedAt || expired) return null;
     return k;
+  }
+}
+
+/** ConnectorAlertGate in memory: cooldowns never expire during a test. */
+export class FakeAlertGate {
+  private readonly targets = new Set<string>();
+  private readonly emailed = new Set<string>();
+  private readonly held = new Map<string, number>();
+
+  async claimTargetAlert(c: string, certificateId: number, label: string) {
+    const key = `${c}\n${certificateId}\n${label}`;
+    if (this.targets.has(key)) return false;
+    this.targets.add(key);
+    return true;
+  }
+
+  async claimEmail(c: string, failures: number): Promise<number | null> {
+    if (this.emailed.has(c)) {
+      this.held.set(c, (this.held.get(c) ?? 0) + failures);
+      return null;
+    }
+    this.emailed.add(c);
+    const held = this.held.get(c) ?? 0;
+    this.held.delete(c);
+    return held;
   }
 }
 

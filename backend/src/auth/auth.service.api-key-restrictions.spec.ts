@@ -1,6 +1,10 @@
 import { IsNull } from 'typeorm';
-import { scryptSync } from 'crypto';
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { createHmac, scryptSync } from 'crypto';
+import {
+  BadRequestException,
+  ForbiddenException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { AuthService } from './auth.service';
 
 const HMAC_SECRET = 'test-hmac-secret';
@@ -278,7 +282,7 @@ describe('AuthService short-lived keys', () => {
     });
   });
 
-  it('hashes other secrets the same way as API keys', () => {
+  it('HMACs other secrets with KK_HMAC_SECRET', () => {
     const keyRepo = { findOne: jest.fn() };
     const service = new AuthService(
       { get: jest.fn(() => 'secret') } as any,
@@ -291,10 +295,11 @@ describe('AuthService short-lived keys', () => {
       {} as any,
       {} as any,
     );
-    const h = service.hashSecret('kkce_abc');
-    expect(h).toMatch(/^[0-9a-f]{128}$/);
-    expect(service.hashSecret('kkce_abc')).toBe(h);
-    expect(service.hashSecret('kkce_abd')).not.toBe(h);
+    const h = service.hmacSecret('kkce_abc');
+    expect(h).toBe(
+      createHmac('sha256', 'secret').update('kkce_abc').digest('hex'),
+    );
+    expect(service.hmacSecret('kkce_abd')).not.toBe(h);
   });
 
   it('does not email about an expired short-lived key', async () => {
@@ -320,7 +325,64 @@ describe('AuthService short-lived keys', () => {
     );
     await expect(
       service.validateApiKey('kk_x', { ip: '1.2.3.4' }),
-    ).resolves.toBeNull();
+    ).rejects.toThrow(UnauthorizedException);
     expect(security.shouldNotifyExpiredKeyUse).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['revoked', { revokedAt: new Date() }],
+    ['expired', { expiresAt: new Date(Date.now() - 1000) }],
+  ])(
+    'refuses a %s connector key with a 401 that skips the lockout count',
+    async (_, fields) => {
+      const keyRepo = {
+        findOne: jest.fn().mockResolvedValue({
+          id: 'eph',
+          source: 'connector',
+          connectorId: 'c1',
+          user: { id: 'u1' },
+          ...fields,
+        }),
+      };
+      const service = new AuthService(
+        { get: jest.fn(() => 'secret') } as any,
+        keyRepo as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        { shouldNotifyExpiredKeyUse: jest.fn() } as any,
+      );
+      // Thrown, not null: ApiKeyStrategy only records a lockout failure
+      // when validateApiKey returns null
+      await expect(
+        service.validateApiKey('kk_x', { ip: '1.2.3.4' }),
+      ).rejects.toThrow('Invalid API key');
+    },
+  );
+
+  it('still returns null (counted) for a revoked dashboard key', async () => {
+    const keyRepo = {
+      findOne: jest.fn().mockResolvedValue({
+        id: 'k',
+        source: null,
+        revokedAt: new Date(),
+        user: { id: 'u1' },
+      }),
+    };
+    const service = new AuthService(
+      { get: jest.fn(() => 'secret') } as any,
+      keyRepo as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    await expect(service.validateApiKey('kk_x')).resolves.toBeNull();
   });
 });
