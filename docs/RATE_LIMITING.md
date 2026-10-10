@@ -33,7 +33,7 @@ Defined in `interfaces/rate-limit-category.enum.ts`:
 | Category | Enum value | Covers |
 |----------|-----------|--------|
 | `public` | `PUBLIC` | Unauthenticated endpoints: `/`, `/health`, the login, registration and OAuth callback routes under `/auth`, `POST /public-scan` |
-| `public-strict` | `PUBLIC_STRICT` | Unauthenticated connector credential exchanges: `POST /connectors/enrol`, `POST /connectors/token`, `POST /connectors/rotate` |
+| `public-strict` | `PUBLIC_STRICT` | Unauthenticated connector credential exchanges: `POST /connectors/enroll`, `POST /connectors/token`, `POST /connectors/rotate` |
 | `read` | `AUTHENTICATED_READ` | Authenticated reads: list domains, view certificates, endpoint history |
 | `write` | `AUTHENTICATED_WRITE` | Authenticated mutations: create domain, delete certificate, update endpoint |
 | `expensive` | `EXPENSIVE` | Resource-heavy operations: certificate issuance, renewal, retry, revocation, domain verification |

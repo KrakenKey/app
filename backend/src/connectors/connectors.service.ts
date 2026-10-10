@@ -11,14 +11,14 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import { randomBytes } from 'node:crypto';
 import {
-  CONNECTOR_ENROLMENT_TOKEN_PREFIX,
-  CONNECTOR_ENROLMENT_TOKEN_TTL_SECONDS,
+  CONNECTOR_ENROLLMENT_TOKEN_PREFIX,
+  CONNECTOR_ENROLLMENT_TOKEN_TTL_SECONDS,
   CONNECTOR_KEY_TTL_SECONDS,
   CONNECTOR_MAX_CLOCK_SKEW_SECONDS,
   MAX_CONNECTORS_PER_USER,
   type Connector as ConnectorDto,
-  type ConnectorEnrolResponse,
-  type ConnectorEnrolmentTokenResponse,
+  type ConnectorEnrollResponse,
+  type ConnectorEnrollmentTokenResponse,
   type ConnectorScope,
   type ConnectorTokenResponse,
   type CreateConnectorResponse,
@@ -35,15 +35,15 @@ import {
   verifySignature,
 } from './connector-crypto';
 import type {
-  ConnectorEnrolDto,
+  ConnectorEnrollDto,
   ConnectorRotateDto,
   ConnectorTokenDto,
   CreateConnectorDto,
   UpdateConnectorDto,
 } from './dto/connector.dto';
 
-/** Every enrolment failure gets this, so a caller learns nothing about why. */
-export const INVALID_ENROLMENT_TOKEN = 'Invalid enrolment token';
+/** Every enrollment failure gets this, so a caller learns nothing about why. */
+export const INVALID_ENROLLMENT_TOKEN = 'Invalid enrollment token';
 /** Every token or rotate failure gets this. */
 export const INVALID_CONNECTOR_CREDENTIALS = 'Invalid connector credentials';
 
@@ -51,8 +51,8 @@ export const INVALID_CONNECTOR_CREDENTIALS = 'Invalid connector credentials';
 export const CONNECTOR_KEY_SOURCE = 'connector';
 
 /** kkce_ + base64url of 32 random bytes. */
-function newEnrolmentToken(): string {
-  return `${CONNECTOR_ENROLMENT_TOKEN_PREFIX}${randomBytes(32).toString('base64url')}`;
+function newEnrollmentToken(): string {
+  return `${CONNECTOR_ENROLLMENT_TOKEN_PREFIX}${randomBytes(32).toString('base64url')}`;
 }
 
 @Injectable()
@@ -116,7 +116,7 @@ export class ConnectorsService {
       );
     }
 
-    const enrolmentToken = newEnrolmentToken();
+    const enrollmentToken = newEnrollmentToken();
     const connector = this.connectorRepo.create({
       userId,
       name: dto.name,
@@ -125,8 +125,8 @@ export class ConnectorsService {
       allowedCertIds: limits.allowedCertIds,
       allowedDomainIds: limits.allowedDomainIds,
       publicKey: null,
-      enrolmentTokenHash: this.authService.hashSecret(enrolmentToken),
-      enrolmentTokenExpiresAt: tokenExpiry(),
+      enrollmentTokenHash: this.authService.hashSecret(enrollmentToken),
+      enrollmentTokenExpiresAt: tokenExpiry(),
       enrolledAt: null,
       revokedAt: null,
       lastSeenAt: null,
@@ -137,17 +137,17 @@ export class ConnectorsService {
     });
     await this.connectorRepo.save(connector);
     this.logger.log(`Connector ${connector.id} created by user ${userId}`);
-    return { connector: toDto(connector), enrolmentToken };
+    return { connector: toDto(connector), enrollmentToken };
   }
 
   /**
-   * Replaces the enrolment token of a connector that has not enrolled yet.
+   * Replaces the enrollment token of a connector that has not enrolled yet.
    * The previous token, used or not, stops working.
    */
-  async reissueEnrolmentToken(
+  async reissueEnrollmentToken(
     userId: string,
     id: string,
-  ): Promise<ConnectorEnrolmentTokenResponse> {
+  ): Promise<ConnectorEnrollmentTokenResponse> {
     const connector = await this.findOwned(userId, id);
     if (connector.revokedAt) {
       throw new ConflictException('This connector has been revoked');
@@ -155,19 +155,19 @@ export class ConnectorsService {
     if (connector.enrolledAt) {
       throw new ConflictException('This connector has already enrolled');
     }
-    const enrolmentToken = newEnrolmentToken();
+    const enrollmentToken = newEnrollmentToken();
     const result = await this.connectorRepo.update(
       { id, userId, enrolledAt: IsNull(), revokedAt: IsNull() },
       {
-        enrolmentTokenHash: this.authService.hashSecret(enrolmentToken),
-        enrolmentTokenExpiresAt: tokenExpiry(),
+        enrollmentTokenHash: this.authService.hashSecret(enrollmentToken),
+        enrollmentTokenExpiresAt: tokenExpiry(),
       },
     );
     if (!result.affected) {
       // Enrolled or revoked since the read above
       throw new ConflictException('This connector has already enrolled');
     }
-    return { enrolmentToken };
+    return { enrollmentToken };
   }
 
   async update(
@@ -187,7 +187,7 @@ export class ConnectorsService {
   }
 
   /**
-   * Revokes a connector: it can't enrol, get keys or rotate any more, and
+   * Revokes a connector: it can't enroll, get keys or rotate any more, and
    * every key it was issued stops working. Revoking twice is a no-op.
    */
   async revoke(userId: string, id: string): Promise<void> {
@@ -197,8 +197,8 @@ export class ConnectorsService {
         { id, userId, revokedAt: IsNull() },
         {
           revokedAt: new Date(),
-          enrolmentTokenHash: null,
-          enrolmentTokenExpiresAt: null,
+          enrollmentTokenHash: null,
+          enrollmentTokenExpiresAt: null,
         },
       );
     }
@@ -223,24 +223,24 @@ export class ConnectorsService {
   // --- Connector (unauthenticated) -------------------------------------------
 
   /**
-   * Enrols a connector: consumes its token and stores its public key. The
+   * Enrolls a connector: consumes its token and stores its public key. The
    * token is consumed by a single conditional UPDATE, so two requests with
    * the same token can't both succeed.
    */
-  async enrol(
-    dto: ConnectorEnrolDto,
+  async enroll(
+    dto: ConnectorEnrollDto,
     ip?: string,
-  ): Promise<ConnectorEnrolResponse> {
+  ): Promise<ConnectorEnrollResponse> {
     if (!parsePublicKey(dto.publicKey)) {
       throw new BadRequestException(
         'publicKey is not a valid Ed25519 public key',
       );
     }
     if (
-      !dto.token.startsWith(CONNECTOR_ENROLMENT_TOKEN_PREFIX) ||
-      dto.token.length < CONNECTOR_ENROLMENT_TOKEN_PREFIX.length + 43
+      !dto.token.startsWith(CONNECTOR_ENROLLMENT_TOKEN_PREFIX) ||
+      dto.token.length < CONNECTOR_ENROLLMENT_TOKEN_PREFIX.length + 43
     ) {
-      this.refuseEnrolment('malformed token', ip);
+      this.refuseEnrollment('malformed token', ip);
     }
 
     const now = new Date();
@@ -248,8 +248,8 @@ export class ConnectorsService {
       .createQueryBuilder()
       .update(Connector)
       .set({
-        enrolmentTokenHash: null,
-        enrolmentTokenExpiresAt: null,
+        enrollmentTokenHash: null,
+        enrollmentTokenExpiresAt: null,
         publicKey: dto.publicKey,
         enrolledAt: now,
         lastSeenAt: now,
@@ -258,10 +258,10 @@ export class ConnectorsService {
         os: dto.os,
         arch: dto.arch,
       })
-      .where('"enrolmentTokenHash" = :hash', {
+      .where('"enrollmentTokenHash" = :hash', {
         hash: this.authService.hashSecret(dto.token),
       })
-      .andWhere('"enrolmentTokenExpiresAt" > :now', { now })
+      .andWhere('"enrollmentTokenExpiresAt" > :now', { now })
       .andWhere('"enrolledAt" IS NULL')
       .andWhere('"revokedAt" IS NULL')
       .returning(['id', 'name', 'userId'])
@@ -271,7 +271,7 @@ export class ConnectorsService {
       result.raw as { id: string; name: string; userId: string }[]
     )[0];
     if (!row) {
-      this.refuseEnrolment('unknown, used, expired or revoked token', ip);
+      this.refuseEnrollment('unknown, used, expired or revoked token', ip);
     }
     this.logger.log(
       `Connector ${row.id} (user ${row.userId}) enrolled${ip ? ` from ${ip}` : ''}`,
@@ -279,11 +279,11 @@ export class ConnectorsService {
     return { connectorId: row.id, name: row.name };
   }
 
-  private refuseEnrolment(reason: string, ip?: string): never {
+  private refuseEnrollment(reason: string, ip?: string): never {
     this.logger.warn(
-      `Connector enrolment refused${ip ? ` from ${ip}` : ''}: ${reason}`,
+      `Connector enrollment refused${ip ? ` from ${ip}` : ''}: ${reason}`,
     );
-    throw new UnauthorizedException(INVALID_ENROLMENT_TOKEN);
+    throw new UnauthorizedException(INVALID_ENROLLMENT_TOKEN);
   }
 
   /** Exchanges a signed request for a short-lived API key. */
@@ -439,7 +439,7 @@ export class ConnectorsService {
 }
 
 function tokenExpiry(): Date {
-  return new Date(Date.now() + CONNECTOR_ENROLMENT_TOKEN_TTL_SECONDS * 1000);
+  return new Date(Date.now() + CONNECTOR_ENROLLMENT_TOKEN_TTL_SECONDS * 1000);
 }
 
 export function toDto(c: Connector): ConnectorDto {

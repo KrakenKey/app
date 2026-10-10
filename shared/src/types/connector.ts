@@ -1,7 +1,7 @@
 /**
  * Connectors: agents that run on a customer's own machines, keep private
  * keys there, renew certificates and install them on local targets. A
- * connector enrols once with a single-use token, then proves itself with
+ * connector enrolls once with a single-use token, then proves itself with
  * an Ed25519 key to get short-lived API keys.
  */
 
@@ -13,11 +13,11 @@ export type ConnectorScope = (typeof CONNECTOR_SCOPES)[number];
 /** Active (not revoked) connectors per user. */
 export const MAX_CONNECTORS_PER_USER = 50;
 
-/** Prefix of enrolment tokens. */
-export const CONNECTOR_ENROLMENT_TOKEN_PREFIX = 'kkce_';
+/** Prefix of enrollment tokens. */
+export const CONNECTOR_ENROLLMENT_TOKEN_PREFIX = 'kkce_';
 
-/** Lifetime of an enrolment token, in seconds. */
-export const CONNECTOR_ENROLMENT_TOKEN_TTL_SECONDS = 24 * 60 * 60;
+/** Lifetime of an enrollment token, in seconds. */
+export const CONNECTOR_ENROLLMENT_TOKEN_TTL_SECONDS = 24 * 60 * 60;
 
 /** Lifetime of an API key issued to a connector, in seconds. */
 export const CONNECTOR_KEY_TTL_SECONDS = 60 * 60;
@@ -105,7 +105,7 @@ export interface CreateConnectorRequest {
 export interface CreateConnectorResponse {
   connector: Connector;
   /** Shown once. Single use, expires after 24 hours. */
-  enrolmentToken: string;
+  enrollmentToken: string;
 }
 
 /** `PATCH /connectors/:id`. `clientLabel: null` clears it. */
@@ -114,13 +114,13 @@ export interface UpdateConnectorRequest {
   clientLabel?: string | null;
 }
 
-/** `POST /connectors/:id/enrolment-token`. */
-export interface ConnectorEnrolmentTokenResponse {
-  enrolmentToken: string;
+/** `POST /connectors/:id/enrollment-token`. */
+export interface ConnectorEnrollmentTokenResponse {
+  enrollmentToken: string;
 }
 
-/** `POST /connectors/enrol` (no bearer token). */
-export interface ConnectorEnrolRequest {
+/** `POST /connectors/enroll` (no bearer token). */
+export interface ConnectorEnrollRequest {
   token: string;
   /** Standard base64 (padded) of the raw 32-byte Ed25519 public key. */
   publicKey: string;
@@ -129,7 +129,7 @@ export interface ConnectorEnrolRequest {
   arch: string;
 }
 
-export interface ConnectorEnrolResponse {
+export interface ConnectorEnrollResponse {
   connectorId: string;
   name: string;
 }

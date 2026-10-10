@@ -100,7 +100,7 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
-   * Hashes a secret other than an API key (such as a connector enrolment
+   * Hashes a secret other than an API key (such as a connector enrollment
    * token) the same way API keys are hashed, for storage and lookup.
    */
   hashSecret(raw: string): string {

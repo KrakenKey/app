@@ -20,8 +20,8 @@ import {
 import type { Request } from 'express';
 import type {
   Connector,
-  ConnectorEnrolResponse,
-  ConnectorEnrolmentTokenResponse,
+  ConnectorEnrollResponse,
+  ConnectorEnrollmentTokenResponse,
   ConnectorTokenResponse,
   CreateConnectorResponse,
 } from '@krakenkey/shared';
@@ -33,7 +33,7 @@ import { RateLimitCategoryDecorator } from '../throttler/decorators/rate-limit-c
 import { RateLimitCategory } from '../throttler/interfaces/rate-limit-category.enum';
 import { ConnectorsService } from './connectors.service';
 import {
-  ConnectorEnrolDto,
+  ConnectorEnrollDto,
   ConnectorRotateDto,
   ConnectorTokenDto,
   CreateConnectorDto,
@@ -77,11 +77,11 @@ export class ConnectorsController {
   @ApiBearerAuth()
   @ApiOperation({
     summary:
-      'Create a connector and its single-use enrolment token (dashboard session only)',
+      'Create a connector and its single-use enrollment token (dashboard session only)',
   })
   @ApiResponse({
     status: 201,
-    description: 'Connector created; the enrolment token is shown once',
+    description: 'Connector created; the enrollment token is shown once',
   })
   @ApiResponse({ status: 402, description: 'Connector limit reached' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
@@ -92,13 +92,13 @@ export class ConnectorsController {
     return this.connectors.create(req.user.userId, dto);
   }
 
-  @Post(':id/enrolment-token')
+  @Post(':id/enrollment-token')
   @SessionOnly()
   @UseGuards(JwtOrApiKeyGuard)
   @ApiBearerAuth()
   @ApiOperation({
     summary:
-      'Issue a new enrolment token for a connector that has not enrolled (dashboard session only)',
+      'Issue a new enrollment token for a connector that has not enrolled (dashboard session only)',
   })
   @ApiResponse({
     status: 201,
@@ -109,8 +109,8 @@ export class ConnectorsController {
   reissueToken(
     @Req() req: RequestWithUser,
     @Param('id', new ParseUUIDPipe()) id: string,
-  ): Promise<ConnectorEnrolmentTokenResponse> {
-    return this.connectors.reissueEnrolmentToken(req.user.userId, id);
+  ): Promise<ConnectorEnrollmentTokenResponse> {
+    return this.connectors.reissueEnrollmentToken(req.user.userId, id);
   }
 
   @Patch(':id')
@@ -150,19 +150,19 @@ export class ConnectorsController {
 
   // --- Connector (no bearer token) -------------------------------------------
 
-  @Post('enrol')
+  @Post('enroll')
   @HttpCode(200)
   @ApiOperation({
-    summary: 'Enrol a connector with its single-use token and public key',
+    summary: 'Enroll a connector with its single-use token and public key',
   })
   @ApiResponse({ status: 200, description: 'Enrolled' })
-  @ApiResponse({ status: 401, description: 'Invalid enrolment token' })
+  @ApiResponse({ status: 401, description: 'Invalid enrollment token' })
   @RateLimitCategoryDecorator(RateLimitCategory.PUBLIC_STRICT)
-  enrol(
-    @Body() dto: ConnectorEnrolDto,
+  enroll(
+    @Body() dto: ConnectorEnrollDto,
     @Req() req: Request,
-  ): Promise<ConnectorEnrolResponse> {
-    return this.connectors.enrol(dto, req.ip);
+  ): Promise<ConnectorEnrollResponse> {
+    return this.connectors.enroll(dto, req.ip);
   }
 
   @Post('token')

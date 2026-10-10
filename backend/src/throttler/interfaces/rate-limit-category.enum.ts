@@ -1,7 +1,7 @@
 export enum RateLimitCategory {
   PUBLIC = 'public',
   /**
-   * Unauthenticated credential exchanges (connector enrolment, key
+   * Unauthenticated credential exchanges (connector enrollment, key
    * exchange and key rotation): tracked by IP like PUBLIC, with a lower
    * limit.
    */

@@ -73,9 +73,9 @@ export class FakeConnectorRepo {
   }
 
   /**
-   * The enrolment UPDATE ... RETURNING. Runs synchronously inside
+   * The enrollment UPDATE ... RETURNING. Runs synchronously inside
    * execute(), like the single SQL statement it stands for, so two
-   * concurrent enrolments can't both match.
+   * concurrent enrollments can't both match.
    */
   createQueryBuilder() {
     let values: Row = {};
@@ -97,8 +97,8 @@ export class FakeConnectorRepo {
       returning: () => qb,
       execute: async () => {
         const expected = [
-          '"enrolmentTokenHash" = :hash',
-          '"enrolmentTokenExpiresAt" > :now',
+          '"enrollmentTokenHash" = :hash',
+          '"enrollmentTokenExpiresAt" > :now',
           '"enrolledAt" IS NULL',
           '"revokedAt" IS NULL',
         ];
@@ -109,8 +109,8 @@ export class FakeConnectorRepo {
         }
         const row = this.rows.find(
           (r) =>
-            r.enrolmentTokenHash === params.hash &&
-            r.enrolmentTokenExpiresAt > params.now &&
+            r.enrollmentTokenHash === params.hash &&
+            r.enrollmentTokenExpiresAt > params.now &&
             !r.enrolledAt &&
             !r.revokedAt,
         );
