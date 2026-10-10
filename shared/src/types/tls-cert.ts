@@ -1,6 +1,12 @@
 import type { ParsedCsr } from './csr-generator';
 
 export const CertStatus = {
+  /**
+   * Created from a list of names (`POST /certs/tls` with `names`); waiting
+   * for a connector to send a CSR made with its own key through
+   * `POST /certs/tls/:id/renew`. Not yet sent to the CA.
+   */
+  AWAITING_CSR: 'awaiting_csr',
   PENDING: 'pending',
   ISSUING: 'issuing',
   ISSUED: 'issued',
@@ -27,8 +33,16 @@ export const CONNECTOR_MIN_RENEWAL_WINDOW_DAYS = 30;
 
 export interface TlsCert {
   id: number;
-  rawCsr: string;
-  parsedCsr: ParsedCsr;
+  /** The CSR in PEM; null while the certificate is `awaiting_csr`. */
+  rawCsr: string | null;
+  /** The parsed CSR; null while the certificate is `awaiting_csr`. */
+  parsedCsr: ParsedCsr | null;
+  /**
+   * The names a certificate was created with when it was requested by
+   * names instead of a CSR (lowercased, duplicates removed). Kept after the
+   * connector's CSR arrives. Null for certificates requested with a CSR.
+   */
+  requestedNames: string[] | null;
   crtPem: string | null;
   chainPem: string | null;
   status: CertStatus;
@@ -60,20 +74,33 @@ export interface TlsCert {
    * window of at least 30 days; other certificates use the plan window and
    * only an early-replacement ARI window (ariReplacementRequestedAt set).
    * Null when the certificate has no expiry yet (not issued) or is revoked.
+   * For an `awaiting_csr` certificate it is the creation time: it is due now.
    */
   renewAfter: string | null;
   createdAt: string;
   userId: string;
 }
 
-export interface CreateTlsCertRequest {
-  csrPem: string;
-}
+/**
+ * Body for `POST /certs/tls`: either a CSR, or the names of a certificate a
+ * connector will issue with its own key (status `awaiting_csr`).
+ */
+export type CreateTlsCertRequest =
+  | { csrPem: string }
+  | {
+      /** DNS names (wildcards allowed), at most MAX_REQUESTED_NAMES. */
+      names: string[];
+      managedBy: 'connector';
+    };
+
+/** Most names a certificate can be requested with (Let's Encrypt's limit). */
+export const MAX_REQUESTED_NAMES = 100;
 
 /**
  * Optional body for `POST /certs/tls/:id/renew`. With `csrPem` the
  * certificate is renewed with that CSR (a new key); its names must equal the
- * certificate's names.
+ * certificate's names. An `awaiting_csr` certificate needs it: the CSR's
+ * names must equal `requestedNames`, and the certificate is then issued.
  */
 export interface RenewTlsCertRequest {
   csrPem?: string;

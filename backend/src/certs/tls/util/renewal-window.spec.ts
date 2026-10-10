@@ -30,6 +30,40 @@ describe('renewal window', () => {
   });
 
   describe('renewAfter', () => {
+    it('is the creation time for an awaiting_csr certificate: due now', () => {
+      const createdAt = new Date('2026-10-01T12:00:00.000Z');
+      expect(
+        renewAfter(
+          {
+            status: 'awaiting_csr',
+            expiresAt: null,
+            createdAt,
+            managedBy: 'connector',
+          },
+          30,
+        ),
+      ).toEqual(createdAt);
+      expect(
+        renewAfter(
+          {
+            status: 'awaiting_csr',
+            expiresAt: null,
+            createdAt: '2026-10-01T12:00:00.000Z',
+          },
+          30,
+        ),
+      ).toEqual(createdAt);
+    });
+
+    it('is null without an expiry for any other status', () => {
+      expect(
+        renewAfter(
+          { status: 'pending', expiresAt: null, createdAt: new Date() },
+          5,
+        ),
+      ).toBeNull();
+    });
+
     it('is expiry minus the window', () => {
       expect(renewAfter({ status: 'issued', expiresAt }, 5)).toEqual(
         daysBefore(5),

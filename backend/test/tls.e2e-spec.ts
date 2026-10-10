@@ -118,6 +118,84 @@ describe('TLS Certificates (e2e)', () => {
             { restrictToHostnames: undefined },
           );
         }));
+
+    it('passes names and managedBy through for a pending certificate', async () => {
+      mockTlsService.create.mockResolvedValueOnce({
+        id: 7,
+        status: 'awaiting_csr',
+      });
+
+      const res = await request(app.getHttpServer())
+        .post('/certs/tls')
+        .send({
+          names: ['example.com', '*.example.com'],
+          managedBy: 'connector',
+        })
+        .expect(201);
+
+      expect(res.body).toEqual({ id: 7, status: 'awaiting_csr' });
+      expect(mockTlsService.create).toHaveBeenLastCalledWith(
+        MOCK_USER.userId,
+        { names: ['example.com', '*.example.com'], managedBy: 'connector' },
+        { restrictToHostnames: undefined },
+      );
+    });
+
+    it('returns 400 for names that are not DNS names', async () => {
+      mockTlsService.create.mockClear();
+      const res = await request(app.getHttpServer())
+        .post('/certs/tls')
+        .send({ names: ['example.com', '10.0.0.1'], managedBy: 'connector' })
+        .expect(400);
+
+      expect(res.body.message).toContain(
+        'each name must be a DNS name, optionally starting with "*."',
+      );
+      expect(mockTlsService.create).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 for an empty names list', async () => {
+      mockTlsService.create.mockClear();
+      await request(app.getHttpServer())
+        .post('/certs/tls')
+        .send({ names: [], managedBy: 'connector' })
+        .expect(400);
+      expect(mockTlsService.create).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 when both or neither of csrPem and names are sent', async () => {
+      mockTlsService.create.mockClear();
+      const both = await request(app.getHttpServer())
+        .post('/certs/tls')
+        .send({
+          csrPem: MOCK_CSR_PEM,
+          names: ['example.com'],
+          managedBy: 'connector',
+        })
+        .expect(400);
+      expect(both.body.message).toContain(
+        'Send either csrPem or names, not both',
+      );
+
+      const neither = await request(app.getHttpServer())
+        .post('/certs/tls')
+        .send({ managedBy: 'connector' })
+        .expect(400);
+      expect(neither.body.message).toContain('csrPem or names is required');
+      expect(mockTlsService.create).not.toHaveBeenCalled();
+    });
+
+    it("returns 400 for names without managedBy: 'connector'", async () => {
+      mockTlsService.create.mockClear();
+      const res = await request(app.getHttpServer())
+        .post('/certs/tls')
+        .send({ names: ['example.com'] })
+        .expect(400);
+      expect(res.body.message).toContain(
+        "managedBy must be 'connector' when names is given",
+      );
+      expect(mockTlsService.create).not.toHaveBeenCalled();
+    });
   });
 
   // ─── GET /certs/tls ──────────────────────────────────────────────────────
@@ -153,6 +231,32 @@ describe('TLS Certificates (e2e)', () => {
           expect(res.body.id).toBe(1);
           expect(res.body.status).toBe('pending');
         }));
+
+    it('returns an awaiting_csr cert with its requested names', async () => {
+      const createdAt = '2026-10-01T12:00:00.000Z';
+      mockTlsService.findOne.mockResolvedValueOnce({
+        id: 7,
+        status: 'awaiting_csr',
+        parsedCsr: null,
+        requestedNames: ['example.com'],
+        managedBy: 'connector',
+        autoRenew: false,
+        createdAt,
+      });
+      mockTlsService.toResponse.mockImplementationOnce((cert: object) =>
+        Promise.resolve({ ...cert, renewAfter: createdAt }),
+      );
+
+      const res = await request(app.getHttpServer())
+        .get('/certs/tls/7')
+        .expect(200);
+      expect(res.body).toMatchObject({
+        status: 'awaiting_csr',
+        parsedCsr: null,
+        requestedNames: ['example.com'],
+        renewAfter: createdAt,
+      });
+    });
 
     it('returns 404 when cert not found', async () => {
       mockTlsService.findOne.mockRejectedValueOnce(
@@ -365,6 +469,32 @@ describe('TLS Certificates (e2e)', () => {
         .expect(400);
 
       expect(mockTlsService.renew).not.toHaveBeenCalled();
+    });
+
+    it('returns 201 with pending when a CSR completes an awaiting_csr cert', async () => {
+      mockTlsService.renew.mockResolvedValueOnce({
+        id: 7,
+        status: 'pending',
+        skipped: false,
+      });
+
+      const res = await request(app.getHttpServer())
+        .post('/certs/tls/7/renew?ifDue=true')
+        .send({ csrPem: MOCK_CSR_PEM })
+        .expect(201);
+
+      expect(res.body).toEqual({ id: 7, status: 'pending', skipped: false });
+    });
+
+    it('returns 400 for an awaiting_csr cert without a CSR', async () => {
+      mockTlsService.renew.mockRejectedValueOnce(
+        new BadRequestException('This certificate is waiting for a CSR'),
+      );
+
+      const res = await request(app.getHttpServer())
+        .post('/certs/tls/7/renew')
+        .expect(400);
+      expect(res.body.message).toBe('This certificate is waiting for a CSR');
     });
 
     it('returns 400 when cert not in issued state', async () => {

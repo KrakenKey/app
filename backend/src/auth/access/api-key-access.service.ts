@@ -5,13 +5,12 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
-import type { ParsedCsr } from '@krakenkey/shared';
 import { Domain } from '../../domains/entities/domain.entity';
+import { type ApiKeyContext, nameCovered } from '../api-key-restrictions';
 import {
-  type ApiKeyContext,
-  certDnsNames,
-  nameCovered,
-} from '../api-key-restrictions';
+  certNames,
+  type CertNamesInput,
+} from '../../certs/tls/util/cert-names';
 
 /** The part of req.user this service reads. */
 export interface KeyUser {
@@ -61,10 +60,7 @@ export class ApiKeyAccessService {
 
   // --- Certificates ---------------------------------------------------------
 
-  async canUseCert(
-    user: KeyUser,
-    cert: { id: number; parsedCsr?: ParsedCsr | null },
-  ): Promise<boolean> {
+  async canUseCert(user: KeyUser, cert: CertNamesInput): Promise<boolean> {
     const key = user.apiKey;
     if (!key) return true;
     if (key.allowedCertIds && !key.allowedCertIds.includes(cert.id)) {
@@ -72,14 +68,12 @@ export class ApiKeyAccessService {
     }
     const hostnames = await this.allowedHostnames(user);
     if (!hostnames) return true;
-    const names = certDnsNames(cert.parsedCsr);
+    // The CSR's names, or the requested names of an awaiting_csr certificate
+    const names = certNames(cert);
     return names.length > 0 && names.every((n) => nameCovered(n, hostnames));
   }
 
-  async assertCert(
-    user: KeyUser,
-    cert: { id: number; parsedCsr?: ParsedCsr | null },
-  ): Promise<void> {
+  async assertCert(user: KeyUser, cert: CertNamesInput): Promise<void> {
     if (!(await this.canUseCert(user, cert))) {
       throw new NotFoundException(
         `Certificate #${cert.id} not found or access denied`,
@@ -87,7 +81,7 @@ export class ApiKeyAccessService {
     }
   }
 
-  async filterCerts<T extends { id: number; parsedCsr?: ParsedCsr | null }>(
+  async filterCerts<T extends CertNamesInput>(
     user: KeyUser,
     certs: T[],
   ): Promise<T[]> {
