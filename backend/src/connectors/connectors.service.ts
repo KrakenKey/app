@@ -137,7 +137,11 @@ export class ConnectorsService {
     });
     await this.connectorRepo.save(connector);
     this.logger.log(`Connector ${connector.id} created by user ${userId}`);
-    return { connector: toDto(connector), enrollmentToken };
+    return {
+      connector: toDto(connector),
+      enrollmentToken,
+      expiresAt: connector.enrollmentTokenExpiresAt!.toISOString(),
+    };
   }
 
   /**
@@ -156,20 +160,27 @@ export class ConnectorsService {
       throw new ConflictException('This connector has already enrolled');
     }
     const enrollmentToken = newEnrollmentToken();
+    const expiresAt = tokenExpiry();
     const result = await this.connectorRepo.update(
       { id, userId, enrolledAt: IsNull(), revokedAt: IsNull() },
       {
         enrollmentTokenHash: this.authService.hmacSecret(enrollmentToken),
-        enrollmentTokenExpiresAt: tokenExpiry(),
+        enrollmentTokenExpiresAt: expiresAt,
       },
     );
     if (!result.affected) {
       // Enrolled or revoked since the read above
       throw new ConflictException('This connector has already enrolled');
     }
-    return { enrollmentToken };
+    return { enrollmentToken, expiresAt: expiresAt.toISOString() };
   }
 
+  /**
+   * Changes a connector's name, client label, scopes or restrictions.
+   * Scopes and restrictions get the same checks as at creation. Changing
+   * any of them revokes the connector's live keys, so its next key
+   * exchange carries the new limits.
+   */
   async update(
     userId: string,
     id: string,
@@ -179,15 +190,69 @@ export class ConnectorsService {
     if (connector.revokedAt) {
       throw new ConflictException('This connector has been revoked');
     }
-    const changes: { name?: string; clientLabel?: string | null } = {};
+    const changes: {
+      name?: string;
+      clientLabel?: string | null;
+      scopes?: ConnectorScope[];
+      allowedCertIds?: number[] | null;
+      allowedDomainIds?: string[] | null;
+    } = {};
     if (dto.name !== undefined) changes.name = dto.name;
     if (dto.clientLabel !== undefined) changes.clientLabel = dto.clientLabel;
+
+    if (dto.scopes !== undefined && dto.scopes !== null) {
+      const scopes = [...new Set(dto.scopes)];
+      if (!scopes.includes('certs:read')) {
+        throw new BadRequestException('scopes must include certs:read');
+      }
+      if (!sameSet(scopes, connector.scopes)) changes.scopes = scopes;
+    }
+    const certsGiven = dto.allowedCertIds !== undefined;
+    const domainsGiven = dto.allowedDomainIds !== undefined;
+    if (certsGiven || domainsGiven) {
+      // Only the lists being replaced are checked against the account
+      const limits = await this.authService.validateRestrictions(userId, {
+        allowedCertIds: dto.allowedCertIds ?? undefined,
+        allowedDomainIds: dto.allowedDomainIds ?? undefined,
+      });
+      const certIds = certsGiven
+        ? limits.allowedCertIds
+        : connector.allowedCertIds;
+      const domainIds = domainsGiven
+        ? limits.allowedDomainIds
+        : connector.allowedDomainIds;
+      if (!certIds && !domainIds) {
+        throw new BadRequestException(
+          'A connector must be limited to specific certificates or domains: keep allowedCertIds or allowedDomainIds',
+        );
+      }
+      if (certsGiven && !sameSet(certIds, connector.allowedCertIds)) {
+        changes.allowedCertIds = certIds;
+      }
+      if (domainsGiven && !sameSet(domainIds, connector.allowedDomainIds)) {
+        changes.allowedDomainIds = domainIds;
+      }
+    }
+
     if (Object.keys(changes).length) {
-      await this.connectorRepo.update(
+      const result = await this.connectorRepo.update(
         { id, userId, revokedAt: IsNull() },
         changes,
       );
+      if (!result.affected) {
+        throw new ConflictException('This connector has been revoked');
+      }
       Object.assign(connector, changes);
+    }
+    const limitsChanged =
+      'scopes' in changes ||
+      'allowedCertIds' in changes ||
+      'allowedDomainIds' in changes;
+    if (limitsChanged) {
+      const keys = await this.authService.revokeConnectorKeys(id);
+      this.logger.log(
+        `Connector ${id} limits changed by user ${userId}; ${keys} live key(s) revoked`,
+      );
     }
     return toDto(connector);
   }
@@ -456,6 +521,13 @@ export class ConnectorsService {
   }
 }
 
+/** Same members, ignoring order; null and [] both mean "none". */
+function sameSet<T>(a: T[] | null, b: T[] | null): boolean {
+  const x = new Set(a ?? []);
+  const y = new Set(b ?? []);
+  return x.size === y.size && [...x].every((v) => y.has(v));
+}
+
 function tokenExpiry(): Date {
   return new Date(Date.now() + CONNECTOR_ENROLLMENT_TOKEN_TTL_SECONDS * 1000);
 }
@@ -469,6 +541,10 @@ export function toDto(c: Connector): ConnectorDto {
     allowedCertIds: c.allowedCertIds,
     allowedDomainIds: c.allowedDomainIds,
     enrolledAt: c.enrolledAt ? c.enrolledAt.toISOString() : null,
+    enrollmentTokenExpiresAt:
+      !c.enrolledAt && !c.revokedAt && c.enrollmentTokenExpiresAt
+        ? c.enrollmentTokenExpiresAt.toISOString()
+        : null,
     revokedAt: c.revokedAt ? c.revokedAt.toISOString() : null,
     lastSeenAt: c.lastSeenAt ? c.lastSeenAt.toISOString() : null,
     version: c.version,

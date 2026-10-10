@@ -149,6 +149,8 @@ describe('ConnectorsService', () => {
         revokedAt: null,
       });
       expect(res.connector).not.toHaveProperty('enrollmentTokenHash');
+      expect(res.expiresAt).toBe(saved.enrollmentTokenExpiresAt.toISOString());
+      expect(res.connector.enrollmentTokenExpiresAt).toBe(res.expiresAt);
     });
 
     it('requires certs:read', async () => {
@@ -200,6 +202,9 @@ describe('ConnectorsService', () => {
       row = enrolled({ enrolledAt: null, publicKey: null });
       const res = await svc.reissueEnrollmentToken('u1', ID);
       expect(res.enrollmentToken).toMatch(/^kkce_/);
+      expect(Date.parse(res.expiresAt) - Date.now()).toBeGreaterThan(
+        24 * 3600_000 - 5000,
+      );
       expect(repo.update).toHaveBeenCalledWith(
         expect.objectContaining({ id: ID, userId: 'u1' }),
         expect.objectContaining({
@@ -228,6 +233,108 @@ describe('ConnectorsService', () => {
       await expect(svc.reissueEnrollmentToken('u2', ID)).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  describe('enrollmentTokenExpiresAt', () => {
+    it('is shown only while a token can still be used', async () => {
+      const at = new Date('2026-10-11T00:00:00Z');
+      row = enrolled({ enrolledAt: null, enrollmentTokenExpiresAt: at });
+      expect((await svc.get('u1', ID)).enrollmentTokenExpiresAt).toBe(
+        '2026-10-11T00:00:00.000Z',
+      );
+      row = enrolled({ enrollmentTokenExpiresAt: at });
+      expect((await svc.get('u1', ID)).enrollmentTokenExpiresAt).toBeNull();
+      row = enrolled({
+        enrolledAt: null,
+        revokedAt: new Date(),
+        enrollmentTokenExpiresAt: at,
+      });
+      expect((await svc.get('u1', ID)).enrollmentTokenExpiresAt).toBeNull();
+    });
+  });
+
+  describe('update restrictions', () => {
+    it('replaces certificate ids after checking them and revokes live keys', async () => {
+      const res = await svc.update('u1', ID, { allowedCertIds: [8, 9] });
+      expect(auth.validateRestrictions).toHaveBeenCalledWith('u1', {
+        allowedCertIds: [8, 9],
+        allowedDomainIds: undefined,
+      });
+      expect(repo.update).toHaveBeenCalledWith(
+        { id: ID, userId: 'u1', revokedAt: expect.anything() },
+        { allowedCertIds: [8, 9] },
+      );
+      expect(auth.revokeConnectorKeys).toHaveBeenCalledWith(ID);
+      expect(res.allowedCertIds).toEqual([8, 9]);
+    });
+
+    it('swaps a certificate restriction for a domain restriction', async () => {
+      const d = '11111111-1111-4111-8111-111111111111';
+      await svc.update('u1', ID, {
+        allowedCertIds: null,
+        allowedDomainIds: [d],
+      });
+      expect(repo.update).toHaveBeenCalledWith(expect.anything(), {
+        allowedCertIds: null,
+        allowedDomainIds: [d],
+      });
+      expect(auth.revokeConnectorKeys).toHaveBeenCalled();
+    });
+
+    it('refuses removing the last restriction', async () => {
+      for (const dto of [
+        { allowedCertIds: [] },
+        { allowedCertIds: null },
+        { allowedCertIds: null, allowedDomainIds: null },
+      ]) {
+        await expect(svc.update('u1', ID, dto as any)).rejects.toThrow(
+          BadRequestException,
+        );
+      }
+      expect(repo.update).not.toHaveBeenCalled();
+      expect(auth.revokeConnectorKeys).not.toHaveBeenCalled();
+    });
+
+    it('changes scopes, requiring certs:read', async () => {
+      await expect(
+        svc.update('u1', ID, { scopes: ['certs:renew'] }),
+      ).rejects.toThrow('scopes must include certs:read');
+      await svc.update('u1', ID, { scopes: ['certs:read'] });
+      expect(repo.update).toHaveBeenCalledWith(expect.anything(), {
+        scopes: ['certs:read'],
+      });
+      expect(auth.revokeConnectorKeys).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps keys when nothing that limits them changes', async () => {
+      await svc.update('u1', ID, {
+        name: 'renamed',
+        scopes: ['certs:renew', 'certs:read'],
+        allowedCertIds: [7],
+      });
+      expect(repo.update).toHaveBeenCalledWith(expect.anything(), {
+        name: 'renamed',
+      });
+      expect(auth.revokeConnectorKeys).not.toHaveBeenCalled();
+    });
+
+    it('refuses foreign ids', async () => {
+      auth.validateRestrictions.mockRejectedValueOnce(
+        new BadRequestException('Unknown certificate id(s): 99'),
+      );
+      await expect(
+        svc.update('u1', ID, { allowedCertIds: [99] }),
+      ).rejects.toThrow('Unknown certificate id(s): 99');
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it('409s when the connector was revoked meanwhile', async () => {
+      repo.update.mockResolvedValueOnce({ affected: 0 });
+      await expect(
+        svc.update('u1', ID, { allowedCertIds: [8] }),
+      ).rejects.toThrow(ConflictException);
+      expect(auth.revokeConnectorKeys).not.toHaveBeenCalled();
     });
   });
 

@@ -125,6 +125,45 @@ export class UpdateConnectorDto {
     message: DISPLAY_TEXT_MESSAGE('clientLabel'),
   })
   clientLabel?: string | null;
+
+  @ApiPropertyOptional({
+    enum: CONNECTOR_SCOPES,
+    isArray: true,
+    description:
+      'Replaces the scopes. Must include certs:read. Changing it revokes live keys.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayUnique()
+  @IsIn(CONNECTOR_SCOPES, { each: true })
+  scopes?: ConnectorScope[];
+
+  @ApiPropertyOptional({
+    type: [Number],
+    nullable: true,
+    description:
+      'Replaces the certificate restriction; [] or null clears it. At least one restriction must remain. Changing it revokes live keys.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(API_KEY_RESTRICTION_LIMITS.certs)
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  @Max(MAX_INT4, { each: true })
+  allowedCertIds?: number[] | null;
+
+  @ApiPropertyOptional({
+    type: [String],
+    nullable: true,
+    description:
+      'Replaces the domain restriction; [] or null clears it. At least one restriction must remain. Changing it revokes live keys.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(API_KEY_RESTRICTION_LIMITS.domains)
+  @IsUUID('all', { each: true })
+  allowedDomainIds?: string[] | null;
 }
 
 export class ConnectorEnrollDto {
