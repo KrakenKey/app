@@ -1,0 +1,102 @@
+import { REPORT_HOST_LIMITS } from '../types/report';
+import type { SubscriptionPlan } from '../types/subscription';
+
+/**
+ * What each plan allows. The API enforces these, and the dashboard reads the
+ * same numbers to show usage on the billing page. `Infinity` means unlimited.
+ * Resource counts are pooled across an organization's members.
+ */
+export interface PlanLimits {
+  domains: number;
+  apiKeys: number;
+  certsPerMonth: number;
+  totalActiveCerts: number;
+  concurrentPending: number;
+  renewalWindowDays: number;
+  monitoredEndpoints: number;
+  minScanInterval: number; // minutes
+  hostedProbeRegions: number;
+  hostedMonitoredEndpoints: number;
+  hostedScanInterval: number; // minutes, 0 = unavailable
+  scanResultRetentionDays: number;
+  /** Most hosts in one portfolio report (shared REPORT_HOST_LIMITS) */
+  reportHosts: number;
+}
+
+export const PLAN_LIMITS: Record<SubscriptionPlan, PlanLimits> = {
+  free: {
+    domains: 3,
+    apiKeys: 2,
+    certsPerMonth: 5,
+    totalActiveCerts: 10,
+    concurrentPending: 2,
+    renewalWindowDays: 5,
+    monitoredEndpoints: 3,
+    minScanInterval: 60,
+    hostedProbeRegions: 0,
+    hostedMonitoredEndpoints: 0,
+    hostedScanInterval: 0,
+    scanResultRetentionDays: 5,
+    reportHosts: REPORT_HOST_LIMITS.free,
+  },
+  starter: {
+    domains: 10,
+    apiKeys: 5,
+    certsPerMonth: 50,
+    totalActiveCerts: 75,
+    concurrentPending: 5,
+    renewalWindowDays: 30,
+    monitoredEndpoints: 10,
+    minScanInterval: 30,
+    hostedProbeRegions: 2,
+    hostedMonitoredEndpoints: 5,
+    hostedScanInterval: 30,
+    scanResultRetentionDays: 30,
+    reportHosts: REPORT_HOST_LIMITS.starter,
+  },
+  team: {
+    domains: 25,
+    apiKeys: 10,
+    certsPerMonth: 250,
+    totalActiveCerts: 375,
+    concurrentPending: 25,
+    renewalWindowDays: 30,
+    monitoredEndpoints: 50,
+    minScanInterval: 5,
+    hostedProbeRegions: 5,
+    hostedMonitoredEndpoints: 25,
+    hostedScanInterval: 15,
+    scanResultRetentionDays: 90,
+    reportHosts: REPORT_HOST_LIMITS.team,
+  },
+  business: {
+    domains: 75,
+    apiKeys: 25,
+    certsPerMonth: 1000,
+    totalActiveCerts: 1500,
+    concurrentPending: 100,
+    renewalWindowDays: 30,
+    monitoredEndpoints: 200,
+    minScanInterval: 1,
+    hostedProbeRegions: 15,
+    hostedMonitoredEndpoints: 100,
+    hostedScanInterval: 5,
+    scanResultRetentionDays: 90,
+    reportHosts: REPORT_HOST_LIMITS.business,
+  },
+  enterprise: {
+    domains: Infinity,
+    apiKeys: Infinity,
+    certsPerMonth: Infinity,
+    totalActiveCerts: Infinity,
+    concurrentPending: Infinity,
+    renewalWindowDays: 30,
+    monitoredEndpoints: Infinity,
+    minScanInterval: 1,
+    hostedProbeRegions: Infinity,
+    hostedMonitoredEndpoints: Infinity,
+    hostedScanInterval: 1,
+    scanResultRetentionDays: 90,
+    reportHosts: REPORT_HOST_LIMITS.enterprise,
+  },
+} as const;
