@@ -8,3 +8,4 @@ export { Modal } from './Modal';
 export { RowMenu } from './Menu';
 export { EmptyState } from './EmptyState';
 export { PageHeader } from './PageHeader';
+export { Switch } from './Switch';
