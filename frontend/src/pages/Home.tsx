@@ -18,7 +18,7 @@ const POINTS = [
   {
     icon: Plug,
     title: 'Renew and deploy on site',
-    body: 'Connectors rotate keys and update IIS, nginx and HAProxy for you.',
+    body: 'Connectors renew with new keys and deploy to your servers, Azure and AWS.',
   },
 ];
 
