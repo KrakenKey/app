@@ -19,6 +19,7 @@ import * as endpointService from '../services/endpointService';
 import * as connectorService from '../services/connectorService';
 import * as domainService from '../services/domainService';
 import type { ProbeOption } from '../services/endpointService';
+import { useAuth } from '../hooks/useAuth';
 import {
   computeAttention,
   countByArea,
@@ -43,7 +44,7 @@ export interface HealthContextValue {
   loading: boolean;
   checkedAt: Date | null;
   /** Refetch; with `maxAgeMs`, only when the last fetch is older than that. */
-  refresh: (maxAgeMs?: number) => void;
+  refresh: (maxAgeMs?: number) => Promise<void>;
 }
 
 const EMPTY_AREAS = countByArea([]);
@@ -54,7 +55,7 @@ export const HealthContext = createContext<HealthContextValue>({
   byArea: EMPTY_AREAS,
   loading: false,
   checkedAt: null,
-  refresh: () => {},
+  refresh: async () => {},
 });
 
 async function loadHealth(): Promise<HealthData> {
@@ -107,7 +108,12 @@ export function HealthProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
-  const items = useMemo(() => (data ? computeAttention(data) : []), [data]);
+  const { user } = useAuth();
+  const plan = (user as { plan?: string } | null)?.plan ?? null;
+  const items = useMemo(
+    () => (data ? computeAttention({ ...data, plan }) : []),
+    [data, plan],
+  );
   const byArea = useMemo(() => countByArea(items), [items]);
 
   const value = useMemo(

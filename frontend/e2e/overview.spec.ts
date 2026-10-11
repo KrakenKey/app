@@ -25,7 +25,7 @@ test.describe('Dashboard overview', () => {
 
     await page.goto('/dashboard');
 
-    // KPI tiles link to their pages and lead with the pooled count
+    // KPI cells link to their pages and lead with the pooled count
     await expect(
       page.getByRole('link', { name: /^Domains\s*5/ }),
     ).toBeVisible();
@@ -34,12 +34,27 @@ test.describe('Dashboard overview', () => {
     ).toBeVisible();
   });
 
-  test('quick action buttons navigate to correct pages', async ({ page }) => {
+  test('header actions navigate to the right pages', async ({ page }) => {
     await authenticateAs(page);
+    await mockHealthLists(page);
 
     await page.goto('/dashboard');
-    await page.getByRole('link', { name: /add domain/i }).click();
+    await page.getByRole('button', { name: /add domain/i }).click();
     await expect(page).toHaveURL(/\/dashboard\/domains/);
+  });
+
+  test('shows an all clear state with no problems', async ({ page }) => {
+    await authenticateAs(page, {
+      resourceCounts: { domains: 1, certificates: 1, apiKeys: 0 },
+    });
+    await mockHealthLists(page);
+
+    await page.goto('/dashboard');
+
+    await expect(page.getByText('All clear')).toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: /needs attention/i }),
+    ).toBeVisible();
   });
 
   test('shows auto-renewal banner for free users needing confirmation', async ({
