@@ -2,22 +2,25 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Building2,
   Plus,
-  Trash2,
+  UserMinus,
   UserPlus,
   CreditCard,
   Settings,
   Crown,
+  LogOut,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { toast } from '../utils/toast';
 import { useActionSet } from '../hooks/useActionSet';
 import * as orgService from '../services/organizationService';
-import type { Organization } from '../services/organizationService';
+import type { Organization, OrgMember } from '../services/organizationService';
 import type { OrgRole } from '@krakenkey/shared';
-import { Card } from '../components/ui/Card';
+import { Card, CardHeader } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
+import { Select } from '../components/ui/Select';
+import { RowMenu } from '../components/ui/Menu';
 import { Badge } from '../components/ui/Badge';
 import { Modal } from '../components/ui/Modal';
 import { PageHeader } from '../components/ui/PageHeader';
@@ -30,15 +33,47 @@ import {
   TableCell,
 } from '../components/ui/Table';
 
+// Roles are not statuses: the owner gets the brand tone, everyone else is
+// neutral, so nothing here reads as a warning.
 const ROLE_BADGE: Record<
   OrgRole,
-  { label: string; variant: 'accent' | 'info' | 'neutral' }
+  { label: string; variant: 'accent' | 'neutral' }
 > = {
   owner: { label: 'Owner', variant: 'accent' },
-  admin: { label: 'Admin', variant: 'info' },
+  admin: { label: 'Admin', variant: 'neutral' },
   member: { label: 'Member', variant: 'neutral' },
   viewer: { label: 'Viewer', variant: 'neutral' },
 };
+
+const ASSIGNABLE_ROLES: {
+  value: Exclude<OrgRole, 'owner'>;
+  label: string;
+  description: string;
+}[] = [
+  {
+    value: 'admin',
+    label: 'Admin',
+    description: 'Full access except ownership',
+  },
+  {
+    value: 'member',
+    label: 'Member',
+    description: 'Can create and manage resources',
+  },
+  { value: 'viewer', label: 'Viewer', description: 'Read-only access' },
+];
+
+/** The name to show for a member: display name, else username. */
+function memberName(member: OrgMember): string {
+  return member.displayName?.trim() || member.username;
+}
+
+function initials(name: string): string {
+  const parts = name.split(/[\s._@-]+/).filter(Boolean);
+  const letters =
+    parts.length > 1 ? parts[0][0] + parts[1][0] : name.slice(0, 2);
+  return letters.toUpperCase();
+}
 
 const ORG_ELIGIBLE_PLANS = new Set(['team', 'business', 'enterprise']);
 
@@ -263,7 +298,7 @@ export default function Organizations() {
     );
   }
 
-  // Not on an eligible plan and not in an org — show upsell
+  // Not on an eligible plan and not in an org: show upsell
   if (!user?.organizationId && !ORG_ELIGIBLE_PLANS.has(user?.plan ?? '')) {
     return (
       <div>
@@ -292,7 +327,7 @@ export default function Organizations() {
     );
   }
 
-  // Eligible but no org yet — show create form
+  // Eligible but no org yet: show create form
   if (!user?.organizationId) {
     return (
       <div>
@@ -327,32 +362,33 @@ export default function Organizations() {
     );
   }
 
-  // In an org — show details and member management
+  // In an org: show details and member management
+  const memberCount = org?.members.length ?? 0;
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
         title={org?.name ?? 'Organization'}
         description="Manage your organization members and roles."
         icon={<Building2 className="w-6 h-6" />}
+        actions={
+          canManage && (
+            <Button
+              variant="primary"
+              icon={<UserPlus className="w-4 h-4" />}
+              onClick={() => setInviteOpen(true)}
+            >
+              Invite member
+            </Button>
+          )
+        }
       />
 
       {/* Members */}
-      <Card>
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-medium text-zinc-400">
-            Members ({org?.members.length ?? 0})
-          </h3>
-          {canManage && (
-            <Button
-              variant="primary"
-              size="sm"
-              icon={<UserPlus className="w-3.5 h-3.5" />}
-              onClick={() => setInviteOpen(true)}
-            >
-              Invite Member
-            </Button>
-          )}
-        </div>
+      <Card flush>
+        <CardHeader
+          title="Members"
+          description={`${memberCount} ${memberCount === 1 ? 'member' : 'members'}`}
+        />
 
         {!org?.members.length ? (
           <EmptyState
@@ -365,75 +401,92 @@ export default function Organizations() {
             <TableHeader>
               <TableHead>User</TableHead>
               <TableHead>Role</TableHead>
-              <TableHead>Actions</TableHead>
+              <TableHead className="w-12">
+                <span className="sr-only">Actions</span>
+              </TableHead>
             </TableHeader>
             <tbody>
               {org.members.map((member) => {
                 const roleBadge = ROLE_BADGE[member.role];
+                const name = memberName(member);
                 const isSelf = member.id === user?.id;
                 const isOwnerMember = member.role === 'owner';
                 const canRemove = canManage && !isOwnerMember;
                 const canLeave = isSelf && !isOwnerMember;
                 const canChangeRole = canManage && !isOwnerMember && !isSelf;
+                const removing = removingIds.has(member.id);
+                const roleControl = canChangeRole ? (
+                  <Select
+                    size="sm"
+                    aria-label={`Role for ${name}`}
+                    value={member.role}
+                    disabled={updatingRoleIds.has(member.id)}
+                    onChange={(e) =>
+                      handleRoleChange(
+                        member.id,
+                        e.target.value as Exclude<OrgRole, 'owner'>,
+                      )
+                    }
+                    className="w-24 sm:w-28"
+                  >
+                    {ASSIGNABLE_ROLES.map((r) => (
+                      <option key={r.value} value={r.value}>
+                        {r.label}
+                      </option>
+                    ))}
+                  </Select>
+                ) : (
+                  <Badge variant={roleBadge.variant}>{roleBadge.label}</Badge>
+                );
 
                 return (
                   <TableRow key={member.id}>
                     <TableCell>
-                      <div>
-                        <p className="text-sm font-medium text-zinc-200">
-                          {member.displayName || member.username}
-                          {isSelf && (
-                            <span className="ml-2 text-xs text-zinc-500">
-                              (you)
-                            </span>
-                          )}
-                        </p>
-                        <p className="text-xs text-zinc-500">{member.email}</p>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span
+                          aria-hidden="true"
+                          className="hidden min-[420px]:flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-elevated text-[11px] font-semibold text-text-secondary ring-1 ring-inset ring-border-strong"
+                        >
+                          {initials(name)}
+                        </span>
+                        <div className="min-w-0 max-w-[9.5rem] min-[420px]:max-w-none">
+                          <p className="text-sm font-medium text-text truncate">
+                            {name}
+                            {isSelf && (
+                              <span className="ml-2 text-xs font-normal text-text-muted">
+                                (you)
+                              </span>
+                            )}
+                          </p>
+                          <p className="text-xs text-text-muted truncate">
+                            {member.email}
+                          </p>
+                        </div>
                       </div>
                     </TableCell>
-                    <TableCell>
-                      {canChangeRole ? (
-                        <select
-                          className="bg-zinc-950 border border-zinc-800 rounded px-2 py-0.5 text-xs text-zinc-300 focus:border-zinc-600 focus:outline-none disabled:opacity-50"
-                          value={member.role}
-                          disabled={updatingRoleIds.has(member.id)}
-                          onChange={(e) =>
-                            handleRoleChange(
-                              member.id,
-                              e.target.value as Exclude<OrgRole, 'owner'>,
-                            )
-                          }
-                        >
-                          <option value="admin">Admin</option>
-                          <option value="member">Member</option>
-                          <option value="viewer">Viewer</option>
-                        </select>
-                      ) : (
-                        <Badge variant={roleBadge.variant}>
-                          {roleBadge.label}
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell>
+                    <TableCell>{roleControl}</TableCell>
+                    <TableCell className="w-12 pl-0 text-right">
                       {(canRemove || canLeave) && (
-                        <Button
-                          size="sm"
-                          variant="danger"
-                          icon={<Trash2 className="w-3.5 h-3.5" />}
-                          onClick={() =>
-                            handleRemove(
-                              member.id,
-                              member.displayName || member.username,
-                            )
-                          }
-                          disabled={removingIds.has(member.id)}
-                        >
-                          {removingIds.has(member.id)
-                            ? 'Removing...'
-                            : isSelf
-                              ? 'Leave'
-                              : 'Remove'}
-                        </Button>
+                        <RowMenu
+                          label={`More actions for ${name}`}
+                          items={[
+                            {
+                              label: removing
+                                ? 'Removing...'
+                                : isSelf
+                                  ? 'Leave organization'
+                                  : 'Remove from organization',
+                              icon: isSelf ? (
+                                <LogOut className="w-4 h-4" />
+                              ) : (
+                                <UserMinus className="w-4 h-4" />
+                              ),
+                              danger: true,
+                              disabled: removing,
+                              onClick: () => handleRemove(member.id, name),
+                            },
+                          ]}
+                        />
                       )}
                     </TableCell>
                   </TableRow>
@@ -446,17 +499,20 @@ export default function Organizations() {
 
       {/* Settings (owner/admin only) */}
       {canManage && (
-        <Card>
-          <h3 className="text-sm font-medium text-zinc-400 mb-4 flex items-center gap-2">
-            <Settings className="w-4 h-4" />
-            Settings
-          </h3>
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-zinc-300">Rename organization</p>
-                <p className="text-xs text-zinc-500">Change the display name</p>
-              </div>
+        <Card flush>
+          <CardHeader
+            title={
+              <span className="flex items-center gap-2">
+                <Settings className="w-4 h-4 text-text-muted" />
+                Settings
+              </span>
+            }
+          />
+          <div className="divide-y divide-border-subtle">
+            <SettingRow
+              title="Rename organization"
+              description="Change the display name"
+            >
               <Button
                 size="sm"
                 variant="secondary"
@@ -467,18 +523,14 @@ export default function Organizations() {
               >
                 Rename
               </Button>
-            </div>
+            </SettingRow>
 
             {isOwner && (
               <>
-                <div className="border-t border-zinc-800" />
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-zinc-300">Transfer ownership</p>
-                    <p className="text-xs text-zinc-500">
-                      Assign a new owner — you become an admin
-                    </p>
-                  </div>
+                <SettingRow
+                  title="Transfer ownership"
+                  description="Assign a new owner. You become an admin."
+                >
                   <Button
                     size="sm"
                     variant="secondary"
@@ -487,16 +539,11 @@ export default function Organizations() {
                   >
                     Transfer
                   </Button>
-                </div>
-
-                <div className="border-t border-zinc-800" />
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-zinc-300">Delete organization</p>
-                    <p className="text-xs text-zinc-500">
-                      Permanently removes the org and removes all members
-                    </p>
-                  </div>
+                </SettingRow>
+                <SettingRow
+                  title="Delete organization"
+                  description="Permanently deletes the organization and removes all members"
+                >
                   <Button
                     size="sm"
                     variant="danger"
@@ -504,7 +551,7 @@ export default function Organizations() {
                   >
                     Delete
                   </Button>
-                </div>
+                </SettingRow>
               </>
             )}
           </div>
@@ -519,44 +566,10 @@ export default function Organizations() {
           setInviteEmail('');
           setInviteRole('member');
         }}
-        title="Invite Member"
-      >
-        <form onSubmit={handleInvite} className="flex flex-col gap-4">
-          <div>
-            <label className="block text-sm text-zinc-400 mb-1.5">
-              Email address
-            </label>
-            <Input
-              type="email"
-              placeholder="alice@example.com"
-              value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
-              disabled={inviting}
-            />
-            <p className="text-xs text-zinc-500 mt-1.5">
-              The user must have signed in at least once.
-            </p>
-          </div>
-          <div>
-            <label className="block text-sm text-zinc-400 mb-1.5">Role</label>
-            <select
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-300 focus:border-zinc-600 focus:ring-1 focus:ring-zinc-600 focus:outline-none"
-              value={inviteRole}
-              onChange={(e) =>
-                setInviteRole(e.target.value as Exclude<OrgRole, 'owner'>)
-              }
-              disabled={inviting}
-            >
-              <option value="admin">
-                Admin — full access except ownership
-              </option>
-              <option value="member">
-                Member — can create and manage resources
-              </option>
-              <option value="viewer">Viewer — read-only access</option>
-            </select>
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
+        title="Invite member"
+        description="They join with the role you pick. You can change it later."
+        footer={
+          <>
             <Button
               type="button"
               variant="ghost"
@@ -567,13 +580,50 @@ export default function Organizations() {
             </Button>
             <Button
               type="submit"
+              form="invite-member-form"
               variant="primary"
               icon={<UserPlus className="w-3.5 h-3.5" />}
               disabled={inviting || !inviteEmail.trim()}
             >
               {inviting ? 'Inviting...' : 'Invite'}
             </Button>
-          </div>
+          </>
+        }
+      >
+        <form
+          id="invite-member-form"
+          onSubmit={handleInvite}
+          aria-label="Invite member"
+          className="flex flex-col gap-4"
+        >
+          <Input
+            id="invite-email"
+            label="Email address"
+            type="email"
+            placeholder="alice@example.com"
+            value={inviteEmail}
+            onChange={(e) => setInviteEmail(e.target.value)}
+            disabled={inviting}
+            helpText="The user must have signed in at least once."
+          />
+          <Select
+            id="invite-role"
+            label="Role"
+            value={inviteRole}
+            onChange={(e) =>
+              setInviteRole(e.target.value as Exclude<OrgRole, 'owner'>)
+            }
+            disabled={inviting}
+            helpText={
+              ASSIGNABLE_ROLES.find((r) => r.value === inviteRole)?.description
+            }
+          >
+            {ASSIGNABLE_ROLES.map((r) => (
+              <option key={r.value} value={r.value}>
+                {r.label}
+              </option>
+            ))}
+          </Select>
         </form>
       </Modal>
 
@@ -718,6 +768,26 @@ export default function Organizations() {
           </div>
         </form>
       </Modal>
+    </div>
+  );
+}
+
+function SettingRow({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 px-5 py-4">
+      <div className="min-w-0">
+        <p className="text-sm text-text">{title}</p>
+        <p className="text-xs text-text-muted">{description}</p>
+      </div>
+      <div className="shrink-0">{children}</div>
     </div>
   );
 }

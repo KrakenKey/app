@@ -38,6 +38,15 @@ describe('SharedReport', () => {
     );
     expect(screen.getByText(/This link expires on/)).toBeInTheDocument();
     expect(
+      screen.getByRole('heading', { level: 1, name: 'Shared TLS report' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/^Generated \w{3} \d+, \d{4}$/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Generated with/)).toContainElement(
+      screen.getByRole('link', { name: 'KrakenKey' }),
+    );
+    expect(
       screen.queryByRole('button', { name: /share/i }),
     ).not.toBeInTheDocument();
     expect(

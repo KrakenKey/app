@@ -179,7 +179,7 @@ export function ReportView({
             <span>Created {formatDate(report.createdAt)}</span>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 print:hidden">
           <Button
             variant="outline"
             size="sm"
@@ -287,7 +287,7 @@ export function ReportView({
       </Card>
 
       <div
-        className="flex flex-wrap items-center gap-2"
+        className="flex flex-wrap items-center gap-2 print:hidden"
         role="group"
         aria-label="Filter by severity"
       >
