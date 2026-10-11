@@ -123,10 +123,24 @@ describe('groupByConnector', () => {
 });
 
 describe('setup instructions', () => {
-  it('enrolls with the token file and the config', () => {
-    expect(enrollCommand()).toContain(
-      'KK_ENROLLMENT_TOKEN_FILE=/etc/krakenkey-connector/enrollment-token \\\n  krakenkey-connector enroll --config /etc/krakenkey-connector/config.yaml',
+  it('enrolls as the service user with the token file and the config', () => {
+    const text = enrollCommand();
+    expect(text).toContain(
+      'sudo -u krakenkey-connector env KK_ENROLLMENT_TOKEN_FILE=/etc/krakenkey-connector/enrollment-token \\\n  krakenkey-connector enroll --config /etc/krakenkey-connector/config.yaml',
     );
+    // readable by the service user's group, never by others
+    expect(text).toContain(
+      'install -m 0640 -g krakenkey-connector /dev/null /etc/krakenkey-connector/enrollment-token',
+    );
+  });
+
+  it('gives the token file to the image user before enrolling in Docker', () => {
+    const text = dockerCommands();
+    const install = text.indexOf(
+      'install -m 0600 -o 10001 /dev/null /etc/krakenkey-connector/enrollment-token',
+    );
+    expect(install).toBeGreaterThan(-1);
+    expect(install).toBeLessThan(text.indexOf('docker run --rm'));
   });
 
   it('mounts the same data volume to enroll and run in Docker', () => {
