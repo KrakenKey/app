@@ -658,8 +658,9 @@ export class TlsService {
       if (skip) return skip;
     }
 
-    // Plan-based limit checks (renewals count against monthly cert limit)
-    await this.enforceCertLimits(userId);
+    // A renewal replaces a certificate rather than adding one, so only the
+    // in-flight limit applies
+    await this.enforceCertLimits(userId, { renewal: true });
 
     // The new CSR is only stored once the renewal is certain to be queued
     await this.TlsCrtRepository.update(cert.id, {
@@ -876,36 +877,6 @@ export class TlsService {
       return;
     }
 
-    // Silently skip if monthly cert limit reached (don't throw for auto-renewal)
-    const plan = (await this.billingService.resolveUserTier(
-      cert.userId,
-    )) as SubscriptionPlan;
-    const limits = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
-    if (limits.certsPerMonth !== Infinity) {
-      const memberIds = await this.billingService.getResourceCountUserIds(
-        cert.userId,
-      );
-      const monthlyCount = await this.countCertsThisMonth(memberIds);
-      if (monthlyCount >= limits.certsPerMonth) {
-        this.logger.warn(
-          `Auto-renewal skipped for cert #${id}: monthly limit reached (${monthlyCount}/${limits.certsPerMonth}, plan=${plan})`,
-        );
-        // Notify user that auto-renewal was skipped due to plan limit
-        if (cert.user) {
-          await this.emailService.sendPlanLimitReached({
-            userId: cert.user.id,
-            username: cert.user.username,
-            email: cert.user.email,
-            plan,
-            resourceType: 'Monthly certificates (renewal skipped)',
-            current: monthlyCount,
-            limit: limits.certsPerMonth,
-          });
-        }
-        return;
-      }
-    }
-
     await this.TlsCrtRepository.update(cert.id, {
       status: CertStatus.RENEWING,
       renewalCount: cert.renewalCount + 1,
@@ -929,10 +900,16 @@ export class TlsService {
    * `concurrentPending: false` skips the concurrent pending check, for a
    * request that queues nothing. `excludeCertId` leaves a certificate out of
    * the total active and monthly counts, for one that is already counted.
+   * `renewal` skips both counts: a renewal replaces a certificate rather than
+   * adding one, so a user at their cap can still renew.
    */
   private async enforceCertLimits(
     userId: string,
-    opts: { concurrentPending?: boolean; excludeCertId?: number } = {},
+    opts: {
+      concurrentPending?: boolean;
+      excludeCertId?: number;
+      renewal?: boolean;
+    } = {},
   ): Promise<void> {
     const plan = (await this.billingService.resolveUserTier(
       userId,
@@ -970,7 +947,7 @@ export class TlsService {
 
     // Total active certs check: issued, plus awaiting_csr, which hold a
     // place until the connector completes or the user deletes them
-    if (limits.totalActiveCerts !== Infinity) {
+    if (!opts.renewal && limits.totalActiveCerts !== Infinity) {
       const activeCount = await this.TlsCrtRepository.count({
         where: {
           userId: In(memberIds),
@@ -993,8 +970,8 @@ export class TlsService {
       }
     }
 
-    // Monthly cert count check
-    if (limits.certsPerMonth !== Infinity) {
+    // Monthly cert count check (new certificates only)
+    if (!opts.renewal && limits.certsPerMonth !== Infinity) {
       const monthlyCount = await this.countCertsThisMonth(
         memberIds,
         opts.excludeCertId,
