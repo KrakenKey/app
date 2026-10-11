@@ -46,12 +46,12 @@ test.describe('Error States', () => {
     });
 
     await page.goto('/dashboard/domains');
-    await page.waitForSelector('text=Add New Domain', { timeout: 5000 });
+    await page.getByRole('button', { name: 'Add domain' }).first().click();
 
     // Placeholder is "example.com"
-    const hostnameInput = page.getByPlaceholder('example.com');
-    await hostnameInput.fill('test.example.com');
-    await page.getByRole('button', { name: /add domain/i }).click();
+    const dialog = page.getByRole('dialog', { name: 'Add a domain' });
+    await dialog.getByPlaceholder('example.com').fill('test.example.com');
+    await dialog.getByRole('button', { name: 'Add domain' }).click();
 
     await expect(
       page.getByText(/rate limit|too many|slow down/i).first(),

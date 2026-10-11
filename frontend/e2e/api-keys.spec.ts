@@ -44,14 +44,20 @@ test.describe('API key management', () => {
 
     await page.goto('/dashboard/api-keys');
 
-    const nameInput = page.getByLabel('Name', { exact: true });
+    await page.getByRole('button', { name: 'Create API key' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Create API key' });
+    const nameInput = dialog.getByLabel('Name', { exact: true });
+    await expect(nameInput).toBeFocused();
     await nameInput.fill('new-key');
-    await page.getByRole('button', { name: /create/i }).click();
+    await dialog.getByRole('button', { name: 'Create key' }).click();
 
-    // The newly created key should be shown
+    // The dialog closes and the one-time key is shown on the page
+    await expect(dialog).toHaveCount(0);
+    const reveal = page.getByRole('status', { name: 'New API key' });
     await expect(
-      page.getByText('kk_live_abc123xyz789_secretvalue'),
+      reveal.getByText('kk_live_abc123xyz789_secretvalue'),
     ).toBeVisible();
+    await expect(reveal).toContainText('will not be shown again');
   });
 
   test('can copy the newly created key', async ({ page }) => {
@@ -71,17 +77,23 @@ test.describe('API key management', () => {
       return route.fulfill({ status: 200, json: mockApiKeys });
     });
 
+    await page
+      .context()
+      .grantPermissions(['clipboard-read', 'clipboard-write']);
     await page.goto('/dashboard/api-keys');
-    const nameInput = page.getByLabel('Name', { exact: true });
-    await nameInput.fill('copy-test');
-    await page.getByRole('button', { name: /create/i }).click();
+    await page.getByRole('button', { name: 'Create API key' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Create API key' });
+    await dialog.getByLabel('Name', { exact: true }).fill('copy-test');
+    await dialog.getByRole('button', { name: 'Create key' }).click();
 
     await expect(page.getByText('kk_live_copy_me')).toBeVisible();
+    await page.getByRole('button', { name: 'Copy key' }).click();
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe('kk_live_copy_me');
 
-    const copyBtn = page.getByRole('button', { name: /copy/i }).first();
-    if (await copyBtn.isVisible()) {
-      await copyBtn.click();
-    }
+    await page.getByRole('button', { name: 'Dismiss' }).click();
+    await expect(page.getByText('kk_live_copy_me')).toHaveCount(0);
   });
 
   test('shows last use and revoked keys', async ({ page }) => {
@@ -89,12 +101,19 @@ test.describe('API key management', () => {
 
     await expect(page.getByText('203.0.113.7')).toBeVisible();
     await expect(
-      page.getByText('Never', { exact: true }).first(),
+      page
+        .getByText('Never', { exact: true })
+        .filter({ visible: true })
+        .first(),
     ).toBeVisible();
-    await expect(page.getByText(/^Revoked \d/)).toBeVisible();
+    await expect(
+      page.getByText(/^Revoked [A-Z][a-z]{2} \d/).filter({ visible: true }),
+    ).toBeVisible();
     await expect(page.getByText('Your API Keys (2)')).toBeVisible();
-    // Only the two active keys can be revoked
-    await expect(page.getByRole('button', { name: /revoke/i })).toHaveCount(2);
+    // Only the two active keys have a menu with Revoke
+    await expect(
+      page.getByRole('button', { name: /^More actions for/ }),
+    ).toHaveCount(2);
   });
 
   test('creates a certificate renewal key limited to an IP', async ({
@@ -121,13 +140,16 @@ test.describe('API key management', () => {
     });
 
     await page.goto('/dashboard/api-keys');
-    // The GitHub trust policy form on the same page has the same controls.
+    await page.getByRole('button', { name: 'Create API key' }).click();
     const form = page.getByRole('form', { name: 'Create API key' });
     await form.getByLabel('Name', { exact: true }).fill('pfe-renewal');
     await form.getByRole('radio', { name: /certificate renewal/i }).check();
     await form.getByRole('button', { name: /restrictions/i }).click();
     await form.getByLabel(/allowed ips/i).fill('203.0.113.7');
-    await form.getByRole('button', { name: /create/i }).click();
+    await page
+      .getByRole('dialog', { name: 'Create API key' })
+      .getByRole('button', { name: 'Create key' })
+      .click();
 
     await expect(page.getByText('kk_live_renewal_only')).toBeVisible();
     expect(body).toMatchObject({
@@ -156,16 +178,19 @@ test.describe('API key management', () => {
 
     await page.goto('/dashboard/api-keys');
     await page
-      .getByRole('button', { name: /revoke/i })
+      .getByRole('button', { name: /^More actions for/ })
       .first()
       .click();
+    await page.getByRole('menuitem', { name: 'Revoke' }).click();
     const dialog = page.getByRole('dialog', { name: 'Revoke API key?' });
     await expect(dialog).toBeVisible();
     expect(revokeCalled).toBe(false);
     await dialog.getByRole('button', { name: 'Revoke key' }).click();
 
     await expect.poll(() => revokeCalled).toBe(true);
-    await expect(page.getByText(/^Revoked \d/)).toHaveCount(2);
+    await expect(
+      page.getByText(/^Revoked [A-Z][a-z]{2} \d/).filter({ visible: true }),
+    ).toHaveCount(2);
     await expect(page.getByText('Your API Keys (1)')).toBeVisible();
   });
 });

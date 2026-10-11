@@ -41,12 +41,16 @@ test.describe('GitHub Actions trust policies', () => {
     });
     await expect(section.getByText('pinned to repo id 123456')).toBeVisible();
 
+    await section.getByRole('button', { name: 'Add trust policy' }).click();
     const form = section.getByRole('form', { name: 'Add GitHub trust policy' });
     await form.getByLabel('Policy name').fill('api renewal');
     await form.getByLabel('Repository', { exact: true }).fill('octo/api');
     await form.getByLabel(/branches or tags/i).fill('refs/heads/main');
     await form.getByRole('radio', { name: /certificate renewal/i }).check();
-    await form.getByRole('button', { name: /add trust policy/i }).click();
+    await section
+      .getByRole('dialog', { name: 'Add trust policy' })
+      .getByRole('button', { name: 'Add policy' })
+      .click();
 
     const snippet = section.getByLabel('Workflow snippet');
     await expect(snippet).toContainText('id-token: write');

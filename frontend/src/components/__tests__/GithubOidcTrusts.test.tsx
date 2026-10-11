@@ -95,13 +95,15 @@ describe('GithubOidcTrusts', () => {
     const user = userEvent.setup();
     render(<GithubOidcTrusts />);
     await screen.findByText('website deploy');
+    await user.click(screen.getByRole('button', { name: 'Add trust policy' }));
+    expect(screen.getByLabelText('Policy name')).toHaveFocus();
     await user.type(screen.getByLabelText('Policy name'), 'api deploy');
     await user.type(screen.getByLabelText('Repository'), repo);
     return user;
   }
 
   const submit = (user: ReturnType<typeof userEvent.setup>) =>
-    user.click(screen.getByRole('button', { name: /add trust policy/i }));
+    user.click(screen.getByRole('button', { name: 'Add policy' }));
 
   it('sends only name and repository for a full-access policy', async () => {
     const user = await fillForm();
@@ -119,6 +121,7 @@ describe('GithubOidcTrusts', () => {
     expect(
       await screen.findByText('Trust Policies (3 of 20)'),
     ).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('sends refs, environment, preset scopes and domain limits', async () => {
@@ -247,9 +250,10 @@ describe('GithubOidcTrusts', () => {
     await screen.findByText('website deploy');
     await userEvent.click(
       screen.getByRole('button', {
-        name: 'Delete trust policy website deploy',
+        name: 'More actions for website deploy',
       }),
     );
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
     expect(deleted).toBeNull();
     await userEvent.click(
       await screen.findByRole('button', { name: 'Delete policy' }),
@@ -274,9 +278,10 @@ describe('GithubOidcTrusts', () => {
     await screen.findByText('website deploy');
     await userEvent.click(
       screen.getByRole('button', {
-        name: 'Delete trust policy website deploy',
+        name: 'More actions for website deploy',
       }),
     );
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
     await userEvent.click(
       await screen.findByRole('button', { name: 'Cancel' }),
     );
@@ -295,10 +300,10 @@ describe('GithubOidcTrusts', () => {
     await screen.findByText('policy 0');
 
     expect(
-      screen.getByRole('button', { name: /add trust policy/i }),
+      screen.getByRole('button', { name: 'Add trust policy' }),
     ).toBeDisabled();
     expect(
-      screen.getByText(/maximum of 20 trust policies/),
-    ).toBeInTheDocument();
+      screen.getAllByText(/maximum of 20 trust policies/).length,
+    ).toBeGreaterThan(0);
   });
 });

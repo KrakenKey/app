@@ -65,8 +65,15 @@ describe('ApiKeyManagement', () => {
     render(<ApiKeyManagement />);
 
     await screen.findByText('old-laptop');
-    expect(screen.getByText(/^Revoked \d/)).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: /revoke/i })).toHaveLength(1);
+    expect(
+      screen.getAllByText(/^Revoked Feb \d+, 2026$/).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getAllByRole('button', { name: /^More actions for/ }),
+    ).toHaveLength(1);
+    expect(
+      screen.getByRole('button', { name: 'More actions for ci-deploy' }),
+    ).toBeInTheDocument();
   });
 
   it('marks a key revoked in place after confirming', async () => {
@@ -79,7 +86,10 @@ describe('ApiKeyManagement', () => {
     );
     render(<ApiKeyManagement />);
     await screen.findByText('ci-deploy');
-    await userEvent.click(screen.getByRole('button', { name: /revoke/i }));
+    await userEvent.click(
+      screen.getByRole('button', { name: 'More actions for ci-deploy' }),
+    );
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Revoke' }));
     expect(deleted).toBeNull();
     await userEvent.click(
       await screen.findByRole('button', { name: 'Revoke key' }),
@@ -87,8 +97,34 @@ describe('ApiKeyManagement', () => {
 
     await waitFor(() => expect(deleted).toBe('k1'));
     expect(await screen.findByText('Your API Keys (0)')).toBeInTheDocument();
-    expect(screen.getAllByText(/^Revoked \d/)).toHaveLength(2);
-    expect(screen.queryByRole('button', { name: /revoke/i })).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: /^More actions for/ }),
+    ).toBeNull();
+  });
+
+  it('colors only keys that expire within 30 days', async () => {
+    const inDays = (d: number) =>
+      new Date(Date.now() + d * 86_400_000).toISOString();
+    server.use(
+      http.get(`${API_URL}/auth/api-keys`, () =>
+        HttpResponse.json([
+          { ...keys[0], id: 'a', name: 'soon', expiresAt: inDays(9.5) },
+          { ...keys[0], id: 'b', name: 'later', expiresAt: inDays(200.5) },
+          { ...keys[0], id: 'c', name: 'forever', expiresAt: null },
+        ]),
+      ),
+    );
+    render(<ApiKeyManagement />);
+    await screen.findByText('soon');
+
+    expect(screen.getAllByText('(9d)')[0]).toHaveClass('text-amber-300');
+    expect(screen.getAllByText('(200d)')[0]).not.toHaveClass('text-amber-300');
+    // "Never" is plain muted text, not a badge.
+    const never = screen.getAllByText('Never', { selector: 'span' });
+    expect(never.some((el) => el.classList.contains('text-text-muted'))).toBe(
+      true,
+    );
+    expect(never.some((el) => el.className.includes('ring-'))).toBe(false);
   });
 
   describe('access column', () => {
@@ -183,6 +219,8 @@ describe('ApiKeyManagement', () => {
       const user = userEvent.setup();
       render(<ApiKeyManagement />);
       await screen.findByText('ci-deploy');
+      await user.click(screen.getByRole('button', { name: 'Create API key' }));
+      expect(screen.getByLabelText('Name')).toHaveFocus();
       await user.type(screen.getByLabelText('Name'), 'deploy');
       return user;
     }
@@ -200,7 +238,9 @@ describe('ApiKeyManagement', () => {
       await submit(user);
 
       await waitFor(() => expect(posted).toEqual({ name: 'deploy' }));
-      expect(await screen.findByText('kk_new_key')).toBeInTheDocument();
+      const reveal = await screen.findByRole('status', { name: 'New API key' });
+      expect(within(reveal).getByText('kk_new_key')).toBeInTheDocument();
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
 
     it('sends the scopes of the chosen preset', async () => {

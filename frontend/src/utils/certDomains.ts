@@ -1,4 +1,4 @@
-import type { TlsCert } from '@krakenkey/shared';
+import type { Domain, TlsCert } from '@krakenkey/shared';
 
 /**
  * The names a certificate covers: the CSR's CN and SANs, or, for a
@@ -71,4 +71,34 @@ export function parseNameList(text: string): {
     names,
     invalid: names.filter((n) => n.length > 253 || !DNS_NAME.test(n)),
   };
+}
+
+/**
+ * Certificates per registered domain, keyed by domain id. A certificate
+ * counts once for each domain that covers one of its names (the domain
+ * itself or a subdomain), using the most specific domain when registered
+ * domains nest. Revoked certificates are not counted.
+ */
+export function countCertsByDomain(
+  domains: readonly Pick<Domain, 'id' | 'hostname'>[],
+  certs: readonly TlsCert[],
+): Map<string, number> {
+  const byLength = [...domains].sort(
+    (a, b) => b.hostname.length - a.hostname.length,
+  );
+  const counts = new Map<string, number>(domains.map((d) => [d.id, 0]));
+  for (const cert of certs) {
+    if (cert.status === 'revoked') continue;
+    const owners = new Set<string>();
+    for (const raw of getCertDomains(cert)) {
+      const name = raw.toLowerCase().replace(/^\*\./, '');
+      const owner = byLength.find((d) => {
+        const host = d.hostname.toLowerCase();
+        return name === host || name.endsWith(`.${host}`);
+      });
+      if (owner) owners.add(owner.id);
+    }
+    for (const id of owners) counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  return counts;
 }

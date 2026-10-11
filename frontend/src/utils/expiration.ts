@@ -25,26 +25,32 @@ export function getExpirationInfo(cert: TlsCert): ExpirationInfo | null {
   return { expiresAt, daysUntilExpiry, isExpired, colorClass };
 }
 
-export interface ExpirationBadgeInfo {
+export interface KeyExpiry {
+  /** "Never", or the expiry date, e.g. "Jul 3, 2027". */
   label: string;
-  variant: 'success' | 'warning' | 'danger' | 'neutral';
+  /** Days left, shown next to the date. Null for keys that never expire. */
+  days: string | null;
+  /** Color only near expiry: muted beyond 30 days. */
+  tone: 'muted' | 'warning' | 'danger';
 }
 
-export function getExpirationBadge(
+/** Expiry of an API key, colored only when 30 days or less remain. */
+export function getKeyExpiry(
   expiresAt: string | null,
-): ExpirationBadgeInfo {
-  if (!expiresAt) return { label: 'Never', variant: 'neutral' };
+  now: number = Date.now(),
+): KeyExpiry {
+  if (!expiresAt) return { label: 'Never', days: null, tone: 'muted' };
   const expiry = new Date(expiresAt);
-  const now = new Date();
-  const daysLeft = Math.floor(
-    (expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
-  );
-
-  if (daysLeft < 0)
-    return { label: `Expired ${Math.abs(daysLeft)}d ago`, variant: 'danger' };
-  if (daysLeft < 7)
-    return { label: `${daysLeft}d remaining`, variant: 'danger' };
-  if (daysLeft <= 30)
-    return { label: `${daysLeft}d remaining`, variant: 'warning' };
-  return { label: expiry.toLocaleDateString(), variant: 'neutral' };
+  const daysLeft = Math.floor((expiry.getTime() - now) / 86_400_000);
+  const label = expiry.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  if (daysLeft < 0) return { label, days: 'expired', tone: 'danger' };
+  return {
+    label,
+    days: `${daysLeft}d`,
+    tone: daysLeft < 7 ? 'danger' : daysLeft <= 30 ? 'warning' : 'muted',
+  };
 }
