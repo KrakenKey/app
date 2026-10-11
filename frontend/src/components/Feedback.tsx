@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { MessageSquare, Check } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { MessageSquare, Check, Star } from 'lucide-react';
 import api from '../services/api';
 import { toast } from '../utils/toast';
 import { Card } from './ui/Card';
@@ -71,9 +71,10 @@ export default function Feedback() {
         icon={<MessageSquare className="w-6 h-6" />}
       />
 
-      <Card>
+      <Card className="max-w-2xl">
         <form onSubmit={handleSubmit}>
           <Textarea
+            aria-label="Your feedback"
             placeholder="Tell us what you think..."
             value={message}
             onChange={(e) => setMessage(e.target.value)}
@@ -81,36 +82,130 @@ export default function Feedback() {
             className="min-h-[100px]"
           />
 
-          <div className="mt-4">
-            <p className="text-sm font-medium text-zinc-300 mb-2">Rating</p>
-            <div className="flex gap-1">
-              {[1, 2, 3, 4, 5].map((star) => (
-                <button
-                  key={star}
-                  type="button"
-                  className={`text-2xl p-0.5 transition-colors cursor-pointer bg-transparent border-none ${
-                    star <= rating ? 'text-amber-400' : 'text-zinc-600'
-                  } hover:text-amber-400 disabled:cursor-not-allowed disabled:opacity-50`}
-                  onClick={() => setRating(star)}
-                  disabled={submitting}
-                  aria-label={`Rate ${star} star${star > 1 ? 's' : ''}`}
-                >
-                  ★
-                </button>
-              ))}
-            </div>
+          <div className="mt-5">
+            <p
+              id="feedback-rating-label"
+              className="text-sm font-medium text-text-secondary mb-2"
+            >
+              Rating
+            </p>
+            <StarRating
+              value={rating}
+              onChange={setRating}
+              disabled={submitting}
+              labelledBy="feedback-rating-label"
+            />
           </div>
 
           <Button
             type="submit"
             variant="primary"
             disabled={submitting}
-            className="mt-4"
+            className="mt-5"
           >
             {submitting ? 'Submitting...' : 'Submit Feedback'}
           </Button>
         </form>
       </Card>
+    </div>
+  );
+}
+
+const RATING_LABELS = ['Poor', 'Fair', 'Good', 'Very good', 'Excellent'];
+
+/**
+ * Five-star rating as a radio group: click or hover with the mouse, or use
+ * the arrow keys, Home and End once a star has focus.
+ */
+function StarRating({
+  value,
+  onChange,
+  disabled,
+  labelledBy,
+}: {
+  value: number;
+  onChange: (value: number) => void;
+  disabled?: boolean;
+  labelledBy: string;
+}) {
+  const [hover, setHover] = useState(0);
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const shown = hover || value;
+
+  const select = (next: number) => {
+    const clamped = Math.min(5, Math.max(1, next));
+    onChange(clamped);
+    refs.current[clamped - 1]?.focus();
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent, star: number) => {
+    switch (e.key) {
+      case 'ArrowRight':
+      case 'ArrowUp':
+        e.preventDefault();
+        select(star + 1);
+        break;
+      case 'ArrowLeft':
+      case 'ArrowDown':
+        e.preventDefault();
+        select(star - 1);
+        break;
+      case 'Home':
+        e.preventDefault();
+        select(1);
+        break;
+      case 'End':
+        e.preventDefault();
+        select(5);
+        break;
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-3">
+      <div
+        role="radiogroup"
+        aria-labelledby={labelledBy}
+        className="flex items-center gap-0.5"
+        onMouseLeave={() => setHover(0)}
+      >
+        {[1, 2, 3, 4, 5].map((star) => {
+          const filled = star <= shown;
+          // Only one star is in the tab order: the selected one, else the first.
+          const tabbable = value ? star === value : star === 1;
+          return (
+            <button
+              key={star}
+              ref={(el) => {
+                refs.current[star - 1] = el;
+              }}
+              type="button"
+              role="radio"
+              aria-checked={star === value}
+              aria-label={`${star} star${star > 1 ? 's' : ''}, ${RATING_LABELS[star - 1]}`}
+              tabIndex={tabbable ? 0 : -1}
+              disabled={disabled}
+              onClick={() => select(star)}
+              onMouseEnter={() => setHover(star)}
+              onKeyDown={(e) => onKeyDown(e, star)}
+              className="group rounded-md p-1 cursor-pointer transition-transform duration-100 hover:scale-110 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
+            >
+              <Star
+                aria-hidden="true"
+                strokeWidth={1.75}
+                className={`w-7 h-7 transition-colors duration-100 ${
+                  filled
+                    ? 'fill-amber-400 text-amber-400'
+                    : 'fill-transparent text-zinc-600 group-hover:text-zinc-400'
+                }`}
+              />
+            </button>
+          );
+        })}
+      </div>
+      <span className="text-sm text-text-muted min-w-20" aria-hidden="true">
+        {shown ? RATING_LABELS[shown - 1] : ''}
+      </span>
     </div>
   );
 }
