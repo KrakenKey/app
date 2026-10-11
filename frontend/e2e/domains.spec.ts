@@ -68,15 +68,15 @@ test.describe('Domain management', () => {
       .click();
   });
 
-  test('can delete a domain', async ({ page }) => {
+  test('can delete a domain after confirming', async ({ page }) => {
+    let deleteCalled = false;
     await page.route(api('/domains/dom_001'), (route) => {
       if (route.request().method() === 'DELETE') {
+        deleteCalled = true;
         return route.fulfill({ status: 200, json: { affected: 1 } });
       }
       return route.continue();
     });
-
-    page.on('dialog', (dialog) => dialog.accept());
 
     await page.goto('/dashboard/domains');
 
@@ -85,5 +85,34 @@ test.describe('Domain management', () => {
       .getByRole('button', { name: /delete/i })
       .first()
       .click();
+    const dialog = page.getByRole('dialog', { name: 'Delete domain?' });
+    await expect(dialog).toContainText('example.com');
+    // Cancel has focus, so a stray Enter does not delete
+    await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+    await dialog.getByRole('button', { name: 'Delete domain' }).click();
+
+    await expect.poll(() => deleteCalled).toBe(true);
+    await expect(dialog).toHaveCount(0);
+  });
+
+  test('keeps the domain when the confirmation is cancelled', async ({
+    page,
+  }) => {
+    let deleteCalled = false;
+    await page.route(api('/domains/dom_001'), (route) => {
+      if (route.request().method() === 'DELETE') deleteCalled = true;
+      return route.continue();
+    });
+
+    await page.goto('/dashboard/domains');
+    await page
+      .getByRole('button', { name: /delete/i })
+      .first()
+      .click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.keyboard.press('Escape');
+
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    expect(deleteCalled).toBe(false);
   });
 });

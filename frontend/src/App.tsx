@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { AuthProvider } from './context/AuthContext';
+import { ConfirmProvider } from './context/ConfirmContext';
 import { useAuth } from './hooks/useAuth';
 import { DomainsProvider } from './context/DomainsContext';
 import { DashboardLayout } from './layouts/DashboardLayout';
@@ -88,7 +89,9 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppRoutes />
+        <ConfirmProvider>
+          <AppRoutes />
+        </ConfirmProvider>
       </AuthProvider>
     </BrowserRouter>
   );

@@ -7,6 +7,7 @@ import { getExpirationBadge } from '../utils/expiration';
 import { copyToClipboard } from '../utils/clipboard';
 import { parseIpList } from '../utils/apiKeyAccess';
 import { useActionSet } from '../hooks/useActionSet';
+import { useConfirm } from '../hooks/useConfirm';
 import { useAccessForm } from '../hooks/useAccessForm';
 import * as apiKeyService from '../services/apiKeyService';
 import {
@@ -28,6 +29,7 @@ export default function ApiKeyManagement() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const revokingIds = useActionSet<string>();
+  const confirm = useConfirm();
   const [newKeyName, setNewKeyName] = useState('');
   const [newKeyExpiry, setNewKeyExpiry] = useState('');
   const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
@@ -115,13 +117,17 @@ export default function ApiKeyManagement() {
   };
 
   const handleRevoke = async (key: ApiKey) => {
-    if (
-      !confirm(
-        `Revoke API key "${key.name}"? Anything using it stops working immediately. This cannot be undone.`,
-      )
-    ) {
-      return;
-    }
+    const ok = await confirm({
+      title: 'Revoke API key?',
+      body: (
+        <>
+          Anything using <strong className="text-text">{key.name}</strong> stops
+          working immediately. This cannot be undone.
+        </>
+      ),
+      confirmLabel: 'Revoke key',
+    });
+    if (!ok) return;
 
     try {
       revokingIds.add(key.id);

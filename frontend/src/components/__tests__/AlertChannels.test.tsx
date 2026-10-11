@@ -1,4 +1,10 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import type { ReactElement } from 'react';
+import {
+  render as rtlRender,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { DEFAULT_ALERT_EVENTS } from '@krakenkey/shared';
@@ -8,7 +14,11 @@ import type {
 } from '@krakenkey/shared';
 import { server } from '../../test/mocks/server';
 import { API_URL } from '../../services/api';
+import { ConfirmProvider } from '../../context/ConfirmContext';
 import AlertChannels from '../AlertChannels';
+
+const render = (ui: ReactElement) =>
+  rtlRender(ui, { wrapper: ConfirmProvider });
 
 const { mockToast, mockCopy } = vi.hoisted(() => ({
   mockToast: {
@@ -81,7 +91,6 @@ async function fillCreateForm(
 describe('AlertChannels', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
   });
 
   afterEach(() => {
@@ -349,8 +358,11 @@ describe('AlertChannels', () => {
     render(<AlertChannels />);
 
     await user.click(await screen.findByRole('button', { name: 'Delete Ops' }));
+    expect(deleted).toBe(false);
+    await user.click(
+      await screen.findByRole('button', { name: 'Delete channel' }),
+    );
 
-    expect(window.confirm).toHaveBeenCalled();
     await waitFor(() => expect(deleted).toBe(true));
     await waitFor(() =>
       expect(
@@ -361,7 +373,6 @@ describe('AlertChannels', () => {
 
   it('does not delete when the confirmation is cancelled', async () => {
     const user = userEvent.setup();
-    vi.mocked(window.confirm).mockReturnValue(false);
     listReturns([channel()]);
     let deleted = false;
     server.use(
@@ -373,6 +384,7 @@ describe('AlertChannels', () => {
     render(<AlertChannels />);
 
     await user.click(await screen.findByRole('button', { name: 'Delete Ops' }));
+    await user.click(await screen.findByRole('button', { name: 'Cancel' }));
 
     expect(deleted).toBe(false);
     expect(screen.getByTestId('alert-channel-ch-1')).toBeInTheDocument();
@@ -392,6 +404,9 @@ describe('AlertChannels', () => {
 
     await user.click(
       await screen.findByRole('button', { name: 'Rotate secret for SIEM' }),
+    );
+    await user.click(
+      await screen.findByRole('button', { name: 'Rotate secret' }),
     );
 
     const reveal = await screen.findByTestId('webhook-secret');

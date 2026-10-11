@@ -120,8 +120,6 @@ describe('DomainManagement', () => {
 
   it('deletes a domain when confirmed', async () => {
     const user = userEvent.setup();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
-
     render(<DomainManagement />);
 
     await waitFor(() => {
@@ -130,6 +128,9 @@ describe('DomainManagement', () => {
 
     const deleteButtons = screen.getAllByText('Delete');
     await user.click(deleteButtons[0]);
+    await user.click(
+      await screen.findByRole('button', { name: 'Delete domain' }),
+    );
 
     await waitFor(() => {
       expect(screen.queryByText('example.com')).not.toBeInTheDocument();
@@ -140,8 +141,6 @@ describe('DomainManagement', () => {
 
   it('does not delete a domain when cancelled', async () => {
     const user = userEvent.setup();
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
-
     render(<DomainManagement />);
 
     await waitFor(() => {
@@ -150,6 +149,7 @@ describe('DomainManagement', () => {
 
     const deleteButtons = screen.getAllByText('Delete');
     await user.click(deleteButtons[0]);
+    await user.click(await screen.findByRole('button', { name: 'Cancel' }));
 
     expect(screen.getByText('example.com')).toBeInTheDocument();
 

@@ -1,5 +1,42 @@
-import { test, expect, authenticateAs } from './fixtures/auth';
+import { test, expect, authenticateAs, api } from './fixtures/auth';
 import { mockCertificates } from './fixtures/mock-data';
+
+/** API-shaped certificates for the row menu tests. */
+const baseCert = {
+  rawCsr: null,
+  parsedCsr: { subject: [{ shortName: 'CN', value: 'shop.example.com' }] },
+  crtPem: null,
+  chainPem: null,
+  lastRenewedAt: null,
+  autoRenew: true,
+  renewalCount: 0,
+  lastRenewalAttemptAt: null,
+  revocationReason: null,
+  failureReason: null,
+  revokedAt: null,
+  managedBy: 'krakenkey',
+  renewAfter: null,
+  requestedNames: null,
+  createdAt: '2026-09-01T00:00:00.000Z',
+  userId: 'usr_test_001',
+};
+const issuedCert = {
+  ...baseCert,
+  id: 51,
+  status: 'issued',
+  expiresAt: '2026-12-30T00:00:00.000Z',
+  crtPem: '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----',
+};
+const failedCert = {
+  ...baseCert,
+  id: 52,
+  status: 'failed',
+  expiresAt: null,
+  parsedCsr: {
+    subject: [{ shortName: 'CN', value: 'broken.example.com' }],
+  },
+  failureReason: 'DNS problem',
+};
 
 test.describe('Certificate management', () => {
   test.beforeEach(async ({ page }) => {
@@ -73,51 +110,6 @@ test.describe('Certificate management', () => {
     }
   });
 
-  test('can revoke an issued certificate', async ({ page }) => {
-    let revokeCalled = false;
-    await page.route('**/certificates/cert_001/revoke', (route) => {
-      revokeCalled = true;
-      return route.fulfill({
-        status: 200,
-        json: {
-          ...mockCertificates[0],
-          status: 'revoked',
-          revokedAt: new Date().toISOString(),
-        },
-      });
-    });
-
-    page.on('dialog', (dialog) => dialog.accept());
-
-    await page.goto('/dashboard/certificates');
-    const revokeBtn = page.getByRole('button', { name: /revoke/i }).first();
-    if (await revokeBtn.isVisible()) {
-      await revokeBtn.click();
-      await expect.poll(() => revokeCalled).toBe(true);
-    }
-  });
-
-  test('can delete a failed certificate', async ({ page }) => {
-    let deleteCalled = false;
-    await page.route('**/certificates/cert_002', (route) => {
-      if (route.request().method() === 'DELETE') {
-        deleteCalled = true;
-        return route.fulfill({ status: 200 });
-      }
-      return route.continue();
-    });
-
-    page.on('dialog', (dialog) => dialog.accept());
-
-    await page.goto('/dashboard/certificates');
-    // Find the failed cert's delete button
-    const deleteBtn = page.getByRole('button', { name: /delete/i }).first();
-    if (await deleteBtn.isVisible()) {
-      await deleteBtn.click();
-      await expect.poll(() => deleteCalled).toBe(true);
-    }
-  });
-
   test('can retry a failed certificate', async ({ page }) => {
     let retryCalled = false;
     await page.route('**/certificates/cert_002/retry', (route) => {
@@ -134,5 +126,66 @@ test.describe('Certificate management', () => {
       await retryBtn.click();
       await expect.poll(() => retryCalled).toBe(true);
     }
+  });
+});
+
+// Own describe: the block above routes `**/certificates`, which also matches
+// the /dashboard/certificates page itself.
+test.describe('Certificate row actions', () => {
+  test.beforeEach(async ({ page }) => {
+    await authenticateAs(page, { plan: 'starter' });
+  });
+
+  test('can revoke an issued certificate after confirming', async ({
+    page,
+  }) => {
+    let revokeCalled = false;
+    await page.route(api('/certs/tls'), (route) =>
+      route.fulfill({ status: 200, json: [issuedCert] }),
+    );
+    await page.route(api('/certs/tls/51/revoke'), (route) => {
+      revokeCalled = true;
+      return route.fulfill({
+        status: 200,
+        json: { id: 51, status: 'revoking' },
+      });
+    });
+
+    await page.goto('/dashboard/certificates');
+    await page
+      .getByRole('button', { name: /More actions for shop\.example\.com/ })
+      .click();
+    await page.getByRole('menuitem', { name: /revoke/i }).click();
+
+    const dialog = page.getByRole('dialog', { name: 'Revoke certificate?' });
+    await expect(dialog).toContainText('shop.example.com');
+    expect(revokeCalled).toBe(false);
+    await dialog.getByRole('button', { name: 'Revoke certificate' }).click();
+    await expect.poll(() => revokeCalled).toBe(true);
+  });
+
+  test('can delete a failed certificate after confirming', async ({ page }) => {
+    let deleteCalled = false;
+    await page.route(api('/certs/tls'), (route) =>
+      route.fulfill({ status: 200, json: [failedCert] }),
+    );
+    await page.route(api('/certs/tls/52'), (route) => {
+      if (route.request().method() === 'DELETE') {
+        deleteCalled = true;
+        return route.fulfill({ status: 200, json: { id: 52 } });
+      }
+      return route.fulfill({ status: 200, json: failedCert });
+    });
+
+    await page.goto('/dashboard/certificates');
+    await page
+      .getByRole('button', { name: /More actions for broken\.example\.com/ })
+      .click();
+    await page.getByRole('menuitem', { name: /delete/i }).click();
+    await page
+      .getByRole('dialog', { name: 'Delete certificate?' })
+      .getByRole('button', { name: 'Delete certificate' })
+      .click();
+    await expect.poll(() => deleteCalled).toBe(true);
   });
 });

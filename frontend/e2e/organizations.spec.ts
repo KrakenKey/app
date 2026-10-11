@@ -142,14 +142,16 @@ test.describe('Organizations — owner managing org', () => {
       return route.continue();
     });
 
-    page.on('dialog', (dialog) => dialog.accept());
-
     await page.goto('/dashboard/organizations');
 
     // Find Bob's row and click remove
     await page
       .getByRole('row', { name: /bob/i })
       .getByRole('button', { name: /remove/i })
+      .click();
+    await page
+      .getByRole('dialog', { name: 'Remove member?' })
+      .getByRole('button', { name: 'Remove member' })
       .click();
 
     await expect.poll(() => removeCalled).toBe(true);

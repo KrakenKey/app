@@ -77,11 +77,13 @@ describe('ApiKeyManagement', () => {
         return HttpResponse.json({ message: 'API key revoked' });
       }),
     );
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
-
     render(<ApiKeyManagement />);
     await screen.findByText('ci-deploy');
     await userEvent.click(screen.getByRole('button', { name: /revoke/i }));
+    expect(deleted).toBeNull();
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Revoke key' }),
+    );
 
     await waitFor(() => expect(deleted).toBe('k1'));
     expect(await screen.findByText('Your API Keys (0)')).toBeInTheDocument();
