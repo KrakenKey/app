@@ -24,6 +24,8 @@ import {
 } from '../components/connectors/ConnectorBadges';
 import { EnrollmentTokenPanel } from '../components/connectors/EnrollmentTokenPanel';
 import { EditLimitsModal } from '../components/connectors/EditLimitsModal';
+import { ConnectorConfigSection } from '../components/connectors/ConnectorConfigSection';
+import { Field, When } from '../components/connectors/DetailField';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
@@ -37,30 +39,6 @@ import {
   TableHead,
   TableCell,
 } from '../components/ui/Table';
-
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex gap-2">
-      <span className="text-zinc-500 shrink-0">{label}:</span>
-      <span className="text-zinc-300 min-w-0">{children}</span>
-    </div>
-  );
-}
-
-function When({ iso }: { iso: string | null }) {
-  if (!iso) return <span className="text-zinc-500">Never</span>;
-  return (
-    <span title={new Date(iso).toLocaleString()}>
-      {new Date(iso).toLocaleDateString()} ({formatRelative(iso)})
-    </span>
-  );
-}
 
 export default function ConnectorDetail() {
   const { id = '' } = useParams();
@@ -89,7 +67,11 @@ export default function ConnectorDetail() {
       const data = await connectorService.fetchConnector(id);
       setConnector(data);
       if (data.allowedDomainIds?.length) void loadDomains();
-      if (data.allowedCertIds?.length || data.deployments?.length) {
+      if (
+        data.allowedCertIds?.length ||
+        data.deployments?.length ||
+        data.configSummary?.certificates.length
+      ) {
         void loadCerts();
       }
     } catch {
@@ -450,6 +432,8 @@ export default function ConnectorDetail() {
           </Table>
         )}
       </Card>
+
+      <ConnectorConfigSection connector={connector} certName={certName} />
 
       {/* Edit Modal */}
       <Modal

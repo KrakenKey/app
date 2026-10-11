@@ -8,6 +8,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
   Query,
   Req,
   UseGuards,
@@ -40,6 +41,7 @@ import {
   ConnectorDeploymentsQueryDto,
   ConnectorReportDto,
 } from './dto/connector-report.dto';
+import { ConnectorConfigDto } from './dto/connector-config.dto';
 import {
   ConnectorEnrollDto,
   ConnectorRotateDto,
@@ -96,11 +98,61 @@ export class ConnectorsController {
     return this.reports.forCertificate(req.user, query.certificateId);
   }
 
+  // --- Connector config summary (connector-issued key) -------------------------
+  // Declared before :id so "config" isn't taken for an id
+
+  @Put('config')
+  @UseGuards(JwtOrApiKeyGuard)
+  @RequireScope('certs:read')
+  @HttpCode(204)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      "Share a read-only summary of the connector's config (connector-issued keys only)",
+  })
+  @ApiResponse({
+    status: 204,
+    description:
+      'Stored, replacing the previous summary; certificates outside the connector restrictions are kept and flagged in the dashboard',
+  })
+  @ApiResponse({ status: 403, description: 'Not a connector-issued key' })
+  @RateLimitCategoryDecorator(RateLimitCategory.CONNECTOR_REPORT)
+  async putConfig(
+    @Req() req: RequestWithUser,
+    @Body() dto: ConnectorConfigDto,
+  ): Promise<void> {
+    await this.connectors.storeConfig(req.user, dto);
+  }
+
+  @Delete('config')
+  @UseGuards(JwtOrApiKeyGuard)
+  @RequireScope('certs:read')
+  @HttpCode(204)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      "Clear the connector's shared config summary (connector-issued keys only)",
+  })
+  @ApiResponse({
+    status: 204,
+    description: 'Cleared, also when nothing was stored',
+  })
+  @ApiResponse({ status: 403, description: 'Not a connector-issued key' })
+  @RateLimitCategoryDecorator(RateLimitCategory.CONNECTOR_REPORT)
+  async deleteConfig(@Req() req: RequestWithUser): Promise<void> {
+    await this.connectors.clearConfig(req.user);
+  }
+
+  // --- Dashboard (continued) -------------------------------------------------
+
   @Get(':id')
   @UseGuards(JwtOrApiKeyGuard)
   @RequireScope('account:read')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get a connector with its deployments' })
+  @ApiOperation({
+    summary:
+      'Get a connector with its deployments and the config summary it last shared',
+  })
   @ApiResponse({ status: 404, description: 'Connector not found' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
   async get(

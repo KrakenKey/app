@@ -4,8 +4,12 @@ import {
 } from '@krakenkey/shared';
 import type {
   Connector,
+  ConnectorConfigSettings,
+  ConnectorConfigSummary,
+  ConnectorConfigVerify,
   ConnectorDeployment,
   ConnectorDeploymentState,
+  ConnectorPluginSource,
 } from '@krakenkey/shared';
 
 type BadgeVariant = 'success' | 'warning' | 'danger' | 'info' | 'neutral';
@@ -116,19 +120,25 @@ export function formatRelative(iso: string, now: number = Date.now()): string {
 export const CONNECTOR_CONFIG_PATH = '/etc/krakenkey-connector/config.yaml';
 export const CONNECTOR_TOKEN_PATH = '/etc/krakenkey-connector/enrollment-token';
 export const CONNECTOR_IMAGE = 'ghcr.io/krakenkey/connector:v${VERSION}';
+/** The service user the Linux packages create. */
+export const CONNECTOR_USER = 'krakenkey-connector';
+/** The image runs as this uid, so files it reads must be owned by it. */
+export const CONNECTOR_IMAGE_UID = 10001;
 
-/** Enrolls a connector installed on the host. */
+/**
+ * Enrolls a connector installed on the host, as the user it runs as. The
+ * token file must be readable by that user and not by others.
+ */
 export function enrollCommand(): string {
   return [
-    `install -m 0600 /dev/null ${CONNECTOR_TOKEN_PATH}  # paste the token into this file`,
-    `KK_ENROLLMENT_TOKEN_FILE=${CONNECTOR_TOKEN_PATH} \\`,
+    `sudo install -m 0640 -g ${CONNECTOR_USER} /dev/null ${CONNECTOR_TOKEN_PATH}  # paste the token into this file`,
+    `sudo -u ${CONNECTOR_USER} env KK_ENROLLMENT_TOKEN_FILE=${CONNECTOR_TOKEN_PATH} \\`,
     `  krakenkey-connector enroll --config ${CONNECTOR_CONFIG_PATH}`,
-    `rm ${CONNECTOR_TOKEN_PATH}  # it works only once`,
+    `sudo rm ${CONNECTOR_TOKEN_PATH}  # it works only once`,
   ].join('\n');
 }
 
-export const CONNECTOR_DOCS_URL =
-  'https://github.com/KrakenKey/connector/blob/main/README.md#install';
+export const CONNECTOR_DOCS_URL = 'https://krakenkey.io/docs/connector/';
 
 /**
  * Enrolls a connector that runs in Docker, then starts it. Its identity
@@ -136,8 +146,10 @@ export const CONNECTOR_DOCS_URL =
  */
 export function dockerCommands(): string {
   return [
-    'VERSION=0.1.0   # the connector release to run, without the leading v',
+    'VERSION=0.3.0   # the connector release to run, without the leading v',
     '',
+    `# the image runs as uid ${CONNECTOR_IMAGE_UID}, so the token file must belong to it`,
+    `sudo install -m 0600 -o ${CONNECTOR_IMAGE_UID} /dev/null ${CONNECTOR_TOKEN_PATH}  # paste the token into this file`,
     'docker run --rm \\',
     '  -e KK_ENROLLMENT_TOKEN_FILE=/run/secrets/kk_enrollment_token \\',
     `  -v ${CONNECTOR_TOKEN_PATH}:/run/secrets/kk_enrollment_token:ro \\`,
@@ -177,4 +189,66 @@ export function groupByConnector(
     group.targets.push(d);
   }
   return [...groups.values()];
+}
+
+// --- Config summary ----------------------------------------------------------
+
+export const PLUGIN_SOURCE_LABEL: Record<ConnectorPluginSource, string> = {
+  bundled: 'Bundled',
+  data_dir: 'Data directory',
+  path: 'Path',
+  builtin: 'Built in',
+};
+
+/** "90 seconds", "30 minutes", "1 hour", "1 hour 30 minutes", "2 days". */
+export function formatInterval(seconds: number): string {
+  const unit = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  if (seconds < 60 || seconds % 60 !== 0) return unit(seconds, 'second');
+  const minutes = seconds / 60;
+  if (minutes < 60) return unit(minutes, 'minute');
+  if (minutes % (24 * 60) === 0) return unit(minutes / (24 * 60), 'day');
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest
+    ? `${unit(hours, 'hour')} ${unit(rest, 'minute')}`
+    : unit(hours, 'hour');
+}
+
+/** Settings as `key: value` pairs, in the order the connector sent them. */
+export function settingPairs(settings: ConnectorConfigSettings): string[] {
+  return Object.entries(settings).map(([k, v]) => `${k}: ${String(v)}`);
+}
+
+/** Where the post-deploy check connects: `host:port`, `host`, `port 8443`. */
+export function formatCheck(verify: ConnectorConfigVerify): string {
+  const { host, port } = verify;
+  if (host && port) return `${host.includes(':') ? `[${host}]` : host}:${port}`;
+  if (host) return host;
+  if (port) return `port ${port}`;
+  return 'Default host and port';
+}
+
+export interface ConfigDrift {
+  /** In the config, but outside the connector's allowedCertIds. */
+  notAllowed: number[];
+  /** In allowedCertIds, but not in the config. */
+  missing: number[];
+}
+
+/**
+ * Differences between what the connector is allowed to manage and what its
+ * config lists. Only certificate restrictions can be compared: with a
+ * domain restriction alone, any certificate in those domains is allowed.
+ */
+export function configDrift(
+  summary: Pick<ConnectorConfigSummary, 'certificates'>,
+  allowedCertIds: number[] | null,
+): ConfigDrift {
+  if (!allowedCertIds) return { notAllowed: [], missing: [] };
+  const allowed = new Set(allowedCertIds);
+  const configured = new Set(summary.certificates.map((c) => c.certificateId));
+  return {
+    notAllowed: [...configured].filter((id) => !allowed.has(id)),
+    missing: [...allowed].filter((id) => !configured.has(id)),
+  };
 }

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   HttpException,
   Injectable,
   Logger,
@@ -17,6 +18,7 @@ import {
   CONNECTOR_MAX_CLOCK_SKEW_SECONDS,
   MAX_CONNECTORS_PER_USER,
   type Connector as ConnectorDto,
+  type ConnectorConfigSummary,
   type ConnectorEnrollResponse,
   type ConnectorEnrollmentTokenResponse,
   type ConnectorScope,
@@ -41,6 +43,8 @@ import type {
   CreateConnectorDto,
   UpdateConnectorDto,
 } from './dto/connector.dto';
+import type { ConnectorConfigDto } from './dto/connector-config.dto';
+import type { KeyUser } from '../auth/access/api-key-access.service';
 
 /** Every enrollment failure gets this, so a caller learns nothing about why. */
 export const INVALID_ENROLLMENT_TOKEN = 'Invalid enrollment token';
@@ -77,8 +81,24 @@ export class ConnectorsService {
     return connectors.map(toDto);
   }
 
+  /** One connector, with the config summary it last shared. */
   async get(userId: string, id: string): Promise<ConnectorDto> {
-    return toDto(await this.findOwned(userId, id));
+    const connector = await this.findOwned(userId, id);
+    // configSummary isn't loaded by default; fetch it only when one is stored
+    const stored = connector.configHash
+      ? await this.connectorRepo.findOne({
+          where: { id, userId },
+          select: { id: true, configSummary: true },
+        })
+      : null;
+    return {
+      ...toDto(connector),
+      configSummary: stored?.configSummary ?? null,
+      configHash: connector.configHash ?? null,
+      configReportedAt: connector.configReportedAt
+        ? connector.configReportedAt.toISOString()
+        : null,
+    };
   }
 
   async create(
@@ -134,6 +154,8 @@ export class ConnectorsService {
       version: null,
       os: null,
       arch: null,
+      configHash: null,
+      configReportedAt: null,
     });
     await this.connectorRepo.save(connector);
     this.logger.log(`Connector ${connector.id} created by user ${userId}`);
@@ -289,6 +311,58 @@ export class ConnectorsService {
       throw new NotFoundException(`Connector #${id} not found`);
     }
     return connector;
+  }
+
+  // --- Connector (connector-issued key) ---------------------------------------
+
+  /**
+   * Stores the config summary a connector shares, replacing the previous
+   * one, and counts as contact from it. The connector builds the summary
+   * from an allowlist of safe settings; the DTO has already checked every
+   * field. Certificates outside the connector's restrictions are stored
+   * too: the dashboard points them out.
+   */
+  async storeConfig(
+    user: KeyUser & { userId: string },
+    dto: ConnectorConfigDto,
+  ): Promise<void> {
+    const connectorId = requireConnectorKey(user);
+    const summary = toConfigSummary(dto);
+    const now = new Date();
+    const result = await this.connectorRepo.update(
+      { id: connectorId, userId: user.userId, revokedAt: IsNull() },
+      {
+        configSummary: summary,
+        configHash: summary.hash,
+        configReportedAt: now,
+        lastSeenAt: now,
+        staleAlertedAt: null,
+      },
+    );
+    if (!result.affected) {
+      throw new ForbiddenException('This connector has been revoked.');
+    }
+  }
+
+  /**
+   * Clears the stored config summary, for a connector that turned sharing
+   * off. Succeeds when nothing was stored.
+   */
+  async clearConfig(user: KeyUser & { userId: string }): Promise<void> {
+    const connectorId = requireConnectorKey(user);
+    const result = await this.connectorRepo.update(
+      { id: connectorId, userId: user.userId, revokedAt: IsNull() },
+      {
+        configSummary: null,
+        configHash: null,
+        configReportedAt: null,
+        lastSeenAt: new Date(),
+        staleAlertedAt: null,
+      },
+    );
+    if (!result.affected) {
+      throw new ForbiddenException('This connector has been revoked.');
+    }
   }
 
   // --- Connector (unauthenticated) -------------------------------------------
@@ -519,6 +593,60 @@ export class ConnectorsService {
       staleAlertedAt: null,
     });
   }
+}
+
+/** The connector a request's key was issued to; 403 for any other caller. */
+function requireConnectorKey(user: KeyUser): string {
+  const connectorId = user.apiKey?.connectorId;
+  if (!connectorId) {
+    throw new ForbiddenException(
+      'Only a key issued to a connector can share its config.',
+    );
+  }
+  return connectorId;
+}
+
+/**
+ * The summary as stored: built field by field from the validated DTO, so
+ * nothing but the fields below is kept, with optional fields filled in.
+ */
+export function toConfigSummary(
+  dto: ConnectorConfigDto,
+): ConnectorConfigSummary {
+  return {
+    hash: dto.hash,
+    version: dto.version,
+    checkIntervalSeconds: dto.checkIntervalSeconds ?? null,
+    plugins: dto.plugins.map((p) => ({
+      name: p.name,
+      version: p.version ?? null,
+      source: p.source,
+    })),
+    certificates: dto.certificates.map((c) => ({
+      certificateId: c.certificateId,
+      names: [...c.names],
+      keyStore: {
+        plugin: c.keyStore.plugin,
+        keyType: c.keyStore.keyType ?? null,
+        settings: { ...(c.keyStore.settings ?? {}) },
+      },
+      targets: c.targets.map((t) => ({
+        label: t.label,
+        plugin: t.plugin,
+        implicit: t.implicit,
+        runsCommand: t.runsCommand,
+        verify: t.verify
+          ? {
+              host: t.verify.host ?? null,
+              port: t.verify.port ?? null,
+              skipChainValidation: t.verify.skipChainValidation,
+            }
+          : null,
+        settings: { ...(t.settings ?? {}) },
+      })),
+    })),
+    truncated: dto.truncated ?? false,
+  };
 }
 
 /** Same members, ignoring order; null and [] both mean "none". */

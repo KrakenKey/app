@@ -126,6 +126,7 @@ describe('@RequireScope coverage', () => {
     );
     expect(map).toEqual({
       'DELETE /certs/tls/:id': 'certs:revoke',
+      'DELETE /connectors/config': 'certs:read',
       'DELETE /domains/:id': 'domains:write',
       'DELETE /endpoints/:id': 'endpoints:write',
       'DELETE /endpoints/:id/probes/:probeId': 'endpoints:write',
@@ -161,6 +162,7 @@ describe('@RequireScope coverage', () => {
       'GET /users/:id': 'account:read',
       'PATCH /auth/profile': 'account:write',
       'PATCH /certs/tls/:id': 'certs:renew',
+      'PUT /connectors/config': 'certs:read',
       'PATCH /endpoints/:id': 'endpoints:write',
       'PATCH /notifications/channels/:id': 'account:write',
       'POST /auth/confirm-auto-renewal': 'account:write',

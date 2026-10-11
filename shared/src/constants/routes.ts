@@ -94,6 +94,7 @@ export const API_ROUTES = {
     TOKEN: '/connectors/token',
     ROTATE: '/connectors/rotate',
     REPORT: '/connectors/report',
+    CONFIG: '/connectors/config',
   },
   REPORTS: {
     BASE: '/reports',
