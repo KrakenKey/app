@@ -30,9 +30,11 @@ async function bootstrap() {
   // named wrapper matters: Nest skips registering its global JSON parser
   // when it finds a middleware named `jsonParser`, which would leave every
   // other route without a parsed body.
+  //
+  // PUT /connectors/config (the connector's config summary, with the same
+  // certificate and target limits) gets the same parser.
   const reportBodyParser = json({ limit: '2mb' });
-  app.use(
-    '/connectors/report',
+  const connectorBody = (method: string) =>
     function connectorReportBody(
       req: Request,
       res: Response,
@@ -40,7 +42,7 @@ async function bootstrap() {
     ) {
       const auth = req.headers.authorization;
       if (
-        req.method !== 'POST' ||
+        req.method !== method ||
         !auth?.startsWith('Bearer kk_') ||
         auth.startsWith('Bearer kk_svc_')
       ) {
@@ -48,8 +50,9 @@ async function bootstrap() {
         return;
       }
       reportBodyParser(req, res, next);
-    },
-  );
+    };
+  app.use('/connectors/report', connectorBody('POST'));
+  app.use('/connectors/config', connectorBody('PUT'));
 
   // Trust the known proxy chain (Traefik + Cloudflare) so req.ip resolves
   // to the real client address. A hop count would either expose a

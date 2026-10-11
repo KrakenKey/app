@@ -1023,6 +1023,151 @@ describe('Connectors (e2e)', () => {
     });
   });
 
+  describe('config summary', () => {
+    let id: string;
+    let bearer: string;
+
+    const SUMMARY = {
+      hash: 'c'.repeat(64),
+      version: '0.3.0',
+      checkIntervalSeconds: 3600,
+      plugins: [
+        { name: 'azure-keyvault', version: '0.3.0', source: 'bundled' },
+      ],
+      certificates: [
+        {
+          certificateId: 7,
+          names: ['web.labxp.io'],
+          keyStore: {
+            plugin: 'azure-keyvault',
+            keyType: 'ecdsa-p256',
+            settings: { vault: 'kv-prod', certificate_name: 'web' },
+          },
+          targets: [
+            {
+              label: 'nginx-main',
+              plugin: 'file',
+              implicit: false,
+              runsCommand: true,
+              verify: {
+                host: 'web.labxp.io',
+                port: 443,
+                skipChainValidation: false,
+              },
+              settings: { dir: '/etc/nginx/certs', fullchain: 'site.pem' },
+            },
+          ],
+        },
+        {
+          // Not in allowedCertIds: kept, the dashboard flags it
+          certificateId: 8,
+          names: ['example.com'],
+          keyStore: { plugin: 'local', keyType: null, settings: {} },
+          targets: [],
+        },
+      ],
+      truncated: false,
+    };
+    const put = (body: object, auth = bearer) =>
+      anon().put('/connectors/config').set('Authorization', auth).send(body);
+    const del = (auth = bearer) =>
+      anon().delete('/connectors/config').set('Authorization', auth);
+
+    beforeAll(async () => {
+      const e = await enrolled({ ...BODY, allowedCertIds: [7] });
+      id = e.id;
+      const res = await anon()
+        .post('/connectors/token')
+        .send(tokenRequest(e.key, id));
+      bearer = `Bearer ${res.body.apiKey}`;
+    });
+
+    it('is null until the connector shares one', async () => {
+      const one = await session().get(`/connectors/${id}`).expect(200);
+      expect(one.body).toMatchObject({
+        configSummary: null,
+        configHash: null,
+        configReportedAt: null,
+      });
+    });
+
+    it('stores the summary and shows it on the connector, not in the list', async () => {
+      const before = Date.now();
+      const res = await put({ ...SUMMARY, command: 'reload' }).expect(204);
+      expect(res.body).toEqual({});
+
+      const one = await session().get(`/connectors/${id}`).expect(200);
+      expect(one.body.configSummary).toEqual(SUMMARY);
+      expect(one.body.configHash).toBe(SUMMARY.hash);
+      expect(Date.parse(one.body.configReportedAt)).toBeGreaterThanOrEqual(
+        before - 1000,
+      );
+      expect(Date.parse(one.body.lastSeenAt)).toBeGreaterThanOrEqual(
+        before - 1000,
+      );
+
+      const list = await session().get('/connectors').expect(200);
+      const listed = list.body.find((c: { id: string }) => c.id === id);
+      expect(listed).not.toHaveProperty('configSummary');
+    });
+
+    it('replaces the previous summary', async () => {
+      await put({ ...SUMMARY, hash: 'd'.repeat(64), certificates: [] }).expect(
+        204,
+      );
+      const one = await session().get(`/connectors/${id}`).expect(200);
+      expect(one.body.configHash).toBe('d'.repeat(64));
+      expect(one.body.configSummary.certificates).toEqual([]);
+    });
+
+    it('400s anything outside the contract', async () => {
+      const nested = structuredClone(SUMMARY);
+      (
+        nested.certificates[0].targets[0].settings as Record<string, unknown>
+      ).files = { cert: 'c.pem' };
+      await put(nested).expect(400);
+      await put({ ...SUMMARY, hash: 'nothex' }).expect(400);
+      await put({ ...SUMMARY, plugins: [{ name: 'x', source: 'web' }] }).expect(
+        400,
+      );
+    });
+
+    it('clears the summary, also when nothing is stored', async () => {
+      await put(SUMMARY).expect(204);
+      // "config" is not taken for a connector id
+      await del().expect(204);
+      const one = await session().get(`/connectors/${id}`).expect(200);
+      expect(one.body).toMatchObject({
+        configSummary: null,
+        configHash: null,
+        configReportedAt: null,
+      });
+      await del().expect(204);
+    });
+
+    it('only accepts keys issued to a connector', async () => {
+      auth.addKey('kk_regular_config_key', MOCK_USER.userId);
+      const res = await put(SUMMARY, 'Bearer kk_regular_config_key').expect(
+        403,
+      );
+      expect(res.body.message).toBe(
+        'Only a key issued to a connector can share its config.',
+      );
+      await del('Bearer kk_regular_config_key').expect(403);
+      // A dashboard session is refused the same way
+      await session().put('/connectors/config').send(SUMMARY).expect(403);
+      await session().delete('/connectors/config').expect(403);
+      await anon().put('/connectors/config').send(SUMMARY).expect(401);
+      await anon().delete('/connectors/config').expect(401);
+    });
+
+    it('stops accepting summaries once the connector is revoked', async () => {
+      await session().delete(`/connectors/${id}`).expect(204);
+      await put(SUMMARY).expect(401);
+      await del().expect(401);
+    });
+  });
+
   describe('dashboard routes with an API key', () => {
     const KEY = 'kk_dashboard_made_key';
 

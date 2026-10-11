@@ -1,6 +1,10 @@
 import type { ConnectorDeployment } from '@krakenkey/shared';
 import {
+  configDrift,
   connectorStatus,
+  formatCheck,
+  formatInterval,
+  settingPairs,
   dockerCommands,
   enrollCommand,
   enrollmentTokenExpired,
@@ -153,5 +157,73 @@ describe('setup instructions', () => {
     expect(
       text.match(/krakenkey-connector-data:\/var\/lib\/krakenkey-connector/g),
     ).toHaveLength(2);
+  });
+});
+
+describe('formatInterval', () => {
+  it('uses the largest whole unit', () => {
+    expect(formatInterval(1)).toBe('1 second');
+    expect(formatInterval(90)).toBe('90 seconds');
+    expect(formatInterval(60)).toBe('1 minute');
+    expect(formatInterval(1800)).toBe('30 minutes');
+    expect(formatInterval(3600)).toBe('1 hour');
+    expect(formatInterval(5400)).toBe('1 hour 30 minutes');
+    expect(formatInterval(86400)).toBe('1 day');
+    expect(formatInterval(604800)).toBe('7 days');
+  });
+});
+
+describe('formatCheck', () => {
+  const v = (host: string | null, port: number | null) => ({
+    host,
+    port,
+    skipChainValidation: false,
+  });
+  it('shows what is set', () => {
+    expect(formatCheck(v('www.example.com', 443))).toBe('www.example.com:443');
+    expect(formatCheck(v('::1', 8443))).toBe('[::1]:8443');
+    expect(formatCheck(v('www.example.com', null))).toBe('www.example.com');
+    expect(formatCheck(v(null, 8443))).toBe('port 8443');
+    expect(formatCheck(v(null, null))).toBe('Default host and port');
+  });
+});
+
+describe('settingPairs', () => {
+  it('formats key: value pairs in order', () => {
+    expect(settingPairs({ vault: 'kv', exportable: false, port: 443 })).toEqual(
+      ['vault: kv', 'exportable: false', 'port: 443'],
+    );
+    expect(settingPairs({})).toEqual([]);
+  });
+});
+
+describe('configDrift', () => {
+  const summary = (...ids: number[]) => ({
+    certificates: ids.map((certificateId) => ({
+      certificateId,
+      names: [],
+      keyStore: { plugin: 'local', keyType: null, settings: {} },
+      targets: [],
+    })),
+  });
+  it('compares the config with allowedCertIds', () => {
+    expect(configDrift(summary(1, 2, 4), [1, 3])).toEqual({
+      notAllowed: [2, 4],
+      missing: [3],
+    });
+    expect(configDrift(summary(1), [1])).toEqual({
+      notAllowed: [],
+      missing: [],
+    });
+    expect(configDrift(summary(), [5])).toEqual({
+      notAllowed: [],
+      missing: [5],
+    });
+  });
+  it('has nothing to compare with a domain restriction alone', () => {
+    expect(configDrift(summary(1, 2), null)).toEqual({
+      notAllowed: [],
+      missing: [],
+    });
   });
 });

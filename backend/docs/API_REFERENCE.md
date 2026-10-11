@@ -42,7 +42,7 @@ A key can be limited when it is created. None of the limits can be changed after
 
 | Scope | Routes |
 | --- | --- |
-| `certs:read` | `GET /certs/tls`, `GET /certs/tls/:id`, `/details`, `/chain`; `POST /connectors/report` (connector-issued keys only) |
+| `certs:read` | `GET /certs/tls`, `GET /certs/tls/:id`, `/details`, `/chain`; `POST /connectors/report`, `PUT /connectors/config`, `DELETE /connectors/config` (connector-issued keys only) |
 | `certs:issue` | `POST /certs/tls`, `POST /certs/tls/:id/retry` |
 | `certs:renew` | `POST /certs/tls/:id/renew`, `PATCH /certs/tls/:id` |
 | `certs:revoke` | `POST /certs/tls/:id/revoke`, `DELETE /certs/tls/:id` |
@@ -842,7 +842,7 @@ Connectors belong to the user who creates them, like API keys and GitHub trust p
 | Method | Path | Auth | Rate limit | Description |
 |--------|------|------|------------|-------------|
 | GET | `/connectors` | JWT or key with `account:read` | read | List connectors, revoked ones included |
-| GET | `/connectors/:id` | JWT or key with `account:read` | read | Get one connector with its deployments |
+| GET | `/connectors/:id` | JWT or key with `account:read` | read | Get one connector with its deployments and config summary |
 | GET | `/connectors/deployments?certificateId=` | JWT or key with `account:read` | read | Where one certificate is deployed |
 | POST | `/connectors` | Dashboard session only | write | Create a connector and its enrollment token |
 | POST | `/connectors/:id/enrollment-token` | Dashboard session only | write | New enrollment token for a connector that has not enrolled |
@@ -852,8 +852,10 @@ Connectors belong to the user who creates them, like API keys and GitHub trust p
 | POST | `/connectors/token` | None (signed body) | connector-token | Get an API key that lasts one hour |
 | POST | `/connectors/rotate` | None (signed body) | public-strict | Replace the connector's public key |
 | POST | `/connectors/report` | Key issued to a connector | connector-report | Report deployment status |
+| PUT | `/connectors/config` | Key issued to a connector | connector-report | Share a read-only summary of the connector's config (`204`) |
+| DELETE | `/connectors/config` | Key issued to a connector | connector-report | Clear the shared config summary (`204`) |
 
-Enroll and rotate are limited to 10 requests per minute per IP each, token exchange to 60 per minute per IP (so a site with many connectors behind one address can restart them together), and reports to 60 per hour per connector. See [RATE_LIMITING.md](../../docs/RATE_LIMITING.md). A connector belonging to someone else returns `404`.
+Enroll and rotate are limited to 10 requests per minute per IP each, token exchange to 60 per minute per IP (so a site with many connectors behind one address can restart them together), and reports and config summaries to 60 per hour per connector (each route counted separately). See [RATE_LIMITING.md](../../docs/RATE_LIMITING.md). A connector belonging to someone else returns `404`.
 
 ### Connector object
 
@@ -877,6 +879,8 @@ Enroll and rotate are limited to 10 requests per minute per IP each, token excha
 ```
 
 `lastSeenAt` is the last enrollment, key exchange, rotation or status report. `version`, `os` and `arch` are what the connector last sent. `GET /connectors/:id` adds `deployments`, every target the connector last reported (see [below](#post-connectorsreport)) for certificates the caller can still see: the owner's or their current organization's, and within an API key's certificate and domain restrictions. The list does not include deployments. Instead, each connector in `GET /connectors` has `deploymentSummary`: `{ "certificates": 2, "targets": 3, "failing": 1 }`, counted over the same deployments `GET /connectors/:id` would show the caller, where `failing` counts targets in `failed` or `rolled_back`.
+
+`GET /connectors/:id` also adds `configSummary`, `configHash` and `configReportedAt`: the config summary the connector last shared (see [below](#put-connectorsconfig)), its hash and when it arrived, or `null` for all three when it has not shared one. The list does not include them.
 
 ### POST /connectors
 
@@ -1044,6 +1048,61 @@ Each report replaces what the connector said before about the certificates in it
 `accepted` is the number of certificates stored. The only whole-report refusals are `400` for an invalid body and `403` when the bearer is not a key issued to a connector.
 
 A target entering `failed` or `rolled_back` from any other state (or appearing in one) sends a `deploy.failed` alert, unless that target (connector, certificate, label) already alerted in the last 6 hours. The cooldown holds whatever the target does in between, including recovering, flapping, or being left out of a report and listed again. Reporting the same failure again, or moving between `failed` and `rolled_back`, never alerts. Channels get at most 20 `deploy.failed` alerts per report. The owner gets at most one `deploy.failed` email per connector per hour, listing up to 10 failures and the total; failures held back in that hour are counted in the next email. The cooldowns live in Redis and are shared by all API instances; if Redis is unavailable, no `deploy.failed` alert or email is sent.
+
+### PUT /connectors/config
+
+Sent by the connector with a key from `POST /connectors/token` (from connector 0.3.0): a read-only summary of what it is configured to do, shown on the connector's page in the dashboard. Any other credential gets `403`, like the report. Nothing in KrakenKey can change a connector's config; it lives on the connector's host. The connector builds the summary from an allowlist of known-safe settings, so commands, environment, file owners and modes, tags, cloud account ids, certificate ARNs and secrets are never sent. Setting `krakenkey.share_config: false` in the connector config stops it sharing and clears what is stored.
+
+```json
+{
+  "hash": "<sha256 of the canonical summary, 64 lowercase hex>",
+  "version": "0.3.0",
+  "checkIntervalSeconds": 3600,
+  "plugins": [
+    { "name": "azure-keyvault", "version": "0.3.0", "source": "bundled" }
+  ],
+  "certificates": [
+    {
+      "certificateId": 42,
+      "names": ["www.example.com"],
+      "keyStore": {
+        "plugin": "azure-keyvault",
+        "keyType": "ecdsa-p256",
+        "settings": { "vault": "kv-prod", "certificate_name": "www" }
+      },
+      "targets": [
+        {
+          "label": "nginx-main",
+          "plugin": "file",
+          "implicit": false,
+          "runsCommand": true,
+          "verify": { "host": "www.example.com", "port": 443, "skipChainValidation": false },
+          "settings": { "dir": "/etc/nginx/certs", "fullchain": "site.pem", "key": "site.key" }
+        }
+      ]
+    }
+  ],
+  "truncated": false
+}
+```
+
+- `hash`: `^[0-9a-f]{64}$`. Stored as sent; KrakenKey does not recompute it.
+- `version`: printable ASCII without spaces, at most 64 characters. `checkIntervalSeconds`: optional integer, 1 to 604800 (7 days).
+- `plugins`: up to 50. `name`: `^[A-Za-z0-9._-]{1,64}$`; `version`: at most 64 printable ASCII characters, or `null`; `source`: `bundled`, `data_dir`, `path` or `builtin`.
+- `certificates`: up to 500. `certificateId`: integer, at least 1. `names`: up to 100, each at most 253 printable ASCII characters.
+- `keyStore.plugin` and `targets[].plugin`: same rule as plugin names. `keyType`: at most 32 printable ASCII characters, or `null`.
+- `targets`: up to 50 per certificate. `label`: `^[A-Za-z0-9._-]{1,64}$`. `implicit`: the connector added the target itself (for example a key store that is also a target). `runsCommand`: the target runs a command after deploying, or is the `exec` target.
+- `verify`: `null` or `{ "host": string (at most 253) or null, "port": 1-65535 or null, "skipChainValidation": boolean }`.
+- `settings`: a flat object of at most 10 keys matching `^[a-z][a-z0-9_]{0,31}$`. Values are strings (at most 256 characters; control characters are replaced with spaces), booleans or finite numbers. Nested objects, lists and `null` values are a `400`.
+- `truncated`: `true` when the connector cut certificates or targets to these limits.
+- `null` for `plugins`, `certificates`, `names`, `targets` or `settings` is read as empty. Unknown fields are dropped.
+- The body may be up to 2 MB, as for the report.
+
+The summary replaces the previous one and updates `lastSeenAt`. Certificates outside the connector's restrictions are stored too; the dashboard points them out. **Response `204`**.
+
+### DELETE /connectors/config
+
+Same credential as `PUT`. Clears the stored summary, hash and time. **Response `204`**, also when nothing was stored.
 
 ### GET /connectors/deployments
 

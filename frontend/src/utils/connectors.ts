@@ -4,8 +4,12 @@ import {
 } from '@krakenkey/shared';
 import type {
   Connector,
+  ConnectorConfigSettings,
+  ConnectorConfigSummary,
+  ConnectorConfigVerify,
   ConnectorDeployment,
   ConnectorDeploymentState,
+  ConnectorPluginSource,
 } from '@krakenkey/shared';
 
 type BadgeVariant = 'success' | 'warning' | 'danger' | 'info' | 'neutral';
@@ -185,4 +189,66 @@ export function groupByConnector(
     group.targets.push(d);
   }
   return [...groups.values()];
+}
+
+// --- Config summary ----------------------------------------------------------
+
+export const PLUGIN_SOURCE_LABEL: Record<ConnectorPluginSource, string> = {
+  bundled: 'Bundled',
+  data_dir: 'Data directory',
+  path: 'Path',
+  builtin: 'Built in',
+};
+
+/** "90 seconds", "30 minutes", "1 hour", "1 hour 30 minutes", "2 days". */
+export function formatInterval(seconds: number): string {
+  const unit = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  if (seconds < 60 || seconds % 60 !== 0) return unit(seconds, 'second');
+  const minutes = seconds / 60;
+  if (minutes < 60) return unit(minutes, 'minute');
+  if (minutes % (24 * 60) === 0) return unit(minutes / (24 * 60), 'day');
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest
+    ? `${unit(hours, 'hour')} ${unit(rest, 'minute')}`
+    : unit(hours, 'hour');
+}
+
+/** Settings as `key: value` pairs, in the order the connector sent them. */
+export function settingPairs(settings: ConnectorConfigSettings): string[] {
+  return Object.entries(settings).map(([k, v]) => `${k}: ${String(v)}`);
+}
+
+/** Where the post-deploy check connects: `host:port`, `host`, `port 8443`. */
+export function formatCheck(verify: ConnectorConfigVerify): string {
+  const { host, port } = verify;
+  if (host && port) return `${host.includes(':') ? `[${host}]` : host}:${port}`;
+  if (host) return host;
+  if (port) return `port ${port}`;
+  return 'Default host and port';
+}
+
+export interface ConfigDrift {
+  /** In the config, but outside the connector's allowedCertIds. */
+  notAllowed: number[];
+  /** In allowedCertIds, but not in the config. */
+  missing: number[];
+}
+
+/**
+ * Differences between what the connector is allowed to manage and what its
+ * config lists. Only certificate restrictions can be compared: with a
+ * domain restriction alone, any certificate in those domains is allowed.
+ */
+export function configDrift(
+  summary: Pick<ConnectorConfigSummary, 'certificates'>,
+  allowedCertIds: number[] | null,
+): ConfigDrift {
+  if (!allowedCertIds) return { notAllowed: [], missing: [] };
+  const allowed = new Set(allowedCertIds);
+  const configured = new Set(summary.certificates.map((c) => c.certificateId));
+  return {
+    notAllowed: [...configured].filter((id) => !allowed.has(id)),
+    missing: [...allowed].filter((id) => !configured.has(id)),
+  };
 }
