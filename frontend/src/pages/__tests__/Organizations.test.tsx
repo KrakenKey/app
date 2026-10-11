@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import type { Organization } from '../../services/organizationService';
 import Organizations from '../Organizations';
+import { ConfirmProvider } from '../../context/ConfirmContext';
 
 const { orgService, authUser } = vi.hoisted(() => ({
   orgService: {
@@ -65,7 +66,9 @@ const org: Organization = {
 function renderPage() {
   return render(
     <MemoryRouter>
-      <Organizations />
+      <ConfirmProvider>
+        <Organizations />
+      </ConfirmProvider>
     </MemoryRouter>,
   );
 }
@@ -135,7 +138,6 @@ describe('Organizations', () => {
 
   it('removes a member from the row menu', async () => {
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     renderPage();
     await screen.findByText('Devon Price');
 
@@ -149,14 +151,18 @@ describe('Organizations', () => {
       screen.getByRole('menuitem', { name: 'Remove from organization' }),
     );
 
-    expect(confirm).toHaveBeenCalled();
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Remove member?',
+    });
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Remove member' }),
+    );
     await waitFor(() =>
       expect(orgService.removeMember).toHaveBeenCalledWith(
         'org_1',
         'usr_devon',
       ),
     );
-    confirm.mockRestore();
   });
 
   it('hides management controls from a viewer, except leaving', async () => {
