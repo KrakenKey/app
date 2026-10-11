@@ -2,8 +2,6 @@ import { useState, useEffect } from 'react';
 import {
   Globe,
   Plus,
-  CheckCircle2,
-  AlertCircle,
   Trash2,
   Copy,
   ChevronDown,
@@ -207,13 +205,11 @@ function DomainCard({
             {domain.hostname}
           </h4>
           {domain.isVerified ? (
-            <Badge variant="success" dot>
-              <CheckCircle2 className="w-3 h-3 mr-1 inline" />
+            <Badge variant="ok" dot>
               Verified
             </Badge>
           ) : (
             <Badge variant="warning" dot>
-              <AlertCircle className="w-3 h-3 mr-1 inline" />
               Unverified
             </Badge>
           )}
@@ -222,7 +218,7 @@ function DomainCard({
           {!domain.isVerified && (
             <Button
               size="sm"
-              variant="secondary"
+              variant="primary"
               onClick={() => onVerify(domain)}
               disabled={isVerifying}
             >
@@ -231,7 +227,8 @@ function DomainCard({
           )}
           <Button
             size="sm"
-            variant="danger"
+            variant="ghost"
+            className="hover:text-red-300"
             icon={<Trash2 className="w-3.5 h-3.5" />}
             onClick={() => onDelete(domain)}
           >
@@ -245,14 +242,22 @@ function DomainCard({
         <div className="flex gap-2">
           <span className="text-zinc-500">Added:</span>
           <span className="text-zinc-300">
-            {new Date(domain.createdAt).toLocaleString()}
+            {new Date(domain.createdAt).toLocaleDateString(undefined, {
+              month: 'short',
+              day: 'numeric',
+              year: 'numeric',
+            })}
           </span>
         </div>
         {domain.isVerified && (
           <div className="flex gap-2">
             <span className="text-zinc-500">Verified:</span>
             <span className="text-zinc-300">
-              {new Date(domain.updatedAt).toLocaleString()}
+              {new Date(domain.updatedAt).toLocaleDateString(undefined, {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric',
+              })}
             </span>
           </div>
         )}
@@ -297,14 +302,14 @@ function DomainCard({
                   </div>
                   <div>
                     <span className="text-zinc-500">Name:</span>{' '}
-                    <code className="text-cyan-400">@</code>{' '}
+                    <code className="text-zinc-100 font-mono">@</code>{' '}
                     <span className="text-zinc-600">
                       (or leave blank for apex domain)
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-zinc-500">Value:</span>
-                    <code className="text-cyan-400 break-all">
+                    <code className="text-zinc-100 font-mono break-all">
                       {domain.verificationCode}
                     </code>
                     <Button
@@ -333,7 +338,7 @@ function DomainCard({
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-zinc-500">Name:</span>
-                    <code className="text-cyan-400 break-all">
+                    <code className="text-zinc-100 font-mono break-all">
                       _acme-challenge.{domain.hostname}
                     </code>
                     <Button
@@ -347,7 +352,7 @@ function DomainCard({
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-zinc-500">Target:</span>
-                    <code className="text-cyan-400 break-all">
+                    <code className="text-zinc-100 font-mono break-all">
                       {acmeCnameTarget(domain.hostname)}
                     </code>
                     <Button

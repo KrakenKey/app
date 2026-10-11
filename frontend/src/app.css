@@ -1,41 +1,105 @@
 @import "tailwindcss";
 
-/* Custom theme tokens — Vercel/Linear dark aesthetic */
+/*
+ * "Midnight" theme: the krakenkey.io navy slate palette with brand cyan as the
+ * action color. Semantic tokens drive the shared UI components; the zinc ramp
+ * is remapped to the same slate family so per-page classes (text-zinc-500,
+ * border-zinc-800, ...) follow the theme without touching every file.
+ */
 @theme {
-  --color-bg: #09090b;
-  --color-surface: #18181b;
-  --color-surface-elevated: #27272a;
-  --color-border: #3f3f46;
-  --color-border-subtle: #27272a;
-  --color-text: #fafafa;
-  --color-text-secondary: #a1a1aa;
-  --color-text-muted: #71717a;
+  /* Neutrals: navy slate, matching the marketing site */
+  --color-bg: #0c1222;
+  --color-bg-sunken: #0a0f1c;
+  --color-sidebar: #0a101e;
+  --color-surface: #1e293b;
+  --color-surface-elevated: #263348;
+  --color-surface-hover: #233046;
+  --color-border: #2c3a52;
+  --color-border-subtle: #243149;
+  --color-border-strong: #3b4b66;
+  --color-text: #f1f5f9;
+  --color-text-secondary: #cbd5e1;
+  --color-text-muted: #94a3b8;
+  --color-text-faint: #8a98ae;
+
+  /* Brand: cyan means "action / you are here", never a status */
   --color-accent: #06b6d4;
   --color-accent-hover: #22d3ee;
-  --color-success: #10b981;
-  --color-warning: #f59e0b;
-  --color-danger: #ef4444;
+  --color-accent-text: #22d3ee;
+  --color-accent-low: #083344;
+  --color-accent-high: #a5f3fc;
+
+  /* Status */
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+  --color-info: #a78bfa;
+
+  /* zinc ramp remapped to navy slate (AA: zinc-500 on surface is 5.0:1) */
+  --color-zinc-50: #f8fafc;
+  --color-zinc-100: #f1f5f9;
+  --color-zinc-200: #e2e8f0;
+  --color-zinc-300: #cbd5e1;
+  --color-zinc-400: #94a3b8;
+  --color-zinc-500: #8a98ae;
+  --color-zinc-600: #5b6b83;
+  --color-zinc-700: #3b4b66;
+  --color-zinc-800: #2c3a52;
+  --color-zinc-900: #1e293b;
+  --color-zinc-950: #0c1222;
+
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+
+  --shadow-card: inset 0 1px 0 0 rgb(255 255 255 / 0.035), 0 1px 2px 0 rgb(2 6 23 / 0.4);
+  --shadow-pop: 0 0 0 1px rgb(255 255 255 / 0.04), 0 12px 32px -8px rgb(2 6 23 / 0.7);
 }
 
-/* Base layer for global defaults */
 @layer base {
+  :root {
+    color-scheme: dark;
+    accent-color: var(--color-accent);
+  }
+
   body {
     @apply bg-bg text-text font-sans antialiased;
+    font-feature-settings: 'cv11', 'ss01';
   }
 
   * {
     @apply border-border;
   }
 
+  ::selection {
+    background: rgb(6 182 212 / 0.3);
+  }
+
   /* Global focus-visible ring for keyboard navigation */
   :focus-visible {
-    @apply outline-2 outline-offset-2 outline-zinc-500;
+    @apply outline-2 outline-offset-2 outline-accent;
   }
 
   /* Remove default focus outline for mouse users */
   :focus:not(:focus-visible) {
     outline: none;
   }
+
+  input[type='checkbox'],
+  input[type='radio'] {
+    accent-color: var(--color-accent);
+  }
+
+  select {
+    background-color: var(--color-bg);
+  }
+
+  /* Quiet, theme-colored scrollbars */
+  * {
+    scrollbar-color: #3b4b66 transparent;
+    scrollbar-width: thin;
+  }
+}
+
+@utility tnum {
+  font-variant-numeric: tabular-nums;
 }

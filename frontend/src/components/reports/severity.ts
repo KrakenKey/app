@@ -27,7 +27,7 @@ export const SEVERITY_RANK: Record<ReportSeverity, number> = {
 export const SEVERITY_TEXT: Record<ReportSeverity, string> = {
   critical: 'text-red-400',
   warning: 'text-amber-400',
-  notice: 'text-cyan-400',
+  notice: 'text-violet-300',
   ok: 'text-emerald-400',
 };
 

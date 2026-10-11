@@ -11,8 +11,11 @@ interface TableProps extends HTMLAttributes<HTMLTableElement> {
 
 export function Table({ children, className = '', ...props }: TableProps) {
   return (
-    <div className="overflow-x-auto">
-      <table className={`w-full text-sm ${className}`} {...props}>
+    <div className="relative overflow-x-auto">
+      <table
+        className={`w-full text-sm [&_tbody>tr:last-child]:border-b-0 ${className}`}
+        {...props}
+      >
         {children}
       </table>
     </div>
@@ -23,14 +26,15 @@ interface TableHeaderProps extends HTMLAttributes<HTMLTableSectionElement> {
   children: ReactNode;
 }
 
+/** Table head. Pass `TableHead` cells; they are wrapped in one row. */
 export function TableHeader({
   children,
   className = '',
   ...props
 }: TableHeaderProps) {
   return (
-    <thead className={`bg-zinc-900/50 ${className}`} {...props}>
-      {children}
+    <thead className={`border-b border-border-subtle ${className}`} {...props}>
+      <tr>{children}</tr>
     </thead>
   );
 }
@@ -46,7 +50,7 @@ export function TableRow({
 }: TableRowProps) {
   return (
     <tr
-      className={`border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors duration-100 ${className}`}
+      className={`border-b border-border-subtle hover:bg-white/[0.025] transition-colors duration-100 ${className}`}
       {...props}
     >
       {children}
@@ -65,7 +69,7 @@ export function TableHead({
 }: TableHeadProps) {
   return (
     <th
-      className={`px-4 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider ${className}`}
+      className={`px-4 py-2.5 text-left text-[11px] font-medium text-text-faint uppercase tracking-[0.06em] whitespace-nowrap ${className}`}
       {...props}
     >
       {children}
@@ -83,7 +87,10 @@ export function TableCell({
   ...props
 }: TableCellProps) {
   return (
-    <td className={`px-4 py-3 text-zinc-300 ${className}`} {...props}>
+    <td
+      className={`px-4 py-3 text-text-secondary align-middle ${className}`}
+      {...props}
+    >
       {children}
     </td>
   );

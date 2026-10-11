@@ -1,14 +1,11 @@
-import { Badge } from './Badge';
+import { Badge, type BadgeVariant } from './Badge';
 
-const planConfig: Record<
-  string,
-  { label: string; variant: 'neutral' | 'info' | 'success' | 'warning' }
-> = {
+const planConfig: Record<string, { label: string; variant: BadgeVariant }> = {
   free: { label: 'Free', variant: 'neutral' },
-  starter: { label: 'Starter', variant: 'info' },
-  team: { label: 'Team', variant: 'info' },
-  business: { label: 'Business', variant: 'success' },
-  enterprise: { label: 'Enterprise', variant: 'warning' },
+  starter: { label: 'Starter', variant: 'accent' },
+  team: { label: 'Team', variant: 'accent' },
+  business: { label: 'Business', variant: 'accent' },
+  enterprise: { label: 'Enterprise', variant: 'accent' },
 };
 
 interface PlanBadgeProps {
@@ -19,7 +16,7 @@ interface PlanBadgeProps {
 export function PlanBadge({ plan = 'free', className }: PlanBadgeProps) {
   const config = planConfig[plan] ?? planConfig.free;
   return (
-    <Badge variant={config.variant} className={className}>
+    <Badge variant={config.variant} dot={false} className={className}>
       {config.label}
     </Badge>
   );

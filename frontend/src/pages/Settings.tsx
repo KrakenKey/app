@@ -164,6 +164,7 @@ const Settings: React.FC = () => {
     <div>
       <PageHeader
         title="Account Settings"
+        description="Your profile, email notifications and alert channels."
         icon={<SettingsIcon className="w-6 h-6" />}
       />
 

@@ -301,7 +301,7 @@ export default function CsrGenerator({
           </details>
         </Card>
 
-        <div className="bg-cyan-500/10 border border-cyan-500/30 rounded-lg p-4 text-sm text-cyan-400">
+        <div className="bg-violet-400/[0.07] border border-violet-400/25 rounded-lg p-4 text-sm text-violet-200">
           The CSR has been populated in the certificate request form. Review it
           and click "Submit CSR" to request your certificate.
         </div>
@@ -686,7 +686,7 @@ export default function CsrGenerator({
             shown again.
           </label>
         ) : (
-          <div className="p-3 bg-cyan-500/10 border border-cyan-500/30 rounded-lg text-center text-sm text-cyan-400 mb-4">
+          <div className="p-3 bg-violet-400/[0.07] border border-violet-400/25 rounded-lg text-center text-sm text-violet-200 mb-4">
             Please read the warning above carefully...
           </div>
         )}

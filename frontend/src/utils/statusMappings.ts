@@ -13,12 +13,12 @@ export const STATUS_LABEL: Record<CertStatus, string> = {
 
 export const STATUS_BADGE_VARIANT: Record<
   CertStatus,
-  'success' | 'warning' | 'danger' | 'info' | 'neutral'
+  'success' | 'ok' | 'warning' | 'danger' | 'info' | 'neutral'
 > = {
   [CertStatus.AWAITING_CSR]: 'neutral',
   [CertStatus.PENDING]: 'neutral',
   [CertStatus.ISSUING]: 'info',
-  [CertStatus.ISSUED]: 'success',
+  [CertStatus.ISSUED]: 'ok',
   [CertStatus.FAILED]: 'danger',
   [CertStatus.RENEWING]: 'info',
   [CertStatus.REVOKING]: 'warning',
