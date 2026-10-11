@@ -75,8 +75,34 @@ export function EditLimitsModal({
   };
 
   return (
-    <Modal open onClose={close} title="Edit Access and Restrictions" size="lg">
+    <Modal
+      open
+      onClose={close}
+      title="Edit Access and Restrictions"
+      size="lg"
+      footer={
+        <>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={close}
+            disabled={saving}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            form="edit-connector-limits-form"
+            variant="primary"
+            disabled={saving}
+          >
+            {saving ? 'Saving...' : 'Save'}
+          </Button>
+        </>
+      }
+    >
       <form
+        id="edit-connector-limits-form"
         onSubmit={handleSubmit}
         aria-label="Edit connector limits"
         className="flex flex-col gap-5"
@@ -95,20 +121,6 @@ export function EditLimitsModal({
           Saving revokes the connector's current short-lived keys, so the new
           limits apply from its next check.
         </p>
-
-        <div className="flex justify-end gap-2 pt-1">
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={close}
-            disabled={saving}
-          >
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" disabled={saving}>
-            {saving ? 'Saving...' : 'Save'}
-          </Button>
-        </div>
       </form>
     </Modal>
   );

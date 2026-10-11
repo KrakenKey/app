@@ -307,7 +307,7 @@ describe('ConnectorDetail', () => {
       expect(config.getByText('1 hour')).toBeInTheDocument();
 
       const plugins = within(config.getByRole('table', { name: 'Plugins' }));
-      const rows = plugins.getAllByRole('row');
+      const rows = plugins.getAllByRole('row').slice(1); // skip the header row
       expect(rows[0]).toHaveTextContent('azure-keyvault0.3.0Bundled');
       expect(rows[1]).toHaveTextContent('file—Built in');
 
@@ -325,7 +325,7 @@ describe('ConnectorDetail', () => {
       const targets = within(
         config.getByRole('table', { name: 'Targets for certificate #1' }),
       );
-      const [vault, nginx, haproxy] = targets.getAllByRole('row');
+      const [vault, nginx, haproxy] = targets.getAllByRole('row').slice(1);
       expect(
         within(vault).getByText('Added automatically'),
       ).toBeInTheDocument();

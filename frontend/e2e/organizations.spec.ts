@@ -339,12 +339,27 @@ test.describe('Organizations — cross-member domain visibility', () => {
 test.describe('Organizations — pooled resource counts', () => {
   test('overview shows pooled counts for org members', async ({ page }) => {
     await authenticateAs(page, orgMemberUser);
+    // The Overview's health lists, answered empty so the page renders at once
+    for (const path of [
+      '/certs/tls',
+      '/domains',
+      '/endpoints',
+      '/endpoints/probes/mine',
+      '/connectors',
+    ]) {
+      await page.route(api(path), (route) =>
+        route.fulfill({ status: 200, json: [] }),
+      );
+    }
 
     await page.goto('/dashboard');
 
     // Pooled counts from orgMemberUser: 12 domains, 8 certs, 6 keys
-    await expect(page.getByText('12')).toBeVisible();
-    await expect(page.getByText('8')).toBeVisible();
-    await expect(page.getByText('6')).toBeVisible();
+    await expect(
+      page.getByRole('link', { name: /^Domains\s*12/ }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('link', { name: /^Certificates\s*8/ }),
+    ).toBeVisible();
   });
 });

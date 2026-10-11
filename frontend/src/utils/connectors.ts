@@ -12,7 +12,13 @@ import type {
   ConnectorPluginSource,
 } from '@krakenkey/shared';
 
-type BadgeVariant = 'success' | 'warning' | 'danger' | 'info' | 'neutral';
+type BadgeVariant =
+  | 'success'
+  | 'ok'
+  | 'warning'
+  | 'danger'
+  | 'info'
+  | 'neutral';
 
 export type ConnectorStatus =
   | 'waiting'
@@ -32,7 +38,7 @@ export const CONNECTOR_STATUS_LABEL: Record<ConnectorStatus, string> = {
 export const CONNECTOR_STATUS_VARIANT: Record<ConnectorStatus, BadgeVariant> = {
   waiting: 'neutral',
   expired: 'warning',
-  active: 'success',
+  active: 'ok',
   stale: 'warning',
   revoked: 'danger',
 };
@@ -93,8 +99,8 @@ export const DEPLOYMENT_STATE_VARIANT: Record<
 > = {
   pending: 'neutral',
   staged: 'info',
-  activated: 'success',
-  verified: 'success',
+  activated: 'ok',
+  verified: 'ok',
   activated_unverifiable: 'warning',
   failed: 'danger',
   rolled_back: 'danger',

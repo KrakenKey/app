@@ -1,4 +1,5 @@
 import type { TextareaHTMLAttributes } from 'react';
+import { fieldClass } from './Input';
 
 interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   label?: string;
@@ -21,19 +22,19 @@ export function Textarea({
       {label && (
         <label
           htmlFor={textareaId}
-          className="text-sm font-medium text-zinc-300"
+          className="text-sm font-medium text-text-secondary"
         >
           {label}
         </label>
       )}
       <textarea
         id={textareaId}
-        className={`bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-zinc-600 focus:ring-1 focus:ring-zinc-600 focus:outline-none transition-colors duration-150 resize-y min-h-[80px] disabled:opacity-50 ${error ? 'border-red-500/50' : ''} ${className}`}
+        className={`${fieldClass} resize-y min-h-[80px] ${error ? 'border-red-400/60' : ''} ${className}`}
         {...props}
       />
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && <p className="text-xs text-red-300">{error}</p>}
       {helpText && !error && (
-        <p className="text-xs text-zinc-500">{helpText}</p>
+        <p className="text-xs text-text-muted">{helpText}</p>
       )}
     </div>
   );

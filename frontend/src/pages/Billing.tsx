@@ -121,7 +121,7 @@ export default function Billing() {
 
   if (loading) {
     return (
-      <div className="p-6 max-w-4xl mx-auto">
+      <div className="max-w-4xl">
         <PageHeader
           title="Billing"
           description="Manage your subscription and billing"
@@ -133,7 +133,7 @@ export default function Billing() {
   }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div className="max-w-4xl">
       <PageHeader
         title="Billing"
         description="Manage your subscription and billing"

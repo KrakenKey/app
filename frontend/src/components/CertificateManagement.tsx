@@ -1,7 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Fragment } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Shield,
   Plus,
+  KeyRound,
+  ArrowUp,
+  ArrowDown,
   Download,
   Copy,
   RefreshCw,
@@ -32,6 +36,9 @@ import * as certService from '../services/certificateService';
 import CsrGenerator from './CsrGenerator';
 import { CertificateDeployments } from './connectors/CertificateDeployments';
 import { Card } from './ui/Card';
+import { Modal } from './ui/Modal';
+import { RowMenu, type MenuItem } from './ui/Menu';
+import { fieldClass } from './ui/Input';
 import { Button } from './ui/Button';
 import { Badge } from './ui/Badge';
 import { Textarea } from './ui/Textarea';
@@ -42,8 +49,8 @@ import { EmptyState } from './ui/EmptyState';
 const requestModeCardClass = (selected: boolean) =>
   `flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
     selected
-      ? 'border-cyan-500/50 bg-cyan-500/5'
-      : 'border-zinc-800 hover:border-zinc-700 hover:bg-zinc-800/30'
+      ? 'border-cyan-400/50 bg-cyan-400/[0.06] shadow-[inset_0_0_0_1px_rgb(34_211_238/0.15)]'
+      : 'border-border-strong/70 hover:border-border-strong hover:bg-white/[0.02]'
   }`;
 
 export default function CertificateManagement() {
@@ -52,7 +59,14 @@ export default function CertificateManagement() {
   const [submitting, setSubmitting] = useState(false);
   const [csrPem, setCsrPem] = useState('');
   const [showCsrGenerator, setShowCsrGenerator] = useState(false);
-  const [viewMode, setViewMode] = useState<'card' | 'table'>('card');
+  const [viewMode, setViewMode] = useState<'card' | 'table'>('table');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [requestOpen, setRequestOpen] = useState(
+    () => searchParams.get('request') === '1',
+  );
+  const [filter, setFilter] = useState<'all' | 'attention' | 'connector'>(
+    'all',
+  );
   const [requestMode, setRequestMode] = useState<'csr' | 'connector'>('csr');
   const [namesText, setNamesText] = useState('');
   const [namesError, setNamesError] = useState<string | null>(null);
@@ -152,6 +166,7 @@ export default function CertificateManagement() {
       const response = await certService.submitCsr(csrPem.trim());
       toast.success(`Certificate request #${response.id} submitted!`);
       setCsrPem('');
+      setRequestOpen(false);
       await fetchCerts();
     } catch (error) {
       console.error('Failed to submit CSR:', error);
@@ -183,6 +198,7 @@ export default function CertificateManagement() {
         `Pending certificate #${response.id} created. Add id ${response.id} to the connector's config.`,
       );
       setNamesText('');
+      setRequestOpen(false);
       await fetchCerts();
     } catch (error) {
       // The API client already shows the server's message.
@@ -312,6 +328,37 @@ export default function CertificateManagement() {
     toast.success('CSR populated! Review and submit when ready.');
   };
 
+  const closeRequest = () => {
+    setRequestOpen(false);
+    setShowCsrGenerator(false);
+    if (searchParams.has('request')) {
+      searchParams.delete('request');
+      setSearchParams(searchParams, { replace: true });
+    }
+  };
+
+  const attentionCount = certs.filter(certNeedsAttention).length;
+  const connectorCount = certs.filter(
+    (c) => c.managedBy === 'connector',
+  ).length;
+  const visibleCerts = certs.filter((c) =>
+    filter === 'attention'
+      ? certNeedsAttention(c)
+      : filter === 'connector'
+        ? c.managedBy === 'connector'
+        : true,
+  );
+
+  const requestButton = (
+    <Button
+      variant="primary"
+      icon={<Plus className="w-4 h-4" />}
+      onClick={() => setRequestOpen(true)}
+    >
+      Request certificate
+    </Button>
+  );
+
   if (loading) {
     return (
       <div>
@@ -328,16 +375,34 @@ export default function CertificateManagement() {
     <div>
       <PageHeader
         title="Certificates"
-        description="Submit CSR requests and manage your TLS certificates"
+        description="Every certificate on your account, its expiry, and how it renews."
         icon={<Shield className="w-6 h-6" />}
+        actions={
+          <>
+            <Button
+              variant="secondary"
+              icon={<KeyRound className="w-4 h-4" />}
+              onClick={() => {
+                setRequestMode('csr');
+                setShowCsrGenerator(true);
+                setRequestOpen(true);
+              }}
+            >
+              Generate New CSR
+            </Button>
+            {requestButton}
+          </>
+        }
       />
 
-      {/* Request Form */}
-      <Card className="mb-6">
-        <h3 className="text-sm font-medium text-zinc-400 mb-4">
-          Request a Certificate
-        </h3>
-
+      {/* Request a certificate (modal) */}
+      <Modal
+        open={requestOpen}
+        onClose={closeRequest}
+        title="Request a Certificate"
+        description="The private key stays with you: in this browser, on your own machine, or on a connector's server."
+        size="xl"
+      >
         <fieldset disabled={submitting} className="mb-5">
           <legend className="sr-only">How the key is created</legend>
           <div className="grid gap-2 sm:grid-cols-2">
@@ -348,13 +413,13 @@ export default function CertificateManagement() {
                 value="csr"
                 checked={requestMode === 'csr'}
                 onChange={() => setRequestMode('csr')}
-                className="accent-cyan-500 mt-0.5"
+                className="mt-0.5"
               />
               <span>
-                <span className="block text-sm font-medium text-zinc-200">
+                <span className="block text-sm font-medium text-zinc-100">
                   With a CSR
                 </span>
-                <span className="block text-xs text-zinc-500">
+                <span className="block text-xs text-zinc-400 mt-0.5">
                   Generate a key and CSR in your browser, or paste a CSR you
                   made yourself.
                 </span>
@@ -372,13 +437,13 @@ export default function CertificateManagement() {
                   setRequestMode('connector');
                   setShowCsrGenerator(false);
                 }}
-                className="accent-cyan-500 mt-0.5"
+                className="mt-0.5"
               />
               <span>
-                <span className="block text-sm font-medium text-zinc-200">
+                <span className="block text-sm font-medium text-zinc-100">
                   Issued by a connector
                 </span>
-                <span className="block text-xs text-zinc-500">
+                <span className="block text-xs text-zinc-400 mt-0.5">
                   Give the names. A connector creates the key on its own server
                   and issues the certificate.
                 </span>
@@ -409,8 +474,8 @@ export default function CertificateManagement() {
               helpText={`One per line, or separated by commas. Wildcards such as *.example.com are allowed. Each name must be on one of your verified domains. Up to ${MAX_REQUESTED_NAMES}.`}
               className="font-mono"
             />
-            <p className="text-xs text-zinc-500 flex items-start gap-1.5">
-              <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <p className="text-xs text-zinc-400 flex items-start gap-2 rounded-lg border border-border-subtle bg-bg/40 p-3">
+              <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-violet-300" />
               <span>
                 The certificate waits as Awaiting CSR. The connector creates the
                 private key, which never leaves its server, and sends a CSR for
@@ -422,9 +487,11 @@ export default function CertificateManagement() {
                 restrictions on the connector's page.
               </span>
             </p>
-            <Button type="submit" variant="primary" disabled={submitting}>
-              {submitting ? 'Creating...' : 'Create Pending Certificate'}
-            </Button>
+            <div className="flex justify-end">
+              <Button type="submit" variant="primary" disabled={submitting}>
+                {submitting ? 'Creating...' : 'Create Pending Certificate'}
+              </Button>
+            </div>
           </form>
         ) : showCsrGenerator ? (
           <CsrGenerator
@@ -432,120 +499,587 @@ export default function CertificateManagement() {
             onCancel={() => setShowCsrGenerator(false)}
           />
         ) : (
-          <>
-            <p className="text-sm text-zinc-500 mb-4">
-              You can either generate a new CSR (with a new private key) or
-              paste an existing CSR.
-            </p>
-            <div className="flex items-center gap-3 mb-4">
+          <form onSubmit={handleSubmitCsr} className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <label
+                htmlFor="csr-pem"
+                className="text-sm font-medium text-zinc-300"
+              >
+                Certificate signing request
+              </label>
               <Button
                 variant="secondary"
-                icon={<Plus className="w-3.5 h-3.5" />}
+                size="sm"
+                icon={<KeyRound className="w-3.5 h-3.5" />}
                 onClick={() => setShowCsrGenerator(true)}
                 disabled={submitting}
               >
                 Generate New CSR
               </Button>
-              <span className="text-sm text-zinc-600">or</span>
             </div>
-
-            <form onSubmit={handleSubmitCsr}>
-              <textarea
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 font-mono text-sm text-zinc-300 placeholder-zinc-600 focus:border-zinc-600 focus:ring-1 focus:ring-zinc-600 focus:outline-none resize-y"
-                placeholder={
-                  '-----BEGIN CERTIFICATE REQUEST-----\nPaste your PEM-encoded CSR here...\n-----END CERTIFICATE REQUEST-----'
-                }
-                value={csrPem}
-                onChange={(e) => setCsrPem(e.target.value)}
-                disabled={submitting}
-                rows={6}
-              />
-              <Button
-                type="submit"
-                variant="primary"
-                disabled={submitting}
-                className="mt-3"
-              >
+            <textarea
+              id="csr-pem"
+              className={`${fieldClass} w-full font-mono text-[13px] resize-y`}
+              placeholder={
+                '-----BEGIN CERTIFICATE REQUEST-----\nPaste your PEM-encoded CSR here...\n-----END CERTIFICATE REQUEST-----'
+              }
+              value={csrPem}
+              onChange={(e) => setCsrPem(e.target.value)}
+              disabled={submitting}
+              rows={7}
+            />
+            <p className="text-xs text-zinc-400">
+              Paste an existing CSR, or generate a new key and CSR in this
+              browser. Issuance usually takes 2 to 5 minutes.
+            </p>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button type="button" variant="ghost" onClick={closeRequest}>
+                Cancel
+              </Button>
+              <Button type="submit" variant="primary" disabled={submitting}>
                 {submitting ? 'Submitting...' : 'Submit CSR'}
               </Button>
-            </form>
-          </>
+            </div>
+          </form>
         )}
-      </Card>
+      </Modal>
 
       {/* Certificates List */}
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-medium text-zinc-400">
-            Your Certificates ({certs.length})
-          </h3>
-          {certs.length > 0 && (
-            <div className="flex rounded-lg border border-zinc-800 overflow-hidden">
-              <button
-                className={`px-3 py-1 text-xs cursor-pointer transition-colors ${viewMode === 'card' ? 'bg-zinc-800 text-zinc-200' : 'text-zinc-500 hover:text-zinc-300'}`}
-                onClick={() => setViewMode('card')}
-              >
-                Cards
-              </button>
-              <button
-                className={`px-3 py-1 text-xs cursor-pointer transition-colors ${viewMode === 'table' ? 'bg-zinc-800 text-zinc-200' : 'text-zinc-500 hover:text-zinc-300'}`}
-                onClick={() => setViewMode('table')}
-              >
-                Table
-              </button>
-            </div>
-          )}
-        </div>
-
-        {certs.length === 0 ? (
-          <Card>
-            <EmptyState
-              icon={<Shield className="w-8 h-8" />}
-              title="No certificates yet"
-              description="Submit a CSR above to request your first certificate."
-            />
-          </Card>
-        ) : viewMode === 'card' ? (
-          <div className="space-y-4">
-            {certs.map((cert) => (
-              <CertCard
-                key={cert.id}
-                cert={cert}
-                isPolling={pollingIds.has(cert.id)}
-                isRenewing={renewing.has(cert.id)}
-                isRetrying={retrying.has(cert.id)}
-                isRevoking={revoking.has(cert.id)}
-                isDeleting={deleting.has(cert.id)}
-                isTogglingAutoRenew={togglingAutoRenew.has(cert.id)}
-                onDownload={handleDownload}
-                onCopy={copyToClipboard}
-                onRenew={handleRenewCert}
-                onRetry={handleRetryCert}
-                onRevoke={handleRevokeCert}
-                onDelete={handleDeleteCert}
-                onToggleAutoRenew={handleToggleAutoRenew}
-              />
-            ))}
-          </div>
-        ) : (
-          <CertTable
-            certs={certs}
-            pollingIds={pollingIds.ids}
-            renewingIds={renewing.ids}
-            retryingIds={retrying.ids}
-            revokingIds={revoking.ids}
-            deletingIds={deleting.ids}
-            togglingAutoRenewIds={togglingAutoRenew.ids}
-            onDownload={handleDownload}
-            onCopy={copyToClipboard}
-            onRenew={handleRenewCert}
-            onRetry={handleRetryCert}
-            onRevoke={handleRevokeCert}
-            onDelete={handleDeleteCert}
-            onToggleAutoRenew={handleToggleAutoRenew}
+      {certs.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon={<Shield className="w-6 h-6" />}
+            title="No certificates yet"
+            description="Request your first certificate with a CSR, or let a connector create the key."
+            action={requestButton}
           />
+        </Card>
+      ) : (
+        <Card flush>
+          <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 border-b border-border-subtle">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <h3 className="text-sm font-semibold text-zinc-100 whitespace-nowrap">
+                Your Certificates ({certs.length})
+              </h3>
+              <div
+                role="group"
+                aria-label="Filter certificates"
+                className="flex items-center gap-1"
+              >
+                {(
+                  [
+                    ['all', 'All', certs.length],
+                    ['attention', 'Needs attention', attentionCount],
+                    ['connector', 'Connector', connectorCount],
+                  ] as const
+                ).map(([key, label, n]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    aria-pressed={filter === key}
+                    onClick={() => setFilter(key)}
+                    className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                      filter === key
+                        ? 'bg-white/[0.07] text-zinc-100'
+                        : 'text-zinc-400 hover:text-zinc-100'
+                    }`}
+                  >
+                    {label}
+                    <span className="tnum text-zinc-500">{n}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex rounded-lg border border-border-strong/70 p-0.5">
+              {(['table', 'card'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  className={`px-2.5 h-6 rounded-md text-xs cursor-pointer transition-colors ${viewMode === mode ? 'bg-white/[0.08] text-zinc-100' : 'text-zinc-400 hover:text-zinc-200'}`}
+                  onClick={() => setViewMode(mode)}
+                >
+                  {mode === 'table' ? 'Table' : 'Cards'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {visibleCerts.length === 0 ? (
+            <p className="px-5 py-10 text-center text-sm text-zinc-400">
+              No certificates match this filter.
+            </p>
+          ) : viewMode === 'card' ? (
+            <div className="space-y-4 p-4 sm:p-5">
+              {visibleCerts.map((cert) => (
+                <CertCard
+                  key={cert.id}
+                  cert={cert}
+                  isPolling={pollingIds.has(cert.id)}
+                  isRenewing={renewing.has(cert.id)}
+                  isRetrying={retrying.has(cert.id)}
+                  isRevoking={revoking.has(cert.id)}
+                  isDeleting={deleting.has(cert.id)}
+                  isTogglingAutoRenew={togglingAutoRenew.has(cert.id)}
+                  onDownload={handleDownload}
+                  onCopy={copyToClipboard}
+                  onRenew={handleRenewCert}
+                  onRetry={handleRetryCert}
+                  onRevoke={handleRevokeCert}
+                  onDelete={handleDeleteCert}
+                  onToggleAutoRenew={handleToggleAutoRenew}
+                />
+              ))}
+            </div>
+          ) : (
+            <CertTable
+              certs={visibleCerts}
+              pollingIds={pollingIds.ids}
+              renewingIds={renewing.ids}
+              retryingIds={retrying.ids}
+              revokingIds={revoking.ids}
+              deletingIds={deleting.ids}
+              togglingAutoRenewIds={togglingAutoRenew.ids}
+              onDownload={handleDownload}
+              onCopy={copyToClipboard}
+              onRenew={handleRenewCert}
+              onRetry={handleRetryCert}
+              onRevoke={handleRevokeCert}
+              onDelete={handleDeleteCert}
+              onToggleAutoRenew={handleToggleAutoRenew}
+            />
+          )}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/** Failed, expiring within 30 days, or waiting on someone. */
+function certNeedsAttention(cert: TlsCert): boolean {
+  if (cert.status === CertStatus.FAILED) return true;
+  if (cert.status !== CertStatus.ISSUED) return false;
+  const exp = getExpirationInfo(cert);
+  return !!exp && exp.daysUntilExpiry <= 30;
+}
+
+function shortDate(d: Date | string): string {
+  return new Date(d).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+/** Expiry as "Dec 12, 2026" plus days left; only near expiry is colored. */
+function ExpiryText({ cert }: { cert: TlsCert }) {
+  if (cert.status === CertStatus.REVOKED && cert.revokedAt) {
+    return (
+      <span className="text-zinc-400 whitespace-nowrap">
+        Revoked {shortDate(cert.revokedAt)}
+      </span>
+    );
+  }
+  const exp = getExpirationInfo(cert);
+  if (!exp) return <span className="text-zinc-600">&mdash;</span>;
+  const tone = exp.isExpired
+    ? 'text-red-300'
+    : exp.daysUntilExpiry <= 7
+      ? 'text-red-300'
+      : exp.daysUntilExpiry <= 30
+        ? 'text-amber-300'
+        : 'text-zinc-500';
+  return (
+    <span className="whitespace-nowrap tnum">
+      <span className="text-zinc-200">{shortDate(exp.expiresAt)}</span>{' '}
+      <span className={tone}>
+        {exp.isExpired ? '(Expired)' : `(${exp.daysUntilExpiry}d)`}
+      </span>
+    </span>
+  );
+}
+
+function AutoRenewSwitch({
+  cert,
+  disabled,
+  onToggle,
+  long = false,
+}: {
+  cert: TlsCert;
+  disabled: boolean;
+  onToggle: (cert: TlsCert) => void;
+  long?: boolean;
+}) {
+  return (
+    <label className="relative inline-flex items-center gap-2 cursor-pointer select-none">
+      <input
+        type="checkbox"
+        role="switch"
+        checked={cert.autoRenew}
+        disabled={disabled}
+        onChange={() => onToggle(cert)}
+        className="peer sr-only"
+      />
+      <span
+        aria-hidden="true"
+        className={`relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-full transition-colors peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent ${
+          cert.autoRenew ? 'bg-cyan-500/55' : 'bg-zinc-700'
+        }`}
+      >
+        <span
+          className={`h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
+            cert.autoRenew ? 'translate-x-[16px]' : 'translate-x-[2px]'
+          }`}
+        />
+      </span>
+      <span className="text-sm text-zinc-300">
+        {long
+          ? cert.autoRenew
+            ? 'Enabled'
+            : 'Disabled'
+          : cert.autoRenew
+            ? 'On'
+            : 'Off'}
+      </span>
+    </label>
+  );
+}
+
+interface CertActionProps {
+  cert: TlsCert;
+  isRenewing: boolean;
+  isRetrying: boolean;
+  isRevoking: boolean;
+  isDeleting: boolean;
+  onDownload: (cert: TlsCert) => void;
+  onCopy: (text: string) => void;
+  onRenew: (cert: TlsCert) => void;
+  onRetry: (cert: TlsCert) => void;
+  onRevoke: (cert: TlsCert) => void;
+  onDelete: (cert: TlsCert) => void;
+}
+
+/**
+ * Row actions: the one action that moves the certificate forward (Renew,
+ * Retry), Download, then everything else, destructive ones last, in the
+ * overflow menu.
+ */
+function CertActions({
+  cert,
+  isRenewing,
+  isRetrying,
+  isRevoking,
+  isDeleting,
+  onDownload,
+  onCopy,
+  onRenew,
+  onRetry,
+  onRevoke,
+  onDelete,
+}: CertActionProps) {
+  const name = getCertDomains(cert)[0] ?? `#${cert.id}`;
+  const usable = !!cert.crtPem && cert.status !== CertStatus.REVOKED;
+  const menu: MenuItem[] = [];
+  // On narrow screens the inline buttons are hidden; the menu has them.
+  if (cert.status === CertStatus.ISSUED) {
+    menu.push({
+      label: isRenewing ? 'Renewing...' : 'Renew',
+      icon: <RefreshCw className="w-3.5 h-3.5" />,
+      onClick: () => onRenew(cert),
+      disabled: isRenewing || isRevoking,
+      className: 'sm:hidden',
+    });
+  }
+  if (cert.status === CertStatus.FAILED) {
+    menu.push({
+      label: isRetrying ? 'Retrying...' : 'Retry',
+      icon: <RefreshCw className="w-3.5 h-3.5" />,
+      onClick: () => onRetry(cert),
+      disabled: isRetrying || isDeleting,
+      className: 'sm:hidden',
+    });
+  }
+  if (usable) {
+    menu.push({
+      label: 'Download',
+      icon: <Download className="w-3.5 h-3.5" />,
+      onClick: () => onDownload(cert),
+      className: 'sm:hidden',
+    });
+  }
+  if (usable) {
+    menu.push({
+      label: 'Copy PEM',
+      icon: <Copy className="w-3.5 h-3.5" />,
+      onClick: () => onCopy(cert.crtPem!),
+    });
+  }
+  if (cert.status === CertStatus.ISSUED) {
+    menu.push({
+      label: isRevoking ? 'Revoking...' : 'Revoke',
+      icon: <Ban className="w-3.5 h-3.5" />,
+      onClick: () => onRevoke(cert),
+      danger: true,
+      disabled: isRevoking || isRenewing,
+    });
+  }
+  if (
+    cert.status === CertStatus.FAILED ||
+    cert.status === CertStatus.REVOKED ||
+    cert.status === CertStatus.AWAITING_CSR
+  ) {
+    menu.push({
+      label: isDeleting ? 'Deleting...' : 'Delete',
+      icon: <Trash2 className="w-3.5 h-3.5" />,
+      onClick: () => onDelete(cert),
+      danger: true,
+      disabled: isDeleting || isRetrying,
+    });
+  }
+
+  return (
+    <div className="flex items-center justify-end gap-1.5">
+      <div className="hidden sm:flex items-center gap-1.5">
+        {cert.status === CertStatus.ISSUED && (
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={<RefreshCw className="w-3.5 h-3.5" />}
+            onClick={() => onRenew(cert)}
+            disabled={isRenewing || isRevoking}
+          >
+            {isRenewing ? 'Renewing...' : 'Renew'}
+          </Button>
+        )}
+        {cert.status === CertStatus.FAILED && (
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={<RefreshCw className="w-3.5 h-3.5" />}
+            onClick={() => onRetry(cert)}
+            disabled={isRetrying || isDeleting}
+          >
+            {isRetrying ? 'Retrying...' : 'Retry'}
+          </Button>
+        )}
+        {usable && (
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<Download className="w-3.5 h-3.5" />}
+            onClick={() => onDownload(cert)}
+          >
+            Download
+          </Button>
         )}
       </div>
+      <RowMenu items={menu} label={`More actions for ${name}`} />
+    </div>
+  );
+}
+
+/* ── Details panel (card body and expanded table row) ──────────────────── */
+
+function DetailRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="grid grid-cols-[120px_1fr] gap-3 py-1">
+      <dt className="text-zinc-500">{label}</dt>
+      <dd className="text-zinc-200 min-w-0 break-words">{children}</dd>
+    </div>
+  );
+}
+
+function CertDetailsPanel({
+  cert,
+  isTogglingAutoRenew,
+  onToggleAutoRenew,
+}: {
+  cert: TlsCert;
+  isTogglingAutoRenew: boolean;
+  onToggleAutoRenew: (cert: TlsCert) => void;
+}) {
+  const [showPem, setShowPem] = useState(false);
+  const [showCertDetails, setShowCertDetails] = useState(false);
+  const [certDetails, setCertDetails] = useState<TlsCertDetails | null>(null);
+  const [loadingDetails, setLoadingDetails] = useState(false);
+  const domains = getCertDomains(cert);
+  const expirationInfo = getExpirationInfo(cert);
+  const revoked = cert.status === CertStatus.REVOKED;
+
+  const fetchCertDetails = useCallback(async () => {
+    if (certDetails || loadingDetails) return;
+    setLoadingDetails(true);
+    try {
+      const details = await certService.fetchCertificateDetails(cert.id);
+      setCertDetails(details);
+    } catch {
+      toast.error('Failed to load certificate details');
+    } finally {
+      setLoadingDetails(false);
+    }
+  }, [cert.id, certDetails, loadingDetails]);
+
+  const handleToggleCertDetails = () => {
+    const next = !showCertDetails;
+    setShowCertDetails(next);
+    if (next && !certDetails) fetchCertDetails();
+  };
+
+  const toggleClass =
+    'flex items-center gap-1.5 text-sm text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer bg-transparent border-none p-0';
+
+  return (
+    <div className="text-sm">
+      <dl>
+        <DetailRow label="ID">
+          <span className="tnum">#{cert.id}</span>
+        </DetailRow>
+        {domains.length > 0 && (
+          <DetailRow label="Domains">{domains.join(', ')}</DetailRow>
+        )}
+        {cert.managedBy === 'connector' && (
+          <DetailRow label="Managed by">
+            A connector, which renews it with its own keys
+          </DetailRow>
+        )}
+        {cert.status === CertStatus.AWAITING_CSR && (
+          <DetailRow label="State">
+            Awaiting CSR from connector. The connector creates the key and sends
+            a CSR for these names; nothing is sent to the CA until then.
+          </DetailRow>
+        )}
+        {cert.status === CertStatus.FAILED && cert.failureReason && (
+          <DetailRow label="Reason">
+            <span className="text-red-300">{cert.failureReason}</span>
+          </DetailRow>
+        )}
+        {expirationInfo && !revoked && (
+          <DetailRow label="Expiration">
+            <ExpiryText cert={cert} />
+          </DetailRow>
+        )}
+        {cert.lastRenewedAt && (
+          <DetailRow label="Last renewed">
+            {shortDate(cert.lastRenewedAt)}
+          </DetailRow>
+        )}
+        {cert.revokedAt && (
+          <DetailRow label="Revoked">{shortDate(cert.revokedAt)}</DetailRow>
+        )}
+        {cert.renewalCount > 0 && (
+          <DetailRow label="Renewals">
+            <span className="tnum">{cert.renewalCount}</span>
+          </DetailRow>
+        )}
+        {cert.status !== CertStatus.AWAITING_CSR && !revoked && (
+          <DetailRow label="Auto-renew">
+            <AutoRenewSwitch
+              cert={cert}
+              disabled={isTogglingAutoRenew}
+              onToggle={onToggleAutoRenew}
+              long
+            />
+          </DetailRow>
+        )}
+      </dl>
+
+      {cert.managedBy === 'connector' && (
+        <CertificateDeployments certificateId={cert.id} />
+      )}
+
+      {cert.crtPem && !revoked && (
+        <div className="border-t border-border-subtle pt-3 mt-3">
+          <button onClick={handleToggleCertDetails} className={toggleClass}>
+            {showCertDetails ? (
+              <ChevronDown className="w-4 h-4" />
+            ) : (
+              <ChevronRight className="w-4 h-4" />
+            )}
+            Certificate Details
+          </button>
+          {showCertDetails &&
+            (loadingDetails ? (
+              <p className="text-sm text-zinc-500 mt-2">Loading details...</p>
+            ) : certDetails ? (
+              <dl className="mt-2">
+                <DetailRow label="Serial number">
+                  <span className="font-mono text-xs">
+                    {certDetails.serialNumber}
+                  </span>
+                </DetailRow>
+                <DetailRow label="Issuer">{certDetails.issuer}</DetailRow>
+                <DetailRow label="Subject">{certDetails.subject}</DetailRow>
+                <DetailRow label="Valid from">
+                  {shortDate(certDetails.validFrom)}
+                </DetailRow>
+                <DetailRow label="Valid to">
+                  {shortDate(certDetails.validTo)}
+                </DetailRow>
+                <DetailRow label="Key type">
+                  {certDetails.keyType} {certDetails.keySize}-bit
+                </DetailRow>
+                <DetailRow label="Fingerprint">
+                  <span className="font-mono text-xs">
+                    {certDetails.fingerprint}
+                  </span>
+                </DetailRow>
+              </dl>
+            ) : null)}
+        </div>
+      )}
+
+      {cert.crtPem && !revoked && (
+        <div className="border-t border-border-subtle pt-3 mt-3">
+          <button onClick={() => setShowPem(!showPem)} className={toggleClass}>
+            {showPem ? (
+              <EyeOff className="w-4 h-4" />
+            ) : (
+              <Eye className="w-4 h-4" />
+            )}
+            {showPem ? 'Hide' : 'View'} certificate PEM
+          </button>
+          {showPem && (
+            <pre className="mt-2 bg-bg border border-border-subtle rounded-lg p-4 font-mono text-xs text-zinc-400 overflow-auto max-h-48">
+              {cert.crtPem}
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CertName({ cert, polling }: { cert: TlsCert; polling: boolean }) {
+  const domains = getCertDomains(cert);
+  return (
+    <div className="min-w-0">
+      <div className="flex items-center gap-2">
+        <span className="font-medium text-zinc-100 truncate">
+          {domains.length > 0 ? domains[0] : `Certificate #${cert.id}`}
+        </span>
+        {domains.length > 1 && (
+          <span
+            className="shrink-0 text-xs text-zinc-500 tnum"
+            title={domains.slice(1).join(', ')}
+          >
+            +{domains.length - 1}
+          </span>
+        )}
+        {polling && (
+          <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin text-violet-300" />
+        )}
+      </div>
+      {cert.status === CertStatus.AWAITING_CSR ? (
+        <div className="text-xs text-zinc-500">Awaiting CSR from connector</div>
+      ) : (
+        cert.managedBy === 'connector' && (
+          <div className="text-xs text-zinc-500">Managed by a connector</div>
+        )
+      )}
     </div>
   );
 }
@@ -568,54 +1102,14 @@ interface CertCardProps {
   onToggleAutoRenew: (cert: TlsCert) => void;
 }
 
-function CertCard({
-  cert,
-  isPolling,
-  isRenewing,
-  isRetrying,
-  isRevoking,
-  isDeleting,
-  isTogglingAutoRenew,
-  onDownload,
-  onCopy,
-  onRenew,
-  onRetry,
-  onRevoke,
-  onDelete,
-  onToggleAutoRenew,
-}: CertCardProps) {
-  const [showPem, setShowPem] = useState(false);
-  const [showCertDetails, setShowCertDetails] = useState(false);
-  const [certDetails, setCertDetails] = useState<TlsCertDetails | null>(null);
-  const [loadingDetails, setLoadingDetails] = useState(false);
+function CertCard(props: CertCardProps) {
+  const { cert, isPolling, isTogglingAutoRenew, onToggleAutoRenew } = props;
   const domains = getCertDomains(cert);
-  const expirationInfo = getExpirationInfo(cert);
-
-  const fetchCertDetails = useCallback(async () => {
-    if (certDetails || loadingDetails) return;
-    setLoadingDetails(true);
-    try {
-      const details = await certService.fetchCertificateDetails(cert.id);
-      setCertDetails(details);
-    } catch {
-      toast.error('Failed to load certificate details');
-    } finally {
-      setLoadingDetails(false);
-    }
-  }, [cert.id, certDetails, loadingDetails]);
-
-  const handleToggleCertDetails = () => {
-    const next = !showCertDetails;
-    setShowCertDetails(next);
-    if (next && !certDetails) fetchCertDetails();
-  };
-
   return (
-    <Card>
-      {/* Header */}
-      <div className="flex items-start justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <h4 className="text-base font-medium text-zinc-100">
+    <div className="rounded-xl border border-border-subtle bg-bg/40 p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <h4 className="text-base font-medium text-zinc-100 truncate">
             {domains.length > 0 ? domains[0] : `Certificate #${cert.id}`}
           </h4>
           <Badge variant={STATUS_BADGE_VARIANT[cert.status]} dot>
@@ -625,263 +1119,14 @@ function CertCard({
             )}
           </Badge>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {cert.status === CertStatus.ISSUED && (
-            <>
-              <Button
-                size="sm"
-                variant="secondary"
-                icon={<RefreshCw className="w-3.5 h-3.5" />}
-                onClick={() => onRenew(cert)}
-                disabled={isRenewing || isRevoking}
-              >
-                {isRenewing ? 'Renewing...' : 'Renew'}
-              </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                icon={<Ban className="w-3.5 h-3.5" />}
-                onClick={() => onRevoke(cert)}
-                disabled={isRevoking || isRenewing}
-              >
-                {isRevoking ? 'Revoking...' : 'Revoke'}
-              </Button>
-            </>
-          )}
-          {cert.status === CertStatus.FAILED && (
-            <>
-              <Button
-                size="sm"
-                variant="secondary"
-                icon={<RefreshCw className="w-3.5 h-3.5" />}
-                onClick={() => onRetry(cert)}
-                disabled={isRetrying || isDeleting}
-              >
-                {isRetrying ? 'Retrying...' : 'Retry'}
-              </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                icon={<Trash2 className="w-3.5 h-3.5" />}
-                onClick={() => onDelete(cert)}
-                disabled={isDeleting || isRetrying}
-              >
-                {isDeleting ? 'Deleting...' : 'Delete'}
-              </Button>
-            </>
-          )}
-          {(cert.status === CertStatus.REVOKED ||
-            cert.status === CertStatus.AWAITING_CSR) && (
-            <Button
-              size="sm"
-              variant="danger"
-              icon={<Trash2 className="w-3.5 h-3.5" />}
-              onClick={() => onDelete(cert)}
-              disabled={isDeleting}
-            >
-              {isDeleting ? 'Deleting...' : 'Delete'}
-            </Button>
-          )}
-          {cert.crtPem && (
-            <>
-              <Button
-                size="sm"
-                variant="secondary"
-                icon={<Download className="w-3.5 h-3.5" />}
-                onClick={() => onDownload(cert)}
-              >
-                Download
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                icon={<Copy className="w-3.5 h-3.5" />}
-                onClick={() => onCopy(cert.crtPem!)}
-              >
-                Copy PEM
-              </Button>
-            </>
-          )}
-        </div>
+        <CertActions {...props} />
       </div>
-
-      {/* Details */}
-      <div className="text-sm space-y-1.5 mb-4">
-        <div className="flex gap-2">
-          <span className="text-zinc-500">ID:</span>
-          <span className="text-zinc-300">#{cert.id}</span>
-        </div>
-        {domains.length > 0 && (
-          <div className="flex gap-2">
-            <span className="text-zinc-500">Domains:</span>
-            <span className="text-zinc-300">{domains.join(', ')}</span>
-          </div>
-        )}
-        {cert.managedBy === 'connector' && (
-          <div className="flex gap-2">
-            <span className="text-zinc-500">Managed by:</span>
-            <span className="text-zinc-300">
-              A connector, which renews it with its own keys
-            </span>
-          </div>
-        )}
-        {cert.status === CertStatus.AWAITING_CSR && (
-          <div className="flex gap-2">
-            <span className="text-zinc-500">State:</span>
-            <span className="text-zinc-300 min-w-0">
-              Awaiting CSR from connector. The connector creates the key and
-              sends a CSR for these names; nothing is sent to the CA until then.
-            </span>
-          </div>
-        )}
-        {cert.status === CertStatus.FAILED && cert.failureReason && (
-          <div className="flex gap-2">
-            <span className="text-zinc-500">Reason:</span>
-            <span className="text-red-400 break-words min-w-0">
-              {cert.failureReason}
-            </span>
-          </div>
-        )}
-        {expirationInfo && (
-          <div className="flex gap-2">
-            <span className="text-zinc-500">Expiration:</span>
-            <span className={expirationInfo.colorClass}>
-              {expirationInfo.expiresAt.toLocaleDateString()}
-              {expirationInfo.isExpired && ' (Expired)'}
-              {!expirationInfo.isExpired &&
-                ` (${expirationInfo.daysUntilExpiry} days)`}
-            </span>
-          </div>
-        )}
-        {cert.lastRenewedAt && (
-          <div className="flex gap-2">
-            <span className="text-zinc-500">Last Renewed:</span>
-            <span className="text-zinc-300">
-              {new Date(cert.lastRenewedAt).toLocaleDateString()}
-            </span>
-          </div>
-        )}
-        {cert.revokedAt && (
-          <div className="flex gap-2">
-            <span className="text-zinc-500">Revoked At:</span>
-            <span className="text-red-400">
-              {new Date(cert.revokedAt).toLocaleDateString()}
-            </span>
-          </div>
-        )}
-        {cert.renewalCount > 0 && (
-          <div className="flex gap-2">
-            <span className="text-zinc-500">Renewals:</span>
-            <span className="text-zinc-300">{cert.renewalCount}</span>
-          </div>
-        )}
-        {cert.status !== CertStatus.AWAITING_CSR && (
-          <div className="flex gap-2 items-center">
-            <span className="text-zinc-500">Auto-Renew:</span>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={cert.autoRenew}
-                disabled={isTogglingAutoRenew}
-                onChange={() => onToggleAutoRenew(cert)}
-                className="accent-cyan-500"
-              />
-              <span className="text-zinc-300 text-sm">
-                {cert.autoRenew ? 'Enabled' : 'Disabled'}
-              </span>
-            </label>
-          </div>
-        )}
-      </div>
-
-      {cert.managedBy === 'connector' && (
-        <CertificateDeployments certificateId={cert.id} />
-      )}
-
-      {/* Parsed Certificate Details */}
-      {cert.crtPem && (
-        <div className="border-t border-zinc-800 pt-3 mt-3">
-          <button
-            onClick={handleToggleCertDetails}
-            className="flex items-center gap-1.5 text-sm text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer bg-transparent border-none p-0"
-          >
-            {showCertDetails ? (
-              <ChevronDown className="w-4 h-4" />
-            ) : (
-              <ChevronRight className="w-4 h-4" />
-            )}
-            Certificate Details
-          </button>
-          {showCertDetails &&
-            (loadingDetails ? (
-              <p className="text-sm text-zinc-500 mt-2">Loading details...</p>
-            ) : certDetails ? (
-              <div className="text-sm space-y-1.5 mt-3">
-                <div className="flex gap-2">
-                  <span className="text-zinc-500">Serial Number:</span>
-                  <span className="text-zinc-300 font-mono text-xs">
-                    {certDetails.serialNumber}
-                  </span>
-                </div>
-                <div className="flex gap-2">
-                  <span className="text-zinc-500">Issuer:</span>
-                  <span className="text-zinc-300">{certDetails.issuer}</span>
-                </div>
-                <div className="flex gap-2">
-                  <span className="text-zinc-500">Subject:</span>
-                  <span className="text-zinc-300">{certDetails.subject}</span>
-                </div>
-                <div className="flex gap-2">
-                  <span className="text-zinc-500">Valid From:</span>
-                  <span className="text-zinc-300">
-                    {new Date(certDetails.validFrom).toLocaleDateString()}
-                  </span>
-                </div>
-                <div className="flex gap-2">
-                  <span className="text-zinc-500">Valid To:</span>
-                  <span className="text-zinc-300">
-                    {new Date(certDetails.validTo).toLocaleDateString()}
-                  </span>
-                </div>
-                <div className="flex gap-2">
-                  <span className="text-zinc-500">Key Type:</span>
-                  <span className="text-zinc-300">
-                    {certDetails.keyType} {certDetails.keySize}-bit
-                  </span>
-                </div>
-                <div className="flex gap-2">
-                  <span className="text-zinc-500">Fingerprint:</span>
-                  <span className="text-zinc-300 font-mono text-xs">
-                    {certDetails.fingerprint}
-                  </span>
-                </div>
-              </div>
-            ) : null)}
-        </div>
-      )}
-
-      {/* PEM display */}
-      {cert.crtPem && (
-        <div className="border-t border-zinc-800 pt-3 mt-3">
-          <button
-            onClick={() => setShowPem(!showPem)}
-            className="flex items-center gap-1.5 text-sm text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer bg-transparent border-none p-0"
-          >
-            {showPem ? (
-              <EyeOff className="w-4 h-4" />
-            ) : (
-              <Eye className="w-4 h-4" />
-            )}
-            {showPem ? 'Hide' : 'View'} certificate PEM
-          </button>
-          {showPem && (
-            <pre className="mt-2 bg-zinc-950 rounded-lg p-4 font-mono text-xs text-zinc-400 overflow-auto max-h-48">
-              {cert.crtPem}
-            </pre>
-          )}
-        </div>
-      )}
-    </Card>
+      <CertDetailsPanel
+        cert={cert}
+        isTogglingAutoRenew={isTogglingAutoRenew}
+        onToggleAutoRenew={onToggleAutoRenew}
+      />
+    </div>
   );
 }
 
@@ -913,16 +1158,12 @@ function CertTable({
   revokingIds,
   deletingIds,
   togglingAutoRenewIds,
-  onDownload,
-  onCopy,
-  onRenew,
-  onRetry,
-  onRevoke,
-  onDelete,
   onToggleAutoRenew,
+  ...handlers
 }: CertTableProps) {
   const [sortField, setSortField] = useState<SortField>('cn');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [expandedId, setExpandedId] = useState<number | null>(null);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -958,184 +1199,127 @@ function CertTable({
     }
   });
 
-  const arrow = (field: SortField) =>
-    sortField === field ? (sortDir === 'asc' ? ' \u25B2' : ' \u25BC') : '';
+  const sortHead = (field: SortField, label: string, className = '') => (
+    <TableHead
+      className={`cursor-pointer select-none hover:text-zinc-300 ${className}`}
+      onClick={() => handleSort(field)}
+      aria-sort={
+        sortField === field
+          ? sortDir === 'asc'
+            ? 'ascending'
+            : 'descending'
+          : undefined
+      }
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {sortField === field &&
+          (sortDir === 'asc' ? (
+            <ArrowUp className="w-3 h-3" />
+          ) : (
+            <ArrowDown className="w-3 h-3" />
+          ))}
+      </span>
+    </TableHead>
+  );
 
   return (
-    <Card>
-      <div className="overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableHead
-              className="cursor-pointer select-none"
-              onClick={() => handleSort('cn')}
-            >
-              Common Name{arrow('cn')}
-            </TableHead>
-            <TableHead
-              className="cursor-pointer select-none"
-              onClick={() => handleSort('status')}
-            >
-              Status{arrow('status')}
-            </TableHead>
-            <TableHead
-              className="cursor-pointer select-none"
-              onClick={() => handleSort('expiry')}
-            >
-              Expiry{arrow('expiry')}
-            </TableHead>
-            <TableHead
-              className="cursor-pointer select-none"
-              onClick={() => handleSort('autoRenew')}
-            >
-              Auto-Renew{arrow('autoRenew')}
-            </TableHead>
-            <TableHead>Actions</TableHead>
-          </TableHeader>
-          <tbody>
-            {sorted.map((cert) => {
-              const domains = getCertDomains(cert);
-              const expInfo = getExpirationInfo(cert);
-              const isRenewing = renewingIds.has(cert.id);
-              const isRetrying = retryingIds.has(cert.id);
-              const isRevoking = revokingIds.has(cert.id);
-              const isDeleting = deletingIds.has(cert.id);
-
-              return (
-                <TableRow key={cert.id}>
-                  <TableCell className="font-medium text-zinc-200">
-                    {domains.length > 0 ? domains[0] : `#${cert.id}`}
-                    {pollingIds.has(cert.id) && (
-                      <Loader2 className="w-3 h-3 ml-1 inline animate-spin text-cyan-400" />
-                    )}
-                    {cert.status === CertStatus.AWAITING_CSR ? (
-                      <div className="text-xs font-normal text-zinc-500">
-                        Awaiting CSR from connector
-                      </div>
+    <Table className="sm:min-w-[720px]">
+      <TableHeader>
+        <TableHead className="w-10 pl-5 pr-0" />
+        {sortHead('cn', 'Common Name', 'pl-1')}
+        {sortHead('status', 'Status', 'hidden sm:table-cell')}
+        {sortHead('expiry', 'Expiry', 'hidden md:table-cell')}
+        {sortHead('autoRenew', 'Auto-Renew', 'hidden lg:table-cell')}
+        <TableHead className="text-right pr-5">Actions</TableHead>
+      </TableHeader>
+      <tbody>
+        {sorted.map((cert) => {
+          const expanded = expandedId === cert.id;
+          return (
+            <Fragment key={cert.id}>
+              <TableRow
+                className={`cursor-pointer ${expanded ? 'bg-white/[0.025]' : ''}`}
+                onClick={() => setExpandedId(expanded ? null : cert.id)}
+              >
+                <TableCell className="w-10 pl-5 pr-0">
+                  <button
+                    type="button"
+                    aria-label={expanded ? 'Hide details' : 'Show details'}
+                    aria-expanded={expanded}
+                    className="flex items-center text-zinc-500 hover:text-zinc-200 cursor-pointer"
+                  >
+                    {expanded ? (
+                      <ChevronDown className="w-4 h-4" />
                     ) : (
-                      cert.managedBy === 'connector' && (
-                        <div className="text-xs font-normal text-zinc-500">
-                          Managed by a connector
-                        </div>
-                      )
+                      <ChevronRight className="w-4 h-4" />
                     )}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={STATUS_BADGE_VARIANT[cert.status]} dot>
-                      {STATUS_LABEL[cert.status] || cert.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    {expInfo ? (
-                      <span className={expInfo.colorClass}>
-                        {expInfo.expiresAt.toLocaleDateString()}
-                        {expInfo.isExpired
-                          ? ' (Expired)'
-                          : ` (${expInfo.daysUntilExpiry}d)`}
-                      </span>
-                    ) : (
-                      <span className="text-zinc-600">&mdash;</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {cert.status === CertStatus.AWAITING_CSR ? (
-                      <span className="text-zinc-600">&mdash;</span>
-                    ) : (
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={cert.autoRenew}
-                          disabled={togglingAutoRenewIds.has(cert.id)}
-                          onChange={() => onToggleAutoRenew(cert)}
-                          className="accent-cyan-500"
-                        />
-                        <span className="text-sm">
-                          {cert.autoRenew ? 'On' : 'Off'}
-                        </span>
-                      </label>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-1.5">
-                      {cert.status === CertStatus.ISSUED && (
-                        <>
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={() => onRenew(cert)}
-                            disabled={isRenewing || isRevoking}
-                          >
-                            {isRenewing ? 'Renewing...' : 'Renew'}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="danger"
-                            onClick={() => onRevoke(cert)}
-                            disabled={isRevoking || isRenewing}
-                          >
-                            {isRevoking ? 'Revoking...' : 'Revoke'}
-                          </Button>
-                        </>
-                      )}
-                      {cert.status === CertStatus.FAILED && (
-                        <>
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={() => onRetry(cert)}
-                            disabled={isRetrying || isDeleting}
-                          >
-                            {isRetrying ? 'Retrying...' : 'Retry'}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="danger"
-                            onClick={() => onDelete(cert)}
-                            disabled={isDeleting || isRetrying}
-                          >
-                            {isDeleting ? 'Deleting...' : 'Delete'}
-                          </Button>
-                        </>
-                      )}
-                      {(cert.status === CertStatus.REVOKED ||
-                        cert.status === CertStatus.AWAITING_CSR) && (
-                        <Button
-                          size="sm"
-                          variant="danger"
-                          onClick={() => onDelete(cert)}
-                          disabled={isDeleting}
-                        >
-                          {isDeleting ? 'Deleting...' : 'Delete'}
-                        </Button>
-                      )}
-                      {cert.crtPem && (
-                        <>
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            icon={<Download className="w-3 h-3" />}
-                            onClick={() => onDownload(cert)}
-                          >
-                            Download
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            icon={<Copy className="w-3 h-3" />}
-                            onClick={() => onCopy(cert.crtPem!)}
-                          >
-                            Copy
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </tbody>
-        </Table>
-      </div>
-    </Card>
+                  </button>
+                </TableCell>
+                <TableCell className="pl-1 max-w-[230px] sm:max-w-[340px]">
+                  <CertName cert={cert} polling={pollingIds.has(cert.id)} />
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs md:hidden">
+                    <span className="sm:hidden">
+                      <Badge variant={STATUS_BADGE_VARIANT[cert.status]} dot>
+                        {STATUS_LABEL[cert.status] || cert.status}
+                      </Badge>
+                    </span>
+                    <ExpiryText cert={cert} />
+                  </div>
+                </TableCell>
+                <TableCell className="hidden sm:table-cell">
+                  <Badge variant={STATUS_BADGE_VARIANT[cert.status]} dot>
+                    {STATUS_LABEL[cert.status] || cert.status}
+                  </Badge>
+                </TableCell>
+                <TableCell className="hidden md:table-cell">
+                  <ExpiryText cert={cert} />
+                </TableCell>
+                <TableCell
+                  className="hidden lg:table-cell"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {cert.status === CertStatus.AWAITING_CSR ||
+                  cert.status === CertStatus.REVOKED ? (
+                    <span className="text-zinc-600">&mdash;</span>
+                  ) : (
+                    <AutoRenewSwitch
+                      cert={cert}
+                      disabled={togglingAutoRenewIds.has(cert.id)}
+                      onToggle={onToggleAutoRenew}
+                    />
+                  )}
+                </TableCell>
+                <TableCell
+                  className="pr-5"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <CertActions
+                    cert={cert}
+                    isRenewing={renewingIds.has(cert.id)}
+                    isRetrying={retryingIds.has(cert.id)}
+                    isRevoking={revokingIds.has(cert.id)}
+                    isDeleting={deletingIds.has(cert.id)}
+                    {...handlers}
+                  />
+                </TableCell>
+              </TableRow>
+              {expanded && (
+                <tr className="border-b border-border-subtle bg-bg/40">
+                  <td className="hidden sm:table-cell" />
+                  <td colSpan={5} className="pl-5 sm:pl-1 pr-5 py-4">
+                    <CertDetailsPanel
+                      cert={cert}
+                      isTogglingAutoRenew={togglingAutoRenewIds.has(cert.id)}
+                      onToggleAutoRenew={onToggleAutoRenew}
+                    />
+                  </td>
+                </tr>
+              )}
+            </Fragment>
+          );
+        })}
+      </tbody>
+    </Table>
   );
 }

@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Activity,
   Plus,
@@ -20,7 +21,16 @@ import * as endpointService from '../services/endpointService';
 import { Card } from './ui/Card';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
-import { Badge } from './ui/Badge';
+import { Badge, type BadgeVariant } from './ui/Badge';
+import { Modal } from './ui/Modal';
+import { RowMenu } from './ui/Menu';
+import {
+  issuerName,
+  summarizeEndpoint,
+  type EndpointState,
+  type EndpointSummary,
+} from '../utils/accountHealth';
+import { formatRelative } from '../utils/connectors';
 import { Table, TableHeader, TableRow, TableHead, TableCell } from './ui/Table';
 import { PageHeader } from './ui/PageHeader';
 import { EmptyState } from './ui/EmptyState';
@@ -28,16 +38,16 @@ import { EmptyState } from './ui/EmptyState';
 function ProbeSourceBadge({ result }: { result: ProbeScanResult }) {
   if (result.probeMode === 'hosted') {
     return (
-      <Badge variant="info" dot={false}>
-        <Cloud className="w-3 h-3 mr-1" />
-        Managed
+      <Badge variant="neutral" dot={false}>
+        <Cloud className="w-3 h-3" />
+        Hosted
       </Badge>
     );
   }
   if (result.probeMode === 'connected') {
     return (
       <Badge variant="neutral" dot={false}>
-        <Server className="w-3 h-3 mr-1" />
+        <Server className="w-3 h-3" />
         Connected
       </Badge>
     );
@@ -49,7 +59,7 @@ function CertExpiryBadge({ days }: { days: number | undefined }) {
   if (days == null) return <span className="text-zinc-500">-</span>;
   if (days <= 7) return <Badge variant="danger">{days}d</Badge>;
   if (days <= 30) return <Badge variant="warning">{days}d</Badge>;
-  return <Badge variant="success">{days}d</Badge>;
+  return <span className="tnum text-zinc-300">{days}d</span>;
 }
 
 function ScanResultsPanel({ endpointId }: { endpointId: string }) {
@@ -163,7 +173,12 @@ function ScanResultsPanel({ endpointId }: { endpointId: string }) {
           {results.map((r) => (
             <TableRow key={r.id}>
               <TableCell className="text-zinc-400 text-xs whitespace-nowrap">
-                {new Date(r.scannedAt).toLocaleString()}
+                {new Date(r.scannedAt).toLocaleString(undefined, {
+                  month: 'short',
+                  day: 'numeric',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}
               </TableCell>
               <TableCell>
                 <ProbeSourceBadge result={r} />
@@ -173,7 +188,7 @@ function ScanResultsPanel({ endpointId }: { endpointId: string }) {
               </TableCell>
               <TableCell>
                 {r.connectionSuccess ? (
-                  <Badge variant="success" dot={false}>
+                  <Badge variant="ok" dot={false}>
                     {r.tlsVersion || 'OK'}
                   </Badge>
                 ) : (
@@ -193,9 +208,9 @@ function ScanResultsPanel({ endpointId }: { endpointId: string }) {
                 {r.certTrusted == null ? (
                   <span className="text-zinc-500">-</span>
                 ) : r.certTrusted ? (
-                  <span className="text-emerald-400">Yes</span>
+                  <span className="text-zinc-300">Yes</span>
                 ) : (
-                  <span className="text-red-400">No</span>
+                  <span className="text-red-300">No</span>
                 )}
               </TableCell>
               <TableCell className="text-zinc-400 text-xs">
@@ -261,6 +276,8 @@ export default function EndpointManagement() {
   const [newLabel, setNewLabel] = useState('');
   const [useManaged, setUseManaged] = useState(true);
   const [selectedProbeIds, setSelectedProbeIds] = useState<string[]>([]);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [addOpen, setAddOpen] = useState(() => searchParams.get('add') === '1');
 
   const fetchAll = useCallback(async () => {
     try {
@@ -324,6 +341,7 @@ export default function EndpointManagement() {
       setNewLabel('');
       setUseManaged(true);
       setSelectedProbeIds([]);
+      setAddOpen(false);
       setEndpoints((prev) => [endpoint, ...prev]);
     } catch (error) {
       console.error('Failed to create endpoint:', error);
@@ -435,40 +453,26 @@ export default function EndpointManagement() {
     setExpandedId((prev) => (prev === id ? null : id));
   };
 
-  /** Derive a summary from the latest scan results for an endpoint */
-  const getSummary = (epId: string) => {
-    const results = latestResults[epId] ?? [];
-    if (results.length === 0) return null;
+  const getSummary = (ep: Endpoint) =>
+    summarizeEndpoint(ep, latestResults[ep.id] ?? []);
 
-    const hasHosted = results.some((r) => r.probeMode === 'hosted');
-    const hasConnected = results.some((r) => r.probeMode === 'connected');
-    const worstExpiry = results.reduce(
-      (min, r) =>
-        r.certDaysUntilExpiry != null &&
-        (min == null || r.certDaysUntilExpiry < min)
-          ? r.certDaysUntilExpiry
-          : min,
-      null as number | null,
-    );
-    const allTrusted = results.every((r) => r.certTrusted === true);
-    const anyFailed = results.some((r) => !r.connectionSuccess);
-    const latestScan = results.reduce(
-      (latest, r) =>
-        !latest || new Date(r.scannedAt) > new Date(latest)
-          ? r.scannedAt
-          : latest,
-      '' as string,
-    );
-
-    return {
-      hasHosted,
-      hasConnected,
-      worstExpiry,
-      allTrusted,
-      anyFailed,
-      latestScan,
-    };
+  const closeAdd = () => {
+    setAddOpen(false);
+    if (searchParams.has('add')) {
+      searchParams.delete('add');
+      setSearchParams(searchParams, { replace: true });
+    }
   };
+
+  const addButton = (
+    <Button
+      variant="primary"
+      icon={<Plus className="w-4 h-4" />}
+      onClick={() => setAddOpen(true)}
+    >
+      Add endpoint
+    </Button>
+  );
 
   if (loading) {
     return (
@@ -479,40 +483,111 @@ export default function EndpointManagement() {
     );
   }
 
+  const chipClass = (selected: boolean) =>
+    `inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
+      selected
+        ? 'border-cyan-400/50 bg-cyan-400/10 text-cyan-200'
+        : 'border-border-strong/70 bg-bg text-zinc-400 hover:border-border-strong hover:text-zinc-200'
+    }`;
+
+  const problems = endpoints.filter((ep) => {
+    const s = getSummary(ep).state;
+    return s === 'unreachable' || s === 'untrusted';
+  }).length;
+
   return (
     <div>
       <PageHeader
         title="Endpoints"
         description="Monitor TLS certificates on your endpoints. Connected and hosted probes scan these automatically."
         icon={<Activity className="w-6 h-6" />}
+        actions={addButton}
       />
 
-      {/* Create Endpoint Form */}
-      <Card className="mb-6">
-        <h3 className="text-sm font-medium text-zinc-400 mb-4">Add Endpoint</h3>
-        <form onSubmit={handleCreate}>
-          <div className="flex flex-col sm:flex-row gap-3">
+      {/* Add endpoint (modal) */}
+      <Modal
+        open={addOpen}
+        onClose={closeAdd}
+        title="Add endpoint"
+        description="A host and port to scan. Hosted probes run from KrakenKey; connected probes run on your network."
+      >
+        <form onSubmit={handleCreate} className="space-y-4">
+          <div className="grid grid-cols-[1fr_96px] gap-3">
             <Input
-              placeholder="Hostname (e.g., example.com)"
+              label="Hostname"
+              placeholder="example.com"
               value={newHost}
               onChange={(e) => setNewHost(e.target.value)}
               disabled={creating}
-              className="flex-1"
             />
             <Input
-              placeholder="Port"
+              label="Port"
+              placeholder="443"
               value={newPort}
               onChange={(e) => setNewPort(e.target.value)}
               disabled={creating}
-              className="w-24"
+              className="tnum"
             />
-            <Input
-              placeholder="Label (optional)"
-              value={newLabel}
-              onChange={(e) => setNewLabel(e.target.value)}
-              disabled={creating}
-              className="flex-1"
-            />
+          </div>
+          <Input
+            label="Label"
+            placeholder="Optional, e.g. Client portal"
+            value={newLabel}
+            onChange={(e) => setNewLabel(e.target.value)}
+            disabled={creating}
+          />
+
+          <div>
+            <p className="text-sm font-medium text-zinc-300 mb-2">
+              Monitoring source
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setUseManaged((prev) => !prev)}
+                disabled={creating}
+                aria-pressed={useManaged}
+                className={chipClass(useManaged)}
+              >
+                <Cloud className="w-3.5 h-3.5" />
+                Managed probe
+              </button>
+
+              {availableProbes.map((probe) => {
+                const selected = selectedProbeIds.includes(probe.id);
+                return (
+                  <button
+                    key={probe.id}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() =>
+                      setSelectedProbeIds((prev) =>
+                        selected
+                          ? prev.filter((id) => id !== probe.id)
+                          : [...prev, probe.id],
+                      )
+                    }
+                    disabled={creating}
+                    className={chipClass(selected)}
+                  >
+                    <Server className="w-3.5 h-3.5" />
+                    {probe.name}
+                    {probe.region && (
+                      <span className="text-zinc-500">({probe.region})</span>
+                    )}
+                    {probe.status === 'stale' && (
+                      <span className="text-amber-300 text-[11px]">stale</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="ghost" onClick={closeAdd}>
+              Cancel
+            </Button>
             <Button
               type="submit"
               variant="primary"
@@ -522,69 +597,18 @@ export default function EndpointManagement() {
               {creating ? 'Adding...' : 'Add'}
             </Button>
           </div>
-
-          {/* Monitoring type selection */}
-          <div className="mt-4">
-            <p className="text-xs text-zinc-500 mb-2">Monitoring source:</p>
-            <div className="flex flex-wrap gap-2">
-              {/* Managed (hosted) option -- always available */}
-              <button
-                type="button"
-                onClick={() => setUseManaged((prev) => !prev)}
-                disabled={creating}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
-                  useManaged
-                    ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-400'
-                    : 'border-zinc-700 bg-zinc-900 text-zinc-400 hover:border-zinc-600'
-                }`}
-              >
-                <Cloud className="w-3 h-3" />
-                Managed probe
-              </button>
-
-              {/* Connected probe options */}
-              {availableProbes.map((probe) => {
-                const selected = selectedProbeIds.includes(probe.id);
-                return (
-                  <button
-                    key={probe.id}
-                    type="button"
-                    onClick={() =>
-                      setSelectedProbeIds((prev) =>
-                        selected
-                          ? prev.filter((id) => id !== probe.id)
-                          : [...prev, probe.id],
-                      )
-                    }
-                    disabled={creating}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
-                      selected
-                        ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-400'
-                        : 'border-zinc-700 bg-zinc-900 text-zinc-400 hover:border-zinc-600'
-                    }`}
-                  >
-                    <Server className="w-3 h-3" />
-                    {probe.name}
-                    {probe.region && (
-                      <span className="text-zinc-500">({probe.region})</span>
-                    )}
-                    {probe.status === 'stale' && (
-                      <span className="text-amber-400 text-[10px]">stale</span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
         </form>
-      </Card>
+      </Modal>
 
       {/* Endpoints List */}
-      <Card>
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-medium text-zinc-400">
-            Monitored Endpoints ({endpoints.length})
-          </h3>
+      <Card flush>
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 border-b border-border-subtle">
+          <div className="flex items-center gap-3">
+            <h3 className="text-sm font-semibold text-zinc-100">
+              Monitored Endpoints ({endpoints.length})
+            </h3>
+            {problems > 0 && <Badge variant="danger">{problems} failing</Badge>}
+          </div>
           <Button
             size="sm"
             variant="ghost"
@@ -602,106 +626,140 @@ export default function EndpointManagement() {
 
         {endpoints.length === 0 ? (
           <EmptyState
-            icon={<Activity className="w-8 h-8" />}
+            icon={<Activity className="w-6 h-6" />}
             title="No endpoints yet"
-            description="Add an endpoint above to start monitoring its TLS certificate."
+            description="Add an endpoint to start monitoring its TLS certificate."
+            action={addButton}
           />
         ) : (
-          <Table className="table-auto">
+          <Table className="md:min-w-[860px]">
             <TableHeader>
-              <TableHead className="w-8 px-2" />
-              <TableHead>Endpoint</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Source</TableHead>
-              <TableHead>Expiry</TableHead>
-              <TableHead className="hidden xl:table-cell">Last Scan</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
+              <TableHead className="w-10 pl-5 pr-0" />
+              <TableHead className="pl-1">Endpoint</TableHead>
+              <TableHead className="hidden sm:table-cell">Status</TableHead>
+              <TableHead className="hidden lg:table-cell">Source</TableHead>
+              <TableHead className="hidden md:table-cell text-right">
+                Expiry
+              </TableHead>
+              <TableHead className="hidden md:table-cell">Last scan</TableHead>
+              <TableHead className="text-right pr-5">Actions</TableHead>
             </TableHeader>
             <tbody>
               {endpoints.map((ep) => {
-                const summary = getSummary(ep.id);
+                const summary = getSummary(ep);
                 const isExpanded = expandedId === ep.id;
+                const regions = ep.hostedRegions?.length ?? 0;
+                const probes = ep.probeAssignments?.length ?? 0;
 
                 return (
-                  <>
+                  <Fragment key={ep.id}>
                     <TableRow
-                      key={ep.id}
-                      className="cursor-pointer"
+                      className={`cursor-pointer ${isExpanded ? 'bg-white/[0.025]' : ''} ${!ep.isActive ? 'opacity-60' : ''}`}
                       onClick={() => toggleExpand(ep.id)}
                     >
-                      <TableCell className="w-8 px-2 pr-0">
+                      <TableCell className="w-10 pl-5 pr-0">
                         {isExpanded ? (
                           <ChevronDown className="w-4 h-4 text-zinc-500" />
                         ) : (
                           <ChevronRight className="w-4 h-4 text-zinc-500" />
                         )}
                       </TableCell>
-                      <TableCell className="font-medium text-zinc-200">
-                        <div>
-                          {ep.host}
+                      <TableCell className="pl-1 max-w-[210px] sm:max-w-[320px]">
+                        <div
+                          className="truncate whitespace-nowrap font-medium text-zinc-100"
+                          title={`${ep.host}:${ep.port}`}
+                        >
+                          <span>{ep.host}</span>
                           {ep.port !== 443 && (
-                            <span className="text-zinc-500">:{ep.port}</span>
+                            <span className="text-zinc-500 font-normal">
+                              :{ep.port}
+                            </span>
                           )}
                         </div>
                         {ep.label && (
-                          <div className="text-xs text-zinc-500 font-normal">
+                          <div className="truncate text-xs text-zinc-500">
                             {ep.label}
                           </div>
                         )}
-                      </TableCell>
-                      <TableCell>
-                        {summary?.anyFailed ? (
-                          <Badge variant="danger">Error</Badge>
-                        ) : (
-                          <Badge variant={ep.isActive ? 'success' : 'neutral'}>
-                            {ep.isActive ? 'Active' : 'Disabled'}
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          {ep.hostedRegions && ep.hostedRegions.length > 0 && (
-                            <Badge variant="info" dot={false}>
-                              <Cloud className="w-3 h-3 mr-0.5" />
-                              Managed
-                            </Badge>
+                        <div className="mt-1.5 flex items-center gap-2 text-xs md:hidden">
+                          <span className="sm:hidden">
+                            <EndpointStatusBadge summary={summary} />
+                          </span>
+                          {summary.worstExpiry != null && (
+                            <ExpiryDays days={summary.worstExpiry} />
                           )}
-                          {ep.probeAssignments &&
-                            ep.probeAssignments.length > 0 && (
-                              <Badge variant="neutral" dot={false}>
-                                <Server className="w-3 h-3 mr-0.5" />
-                                {ep.probeAssignments.length}
-                              </Badge>
-                            )}
-                          {(!ep.hostedRegions ||
-                            ep.hostedRegions.length === 0) &&
-                            (!ep.probeAssignments ||
-                              ep.probeAssignments.length === 0) && (
-                              <span className="text-zinc-500 text-xs">
-                                None
-                              </span>
-                            )}
+                          {summary.latestScan && (
+                            <span className="whitespace-nowrap text-zinc-500">
+                              {formatRelative(summary.latestScan)}
+                            </span>
+                          )}
                         </div>
                       </TableCell>
-                      <TableCell>
-                        {summary ? (
-                          <CertExpiryBadge
-                            days={summary.worstExpiry ?? undefined}
-                          />
+                      <TableCell className="hidden sm:table-cell">
+                        <EndpointStatusBadge summary={summary} />
+                      </TableCell>
+                      <TableCell className="hidden lg:table-cell">
+                        <div className="flex items-center gap-3 text-xs text-zinc-400 whitespace-nowrap">
+                          {regions > 0 && (
+                            <span
+                              className="inline-flex items-center gap-1"
+                              title={ep.hostedRegions
+                                ?.map((r) => r.region)
+                                .join(', ')}
+                            >
+                              <Cloud className="w-3.5 h-3.5 text-zinc-500" />
+                              Hosted
+                              {regions > 1 && (
+                                <span className="tnum text-zinc-500">
+                                  x{regions}
+                                </span>
+                              )}
+                            </span>
+                          )}
+                          {probes > 0 && (
+                            <span
+                              className="inline-flex items-center gap-1"
+                              title={ep.probeAssignments
+                                ?.map((a) => a.probe?.name ?? a.probeId)
+                                .join(', ')}
+                            >
+                              <Server className="w-3.5 h-3.5 text-zinc-500" />
+                              {probes === 1
+                                ? (ep.probeAssignments?.[0]?.probe?.name ??
+                                  '1 probe')
+                                : `${probes} probes`}
+                            </span>
+                          )}
+                          {regions === 0 && probes === 0 && (
+                            <span className="text-zinc-500">None</span>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell text-right">
+                        {summary.worstExpiry != null ? (
+                          <ExpiryDays days={summary.worstExpiry} />
                         ) : (
-                          <span className="text-zinc-500">-</span>
+                          <span className="text-zinc-600">&mdash;</span>
                         )}
                       </TableCell>
-                      <TableCell className="hidden xl:table-cell text-zinc-400 text-xs whitespace-nowrap">
-                        {summary?.latestScan
-                          ? new Date(summary.latestScan).toLocaleString()
-                          : '-'}
+                      <TableCell className="hidden md:table-cell whitespace-nowrap text-xs text-zinc-400">
+                        {summary.latestScan ? (
+                          <span
+                            title={new Date(
+                              summary.latestScan,
+                            ).toLocaleString()}
+                          >
+                            {formatRelative(summary.latestScan)}
+                          </span>
+                        ) : (
+                          '-'
+                        )}
                       </TableCell>
                       <TableCell
-                        className="text-right"
+                        className="pr-5"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <div className="inline-flex items-center gap-1">
+                        <div className="flex items-center justify-end gap-1.5">
                           <Button
                             size="sm"
                             variant="secondary"
@@ -712,89 +770,93 @@ export default function EndpointManagement() {
                             }
                             onClick={() => handleRequestScan(ep)}
                             disabled={scanningIds.has(ep.id) || !ep.isActive}
+                            aria-label={`Scan ${ep.host}`}
                           >
-                            <span className="hidden lg:inline">Scan</span>
+                            <span className="hidden sm:inline">Scan</span>
                           </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            icon={
-                              ep.isActive ? (
-                                <PowerOff className="w-3.5 h-3.5" />
-                              ) : (
-                                <Power className="w-3.5 h-3.5" />
-                              )
-                            }
-                            onClick={() => handleToggleActive(ep)}
-                            disabled={togglingIds.has(ep.id)}
-                          >
-                            <span className="hidden lg:inline">
-                              {ep.isActive ? 'Disable' : 'Enable'}
-                            </span>
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="danger"
-                            icon={<Trash2 className="w-3.5 h-3.5" />}
-                            onClick={() => handleDelete(ep)}
-                            disabled={deletingIds.has(ep.id)}
-                          >
-                            <span className="hidden lg:inline">
-                              {deletingIds.has(ep.id) ? '...' : 'Delete'}
-                            </span>
-                          </Button>
+                          <RowMenu
+                            label={`More actions for ${ep.host}`}
+                            items={[
+                              {
+                                label: ep.isActive ? 'Disable' : 'Enable',
+                                icon: ep.isActive ? (
+                                  <PowerOff className="w-3.5 h-3.5" />
+                                ) : (
+                                  <Power className="w-3.5 h-3.5" />
+                                ),
+                                onClick: () => handleToggleActive(ep),
+                                disabled: togglingIds.has(ep.id),
+                              },
+                              {
+                                label: deletingIds.has(ep.id)
+                                  ? 'Deleting...'
+                                  : 'Delete',
+                                icon: <Trash2 className="w-3.5 h-3.5" />,
+                                onClick: () => handleDelete(ep),
+                                danger: true,
+                                disabled: deletingIds.has(ep.id),
+                              },
+                            ]}
+                          />
                         </div>
                       </TableCell>
                     </TableRow>
                     {isExpanded && (
-                      <tr key={`${ep.id}-detail`}>
+                      <tr>
                         <td
                           colSpan={7}
-                          className="bg-zinc-900/50 border-b border-zinc-800/50"
+                          className="bg-bg/40 border-b border-border-subtle"
                         >
-                          {/* Assigned probes summary */}
-                          {ep.probeAssignments &&
-                            ep.probeAssignments.length > 0 && (
-                              <div className="px-4 pt-3 pb-1">
-                                <span className="text-xs text-zinc-500 mr-2">
-                                  Assigned probes:
-                                </span>
-                                {ep.probeAssignments.map((a) => (
-                                  <Badge
-                                    key={a.id}
-                                    variant="neutral"
-                                    dot={false}
-                                    className="mr-1"
-                                  >
-                                    <Server className="w-3 h-3 mr-0.5" />
-                                    {a.probe?.name ?? a.probeId}
-                                  </Badge>
-                                ))}
-                              </div>
-                            )}
-                          {ep.hostedRegions && ep.hostedRegions.length > 0 && (
-                            <div className="px-4 pt-1 pb-1">
-                              <span className="text-xs text-zinc-500 mr-2">
-                                Hosted regions:
+                          <div className="flex flex-wrap gap-x-6 gap-y-2 px-5 pt-4 pb-1 text-xs">
+                            {summary.error && (
+                              <span className="text-red-300">
+                                {summary.error}
                               </span>
-                              {ep.hostedRegions.map((r) => (
-                                <Badge
-                                  key={r.id}
-                                  variant="info"
-                                  dot={false}
-                                  className="mr-1"
-                                >
-                                  <Cloud className="w-3 h-3 mr-0.5" />
-                                  {r.region}
-                                </Badge>
-                              ))}
-                            </div>
-                          )}
+                            )}
+                            {summary.untrustedIssuer && (
+                              <span className="text-red-300">
+                                Untrusted issuer:{' '}
+                                {issuerName(summary.untrustedIssuer)}
+                              </span>
+                            )}
+                            {ep.probeAssignments &&
+                              ep.probeAssignments.length > 0 && (
+                                <span className="flex items-center gap-1.5 text-zinc-500">
+                                  Assigned probes:
+                                  {ep.probeAssignments.map((a) => (
+                                    <Badge
+                                      key={a.id}
+                                      variant="neutral"
+                                      dot={false}
+                                    >
+                                      <Server className="w-3 h-3" />
+                                      {a.probe?.name ?? a.probeId}
+                                    </Badge>
+                                  ))}
+                                </span>
+                              )}
+                            {ep.hostedRegions &&
+                              ep.hostedRegions.length > 0 && (
+                                <span className="flex items-center gap-1.5 text-zinc-500">
+                                  Hosted regions:
+                                  {ep.hostedRegions.map((r) => (
+                                    <Badge
+                                      key={r.id}
+                                      variant="neutral"
+                                      dot={false}
+                                    >
+                                      <Cloud className="w-3 h-3" />
+                                      {r.region}
+                                    </Badge>
+                                  ))}
+                                </span>
+                              )}
+                          </div>
                           <ScanResultsPanel endpointId={ep.id} />
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -803,4 +865,42 @@ export default function EndpointManagement() {
       </Card>
     </div>
   );
+}
+
+const STATE_BADGE: Record<
+  EndpointState,
+  { label: string; variant: BadgeVariant }
+> = {
+  unreachable: { label: 'Unreachable', variant: 'danger' },
+  untrusted: { label: 'Untrusted chain', variant: 'danger' },
+  expiring: { label: 'Expiring', variant: 'warning' },
+  healthy: { label: 'Healthy', variant: 'ok' },
+  unscanned: { label: 'Not scanned', variant: 'neutral' },
+  disabled: { label: 'Disabled', variant: 'neutral' },
+};
+
+function EndpointStatusBadge({ summary }: { summary: EndpointSummary }) {
+  const { label, variant } = STATE_BADGE[summary.state];
+  const title =
+    summary.state === 'unreachable'
+      ? (summary.error ?? undefined)
+      : summary.state === 'untrusted'
+        ? `Issued by ${issuerName(summary.untrustedIssuer) ?? 'an untrusted CA'}`
+        : undefined;
+  return (
+    <Badge variant={variant} title={title}>
+      {label}
+    </Badge>
+  );
+}
+
+/** Days left; colored only when it needs attention. */
+function ExpiryDays({ days }: { days: number }) {
+  const tone =
+    days <= 7
+      ? 'text-red-300'
+      : days <= 30
+        ? 'text-amber-300'
+        : 'text-zinc-300';
+  return <span className={`tnum whitespace-nowrap ${tone}`}>{days}d</span>;
 }

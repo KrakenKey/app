@@ -96,7 +96,7 @@ function DaysLeft({ host }: { host: ReportHostResult }) {
       : host.daysLeft <= 14
         ? 'text-amber-400'
         : host.daysLeft <= 30
-          ? 'text-cyan-400'
+          ? 'text-violet-300'
           : 'text-zinc-300';
   return (
     <span className={`tabular-nums ${tone}`}>
@@ -307,13 +307,11 @@ export function ReportView({
       <Card className="p-0 overflow-hidden">
         <Table>
           <TableHeader>
-            <tr>
-              {sortHead('host', 'Host')}
-              {sortHead('severity', 'Status')}
-              {sortHead('daysLeft', 'Days left')}
-              {sortHead('issuer', 'Issuer')}
-              <TableHead>Problems</TableHead>
-            </tr>
+            {sortHead('host', 'Host')}
+            {sortHead('severity', 'Status')}
+            {sortHead('daysLeft', 'Days left')}
+            {sortHead('issuer', 'Issuer')}
+            <TableHead>Problems</TableHead>
           </TableHeader>
           <tbody>
             {rows.length === 0 && (
@@ -325,10 +323,10 @@ export function ReportView({
             )}
             {rows.map((h) => (
               <TableRow key={`${h.host}:${h.port}`}>
-                <TableCell className="font-mono text-xs text-zinc-200 break-all">
+                <TableCell className="text-sm font-medium text-zinc-100 whitespace-nowrap">
                   {hostLabel(h)}
                   {h.tlsVersion && (
-                    <div className="text-zinc-500 font-sans">
+                    <div className="text-xs font-normal text-zinc-500">
                       {h.tlsVersion}
                       {h.keyType &&
                         `, ${h.keyType}${h.keySize ? ` ${h.keySize}` : ''}`}

@@ -32,9 +32,9 @@ import {
 
 const ROLE_BADGE: Record<
   OrgRole,
-  { label: string; variant: 'warning' | 'info' | 'neutral' }
+  { label: string; variant: 'accent' | 'info' | 'neutral' }
 > = {
-  owner: { label: 'Owner', variant: 'warning' },
+  owner: { label: 'Owner', variant: 'accent' },
   admin: { label: 'Admin', variant: 'info' },
   member: { label: 'Member', variant: 'neutral' },
   viewer: { label: 'Viewer', variant: 'neutral' },
