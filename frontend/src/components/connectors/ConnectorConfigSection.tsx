@@ -263,8 +263,7 @@ export function ConnectorConfigSection({
       {summary.truncated && (
         <p className="mt-4 text-sm text-amber-400 flex gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-          The connector shortened this summary to fit the size limits, so some
-          certificates or targets are not shown.
+          The connector shortened this summary to fit; see its log.
         </p>
       )}
 

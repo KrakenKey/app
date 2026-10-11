@@ -409,7 +409,9 @@ describe('ConnectorDetail', () => {
       renderPage(activeConnector.id);
       const config = await section();
       expect(
-        config.getByText(/shortened this summary to fit the size limits/),
+        config.getByText(
+          'The connector shortened this summary to fit; see its log.',
+        ),
       ).toBeInTheDocument();
       expect(
         config.getByText(/or they were cut from the summary/),

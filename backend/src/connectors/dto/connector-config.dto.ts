@@ -343,7 +343,7 @@ export class ConnectorConfigDto {
 
   @ApiPropertyOptional({
     description:
-      'True when the connector cut certificates or targets to the limits',
+      'True when the connector cut anything (certificates, targets, plugins, names or long setting values) to fit the limits',
     default: false,
   })
   @IsOptional()

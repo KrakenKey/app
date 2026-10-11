@@ -138,6 +138,26 @@ describe('ConnectorConfigDto', () => {
     });
   });
 
+  it('accepts what the connector sends: builtin plugins, a host without a port, no interval', async () => {
+    const b = body();
+    b.checkIntervalSeconds = null;
+    b.plugins = [
+      { name: 'local', version: '0.3.0', source: 'builtin' },
+      { name: 'file', version: '0.3.0', source: 'builtin' },
+      { name: 'exec', version: '0.3.0', source: 'builtin' },
+      { name: 'custom', version: null, source: 'path' },
+    ];
+    b.certificates[0].targets[1].verify = {
+      host: 'www.example.com',
+      port: null,
+      skipChainValidation: false,
+    };
+    // The hash is opaque: stored as sent, whatever the body holds
+    const summary = toConfigSummary(await parse(b));
+    expect(summary).toEqual(b);
+    expect(summary.hash).toBe(HASH);
+  });
+
   it('drops unknown fields at every level', async () => {
     const b = body();
     b.command = 'rm -rf /';

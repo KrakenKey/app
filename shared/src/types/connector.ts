@@ -360,7 +360,10 @@ export interface ConnectorConfigCertificate {
  * connector's host. `DELETE /connectors/config` clears it.
  */
 export interface ConnectorConfigSummary {
-  /** sha256 (lowercase hex) of the canonical summary without `hash`. */
+  /**
+   * sha256 (lowercase hex) of the connector's canonical summary without
+   * `hash`. Opaque to KrakenKey: stored as sent, never recomputed.
+   */
   hash: string;
   /** Connector version. */
   version: string;
@@ -369,6 +372,9 @@ export interface ConnectorConfigSummary {
   plugins: ConnectorConfigPlugin[];
   /** Every certificate in the config, in config order. */
   certificates: ConnectorConfigCertificate[];
-  /** True when the connector cut certificates or targets to the limits. */
+  /**
+   * True when the connector cut anything to fit the limits: certificates,
+   * targets, plugins, names or long setting values.
+   */
   truncated: boolean;
 }

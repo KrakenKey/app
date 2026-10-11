@@ -1086,15 +1086,15 @@ Sent by the connector with a key from `POST /connectors/token` (from connector 0
 }
 ```
 
-- `hash`: `^[0-9a-f]{64}$`. Stored as sent; KrakenKey does not recompute it.
-- `version`: printable ASCII without spaces, at most 64 characters. `checkIntervalSeconds`: optional integer, 1 to 604800 (7 days).
-- `plugins`: up to 50. `name`: `^[A-Za-z0-9._-]{1,64}$`; `version`: at most 64 printable ASCII characters, or `null`; `source`: `bundled`, `data_dir`, `path` or `builtin`.
+- `hash`: `^[0-9a-f]{64}$`. Opaque to KrakenKey: stored as sent and never recomputed.
+- `version`: printable ASCII without spaces, at most 64 characters. `checkIntervalSeconds`: integer, 1 to 604800 (7 days), or `null`.
+- `plugins`: up to 50. `name`: `^[A-Za-z0-9._-]{1,64}$`; `version`: at most 64 printable ASCII characters, or `null`; `source`: `bundled`, `data_dir`, `path` or `builtin`. Built-in plugins (`local`, `file`, `exec`) are listed with `source: "builtin"` and the connector's version; `path` plugins send `version: null`.
 - `certificates`: up to 500. `certificateId`: integer, at least 1. `names`: up to 100, each at most 253 printable ASCII characters.
 - `keyStore.plugin` and `targets[].plugin`: same rule as plugin names. `keyType`: at most 32 printable ASCII characters, or `null`.
 - `targets`: up to 50 per certificate. `label`: `^[A-Za-z0-9._-]{1,64}$`. `implicit`: the connector added the target itself (for example a key store that is also a target). `runsCommand`: the target runs a command after deploying, or is the `exec` target.
-- `verify`: `null` or `{ "host": string (at most 253) or null, "port": 1-65535 or null, "skipChainValidation": boolean }`.
+- `verify`: `null` or `{ "host": string (at most 253) or null, "port": 1-65535 or null, "skipChainValidation": boolean }`. `port` can be `null` while `host` is set.
 - `settings`: a flat object of at most 10 keys matching `^[a-z][a-z0-9_]{0,31}$`. Values are strings (at most 256 characters; control characters are replaced with spaces), booleans or finite numbers. Nested objects, lists and `null` values are a `400`.
-- `truncated`: `true` when the connector cut certificates or targets to these limits.
+- `truncated`: `true` when the connector cut anything to fit these limits: certificates, targets, plugins, names or long setting values.
 - `null` for `plugins`, `certificates`, `names`, `targets` or `settings` is read as empty. Unknown fields are dropped.
 - The body may be up to 2 MB, as for the report.
 
