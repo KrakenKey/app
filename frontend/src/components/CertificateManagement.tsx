@@ -46,6 +46,7 @@ import { Textarea } from './ui/Textarea';
 import { Table, TableHeader, TableRow, TableHead, TableCell } from './ui/Table';
 import { PageHeader } from './ui/PageHeader';
 import { EmptyState } from './ui/EmptyState';
+import { Switch } from './ui/Switch';
 
 const requestModeCardClass = (selected: boolean) =>
   `flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
@@ -723,38 +724,14 @@ function AutoRenewSwitch({
   onToggle: (cert: TlsCert) => void;
   long?: boolean;
 }) {
+  const on = cert.autoRenew;
   return (
-    <label className="relative inline-flex items-center gap-2 cursor-pointer select-none">
-      <input
-        type="checkbox"
-        role="switch"
-        checked={cert.autoRenew}
-        disabled={disabled}
-        onChange={() => onToggle(cert)}
-        className="peer sr-only"
-      />
-      <span
-        aria-hidden="true"
-        className={`relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-full transition-colors peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent ${
-          cert.autoRenew ? 'bg-cyan-500/55' : 'bg-zinc-700'
-        }`}
-      >
-        <span
-          className={`h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
-            cert.autoRenew ? 'translate-x-[16px]' : 'translate-x-[2px]'
-          }`}
-        />
-      </span>
-      <span className="text-sm text-zinc-300">
-        {long
-          ? cert.autoRenew
-            ? 'Enabled'
-            : 'Disabled'
-          : cert.autoRenew
-            ? 'On'
-            : 'Off'}
-      </span>
-    </label>
+    <Switch
+      checked={on}
+      disabled={disabled}
+      onChange={() => onToggle(cert)}
+      label={long ? (on ? 'Enabled' : 'Disabled') : on ? 'On' : 'Off'}
+    />
   );
 }
 

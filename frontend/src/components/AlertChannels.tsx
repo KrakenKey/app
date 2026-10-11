@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
 import {
   AlertTriangle,
+  ChevronRight,
   Copy,
   MessageSquare,
   Pencil,
@@ -35,6 +36,9 @@ import { Card } from './ui/Card';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { Badge } from './ui/Badge';
+import { Switch } from './ui/Switch';
+import { CardHeader } from './ui/Card';
+import { formatRelative } from '../utils/connectors';
 
 export const SIGNATURE_DOCS_URL =
   'https://github.com/KrakenKey/app/blob/main/backend/docs/API_REFERENCE.md#verifying-the-signature';
@@ -321,33 +325,34 @@ const AlertChannels: React.FC = () => {
   };
 
   return (
-    <Card className="mb-6">
-      <div className="flex items-center justify-between gap-3 mb-2">
-        <h2 className="text-sm font-medium text-zinc-400 flex items-center gap-2">
-          <Webhook className="w-4 h-4" />
-          Alert Channels
-        </h2>
-        {!form && (
-          <Button
-            size="sm"
-            variant="secondary"
-            icon={<Plus className="w-3.5 h-3.5" />}
-            onClick={openCreate}
-            disabled={loading || atLimit}
-          >
-            Add channel
-          </Button>
-        )}
-      </div>
-      <p className="text-xs text-zinc-500 mb-4">
-        Send alerts to Slack, Microsoft Teams or your own HTTPS endpoint, in
-        addition to email. {channels.length} of {MAX_NOTIFICATION_CHANNELS}{' '}
-        channels used.
-      </p>
+    <Card flush>
+      <CardHeader
+        title={'Alert channels'}
+        description={
+          <>
+            Send alerts to Slack, Microsoft Teams or your own HTTPS endpoint, in
+            addition to email. {channels.length} of {MAX_NOTIFICATION_CHANNELS}{' '}
+            channels used.
+          </>
+        }
+        actions={
+          !form && (
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={<Plus className="w-3.5 h-3.5" />}
+              onClick={openCreate}
+              disabled={loading || atLimit}
+            >
+              Add channel
+            </Button>
+          )
+        }
+      />
 
       {revealed && (
         <div
-          className="mb-4 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4 flex flex-col gap-3"
+          className="m-5 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4 flex flex-col gap-3"
           data-testid="webhook-secret"
         >
           <p className="text-sm font-medium text-emerald-400">
@@ -397,7 +402,7 @@ const AlertChannels: React.FC = () => {
       {form && (
         <form
           onSubmit={handleSubmit}
-          className="mb-4 rounded-lg bg-zinc-950 p-4 flex flex-col gap-4"
+          className="m-5 rounded-lg bg-zinc-950 p-4 flex flex-col gap-4"
           aria-label={form.editing ? 'Edit alert channel' : 'Add alert channel'}
           noValidate
         >
@@ -524,32 +529,39 @@ const AlertChannels: React.FC = () => {
       )}
 
       {loading ? (
-        <p className="text-sm text-zinc-500">Loading alert channels...</p>
+        <p className="px-5 py-4 text-sm text-zinc-500">
+          Loading alert channels...
+        </p>
       ) : channels.length === 0 ? (
         !form && (
-          <p className="text-sm text-zinc-500">
+          <p className="px-5 py-4 text-sm text-zinc-500">
             No alert channels yet. Add one to get alerts in chat or your own
             systems.
           </p>
         )
       ) : (
-        <ul className="space-y-3">
+        <ul className="divide-y divide-border-subtle border-t border-border-subtle">
           {channels.map((channel) => {
             const info = TYPE_INFO[channel.type];
             const Icon = info.icon;
             const isBusy = busy.has(channel.id);
             const result = testResults[channel.id];
+            const failed =
+              !!channel.lastDeliveryAt && channel.lastDeliveryStatus !== 'ok';
+            const allEvents = channel.events.length === ALERT_EVENTS.length;
             return (
               <li
                 key={channel.id}
-                className="p-3 bg-zinc-950 rounded-lg flex flex-col gap-2"
+                className="px-5 py-4 flex flex-col gap-2.5"
                 data-testid={`alert-channel-${channel.id}`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <Icon className="w-4 h-4 text-zinc-400 shrink-0" />
-                      <span className="text-sm text-zinc-200 font-medium break-all">
+                      <span
+                        className={`text-sm font-medium break-all ${channel.enabled ? 'text-zinc-100' : 'text-zinc-400'}`}
+                      >
                         {channel.name}
                       </span>
                       <Badge variant="neutral" dot={false}>
@@ -560,57 +572,72 @@ const AlertChannels: React.FC = () => {
                       {channel.urlMasked}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={channel.enabled}
+                  <Switch
+                    checked={channel.enabled}
                     aria-label={`Enable ${channel.name}`}
                     disabled={isBusy}
-                    onClick={() => handleToggleEnabled(channel)}
-                    className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors duration-200 ${
-                      channel.enabled ? 'bg-cyan-500/55' : 'bg-zinc-700'
-                    } ${isBusy ? 'opacity-50' : ''}`}
+                    onChange={() => handleToggleEnabled(channel)}
+                  />
+                </div>
+
+                {failed && channel.lastDeliveryAt && (
+                  <div
+                    className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs"
+                    data-testid="delivery-error"
                   >
-                    <span
-                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform duration-200 mt-0.5 ${
-                        channel.enabled
-                          ? 'translate-x-4 ml-0.5'
-                          : 'translate-x-0 ml-0.5'
-                      }`}
-                    />
-                  </button>
-                </div>
-
-                <div className="flex flex-wrap gap-1">
-                  {channel.events.map((event) => (
-                    <span
-                      key={event}
-                      title={ALERT_EVENT_DESCRIPTIONS[event]}
-                      className="px-1.5 py-0.5 rounded bg-zinc-800 text-[11px] text-zinc-400"
-                    >
-                      {shortEvent(event)}
+                    <Badge variant="danger">Delivery failed</Badge>
+                    <span className="text-red-200 break-all">
+                      {channel.lastError ?? 'Unknown error'}
                     </span>
-                  ))}
-                </div>
+                    <span
+                      className="text-zinc-500"
+                      title={new Date(channel.lastDeliveryAt).toLocaleString()}
+                    >
+                      {formatRelative(channel.lastDeliveryAt)}
+                    </span>
+                  </div>
+                )}
 
-                <p className="text-xs text-zinc-500">
-                  {channel.lastDeliveryAt ? (
-                    <>
-                      Last delivery{' '}
-                      {new Date(channel.lastDeliveryAt).toLocaleString()}:{' '}
-                      {channel.lastDeliveryStatus === 'ok' ? (
-                        <span className="text-emerald-400">ok</span>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500">
+                  {!failed && (
+                    <span>
+                      {channel.lastDeliveryAt ? (
+                        <>
+                          Last delivery{' '}
+                          <span
+                            title={new Date(
+                              channel.lastDeliveryAt,
+                            ).toLocaleString()}
+                          >
+                            {formatRelative(channel.lastDeliveryAt)}
+                          </span>
+                          : <span className="text-zinc-300">ok</span>
+                        </>
                       ) : (
-                        <span className="text-red-400">
-                          failed
-                          {channel.lastError ? ` (${channel.lastError})` : ''}
-                        </span>
+                        'No deliveries yet'
                       )}
-                    </>
-                  ) : (
-                    'No deliveries yet'
+                    </span>
                   )}
-                </p>
+                  <details className="group open:basis-full">
+                    <summary className="inline-flex cursor-pointer select-none list-none items-center gap-1 hover:text-zinc-300 [&::-webkit-details-marker]:hidden">
+                      <ChevronRight className="w-3.5 h-3.5 transition-transform group-open:rotate-90" />
+                      {allEvents
+                        ? `All ${channel.events.length} events`
+                        : `${channel.events.length} ${channel.events.length === 1 ? 'event' : 'events'}`}
+                    </summary>
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {channel.events.map((event) => (
+                        <span
+                          key={event}
+                          title={ALERT_EVENT_DESCRIPTIONS[event]}
+                          className="px-1.5 py-0.5 rounded bg-zinc-800 text-[11px] text-zinc-400"
+                        >
+                          {shortEvent(event)}
+                        </span>
+                      ))}
+                    </div>
+                  </details>
+                </div>
 
                 {result && (
                   <p
@@ -674,7 +701,7 @@ const AlertChannels: React.FC = () => {
       )}
 
       {atLimit && (
-        <p className="text-xs text-amber-400 mt-3">
+        <p className="px-5 pb-4 text-xs text-amber-400">
           You have reached the limit of {MAX_NOTIFICATION_CHANNELS} channels.
           Delete one to add another.
         </p>

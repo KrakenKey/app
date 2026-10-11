@@ -1,0 +1,110 @@
+import { PLAN_LIMITS } from '@krakenkey/shared';
+import type { Endpoint, TlsCert } from '@krakenkey/shared';
+import {
+  activeCerts,
+  certsThisMonth,
+  formatLimit,
+  hostedEndpoints,
+  hostedRegions,
+  planLimits,
+  usageLevel,
+  usagePercent,
+  usageRows,
+} from '../planUsage';
+
+const NOW = new Date('2026-10-11T14:30:00Z');
+
+const cert = (status: string, createdAt: string) =>
+  ({ id: 1, status, createdAt }) as unknown as TlsCert;
+
+const endpoint = (regions: string[]) =>
+  ({
+    id: regions.join('-') || 'none',
+    hostedRegions: regions.map((region) => ({ region })),
+  }) as unknown as Endpoint;
+
+describe('planUsage', () => {
+  it('reads limits from the shared plan table, falling back to free', () => {
+    expect(planLimits('team')).toBe(PLAN_LIMITS.team);
+    expect(planLimits('nonsense')).toBe(PLAN_LIMITS.free);
+    expect(planLimits(null)).toBe(PLAN_LIMITS.free);
+  });
+
+  it('turns amber at 80% and red at the limit', () => {
+    expect(usageLevel(7, 10)).toBe('normal');
+    expect(usageLevel(8, 10)).toBe('high');
+    expect(usageLevel(10, 10)).toBe('full');
+    expect(usageLevel(12, 10)).toBe('full');
+    expect(usageLevel(500, Infinity)).toBe('normal');
+  });
+
+  it('caps the bar at 100% and leaves unlimited bars empty', () => {
+    expect(usagePercent(7, 25)).toBe(28);
+    expect(usagePercent(30, 25)).toBe(100);
+    expect(usagePercent(3, Infinity)).toBe(0);
+  });
+
+  it('counts certificates created since the 1st of the UTC month', () => {
+    const certs = [
+      cert('issued', '2026-10-01T00:00:00Z'),
+      cert('failed', '2026-10-11T10:00:00Z'),
+      cert('issued', '2026-09-30T23:59:59Z'),
+    ];
+    expect(certsThisMonth(certs, NOW)).toBe(2);
+  });
+
+  it('counts issued and awaiting_csr certificates as active', () => {
+    const certs = [
+      cert('issued', '2026-01-01T00:00:00Z'),
+      cert('awaiting_csr', '2026-01-01T00:00:00Z'),
+      cert('renewing', '2026-01-01T00:00:00Z'),
+      cert('revoked', '2026-01-01T00:00:00Z'),
+      cert('failed', '2026-01-01T00:00:00Z'),
+    ];
+    expect(activeCerts(certs)).toBe(2);
+  });
+
+  it('counts hosted endpoints and distinct hosted regions', () => {
+    const eps = [
+      endpoint(['us-east-1', 'eu-west-1']),
+      endpoint(['us-east-1']),
+      endpoint([]),
+    ];
+    expect(hostedEndpoints(eps)).toBe(2);
+    expect(hostedRegions(eps)).toBe(2);
+  });
+
+  it('leaves hosted rows out on plans without hosted monitoring', () => {
+    const base = { domains: 1, apiKeys: 1, certs: [], endpoints: [] };
+    const free = usageRows({ ...base, plan: 'free' }).map((r) => r.key);
+    expect(free).not.toContain('hostedMonitoredEndpoints');
+    expect(free).not.toContain('hostedProbeRegions');
+    const team = usageRows({ ...base, plan: 'team' }).map((r) => r.key);
+    expect(team).toEqual([
+      'domains',
+      'certsPerMonth',
+      'totalActiveCerts',
+      'apiKeys',
+      'monitoredEndpoints',
+      'hostedMonitoredEndpoints',
+      'hostedProbeRegions',
+    ]);
+  });
+
+  it('reports null usage while lists are still loading', () => {
+    const rows = usageRows({
+      plan: 'team',
+      domains: 7,
+      apiKeys: null,
+      certs: null,
+      endpoints: null,
+    });
+    expect(rows.find((r) => r.key === 'domains')?.used).toBe(7);
+    expect(rows.find((r) => r.key === 'certsPerMonth')?.used).toBeNull();
+  });
+
+  it('formats unlimited limits', () => {
+    expect(formatLimit(1500)).toBe('1,500');
+    expect(formatLimit(Infinity)).toBe('Unlimited');
+  });
+});
