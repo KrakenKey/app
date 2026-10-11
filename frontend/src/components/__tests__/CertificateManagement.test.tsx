@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { render } from '../../test/test-utils';
 import { http, HttpResponse } from 'msw';
@@ -24,6 +24,14 @@ vi.mock('../../hooks/useAuth', async () => {
     }),
   };
 });
+
+/** The request form lives in a modal opened from the page header. */
+async function openRequest(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(
+    await screen.findByRole('button', { name: /Request certificate/ }),
+  );
+  return within(screen.getByRole('dialog'));
+}
 
 describe('CertificateManagement', () => {
   it('renders loading state initially', () => {
@@ -63,14 +71,16 @@ describe('CertificateManagement', () => {
     });
   });
 
-  it('shows CSR submission form', async () => {
+  it('lists certificates first and opens the CSR form from the header', async () => {
+    const user = userEvent.setup();
     render(<CertificateManagement />);
 
-    await waitFor(() => {
-      expect(screen.getByText('Request a Certificate')).toBeInTheDocument();
-    });
+    await screen.findByText('example.com');
+    expect(screen.queryByText('Request a Certificate')).toBeNull();
 
-    expect(screen.getByText('Submit CSR')).toBeInTheDocument();
+    const dialog = await openRequest(user);
+    expect(dialog.getByText('Request a Certificate')).toBeInTheDocument();
+    expect(dialog.getByText('Submit CSR')).toBeInTheDocument();
   });
 
   it('submits a CSR and refreshes the list', async () => {
@@ -82,6 +92,7 @@ describe('CertificateManagement', () => {
       expect(screen.getByText('example.com')).toBeInTheDocument();
     });
 
+    await openRequest(user);
     const textarea = screen.getByPlaceholderText(/BEGIN CERTIFICATE REQUEST/);
     await user.type(
       textarea,
@@ -111,12 +122,20 @@ describe('CertificateManagement', () => {
     });
   });
 
-  it('shows copy PEM button for certificates with PEM', async () => {
+  it('keeps Copy PEM and Revoke in the row menu', async () => {
+    const user = userEvent.setup();
     render(<CertificateManagement />);
 
-    await waitFor(() => {
-      expect(screen.getByText('Copy PEM')).toBeInTheDocument();
-    });
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'More actions for example.com',
+      }),
+    );
+    const menu = within(screen.getByRole('menu'));
+    expect(menu.getByRole('menuitem', { name: /Copy PEM/ })).toBeVisible();
+    expect(menu.getByRole('menuitem', { name: /Revoke/ })).toBeVisible();
+    // Revoke is never a top-level button
+    expect(screen.queryByRole('button', { name: /^Revoke/ })).toBeNull();
   });
 
   it('shows certificate status badges', async () => {
@@ -156,11 +175,13 @@ describe('CertificateManagement', () => {
       }),
     );
 
+    const user = userEvent.setup();
     render(<CertificateManagement />);
 
-    await waitFor(() => {
-      expect(screen.getByText(reason)).toBeInTheDocument();
-    });
+    await user.click(
+      await screen.findByRole('button', { name: 'Show details' }),
+    );
+    expect(screen.getByText(reason)).toBeInTheDocument();
   });
 
   it('shows an awaiting_csr certificate by its requested names, with Delete', async () => {
@@ -184,9 +205,12 @@ describe('CertificateManagement', () => {
     expect(
       screen.getAllByText(/Awaiting CSR from connector/).length,
     ).toBeGreaterThanOrEqual(1);
-    expect(
-      screen.getAllByRole('button', { name: /Delete/ }).length,
-    ).toBeGreaterThanOrEqual(1);
+    await userEvent.click(
+      screen.getByRole('button', { name: 'More actions for app.example.com' }),
+    );
+    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual([
+      'Delete',
+    ]);
     // Nothing to renew, revoke, retry or download yet
     expect(screen.queryByRole('button', { name: /Renew/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /Revoke/ })).toBeNull();
@@ -195,8 +219,12 @@ describe('CertificateManagement', () => {
   });
 
   it('displays domains from parsed CSR', async () => {
+    const user = userEvent.setup();
     render(<CertificateManagement />);
 
+    await user.click(
+      (await screen.findAllByRole('button', { name: 'Show details' }))[0],
+    );
     await waitFor(() => {
       expect(
         screen.getByText(/example.com, www.example.com/),
@@ -217,12 +245,12 @@ describe('CertificateManagement', () => {
       );
       const user = userEvent.setup();
       render(<CertificateManagement />);
-      await screen.findByText('Request a Certificate');
+      const dialog = await openRequest(user);
 
       await user.click(
-        screen.getByRole('radio', { name: /Issued by a connector/ }),
+        dialog.getByRole('radio', { name: /Issued by a connector/ }),
       );
-      expect(screen.queryByText('Generate New CSR')).toBeNull();
+      expect(dialog.queryByText('Generate New CSR')).toBeNull();
       expect(
         screen.getByText(
           /creates the\s+private key, which never leaves its server/,
@@ -252,7 +280,8 @@ describe('CertificateManagement', () => {
           managedBy: 'connector',
         }),
       );
-      await waitFor(() => expect(names).toHaveValue(''));
+      // The modal closes once the certificate is created
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     });
 
     it('loads where a connector-managed certificate is deployed only when opened', async () => {
@@ -270,6 +299,9 @@ describe('CertificateManagement', () => {
       );
       const user = userEvent.setup();
       render(<CertificateManagement />);
+      await user.click(
+        await screen.findByRole('button', { name: 'Show details' }),
+      );
       await screen.findByText(/A connector, which renews it/);
       const toggle = screen.getByRole('button', { name: /Deployed to/ });
       expect(calls).toBe(0);

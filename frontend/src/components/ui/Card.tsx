@@ -14,9 +14,11 @@ export function Card({
   className = '',
   ...props
 }: CardProps) {
+  // A caller that sets its own padding (p-0, p-4) replaces the default.
+  const ownPadding = /(^|\s)p-\d/.test(className);
   return (
     <div
-      className={`bg-surface border border-border rounded-xl shadow-card ${flush ? '' : 'p-5 sm:p-6'} ${hover ? 'hover:border-border-strong hover:bg-surface-hover transition-colors duration-150' : ''} ${className}`}
+      className={`bg-surface border border-border rounded-xl shadow-card ${flush || ownPadding ? '' : 'p-5 sm:p-6'} ${hover ? 'hover:border-border-strong hover:bg-surface-hover transition-colors duration-150' : ''} ${className}`}
       {...props}
     >
       {children}

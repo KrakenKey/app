@@ -36,7 +36,6 @@ class ToastManager {
     if (!this.container) {
       this.container = document.createElement('div');
       this.container.id = 'toast-container';
-      this.container.setAttribute('role', 'status');
       this.container.setAttribute('aria-live', 'polite');
       this.container.style.cssText = `
         position: fixed;

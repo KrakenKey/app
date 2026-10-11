@@ -106,8 +106,35 @@ export function CreateConnectorModal({
   };
 
   return (
-    <Modal open={open} onClose={close} title="New Connector" size="lg">
+    <Modal
+      open={open}
+      onClose={close}
+      title="New Connector"
+      size="lg"
+      footer={
+        <>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={close}
+            disabled={creating}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            form="create-connector-form"
+            variant="primary"
+            icon={<Plus className="w-3.5 h-3.5" />}
+            disabled={creating}
+          >
+            {creating ? 'Creating...' : 'Create Connector'}
+          </Button>
+        </>
+      }
+    >
       <form
+        id="create-connector-form"
         onSubmit={handleSubmit}
         aria-label="Create connector"
         className="flex flex-col gap-5"
@@ -153,25 +180,6 @@ export function CreateConnectorModal({
             {formError}
           </p>
         )}
-
-        <div className="flex justify-end gap-2 pt-1">
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={close}
-            disabled={creating}
-          >
-            Cancel
-          </Button>
-          <Button
-            type="submit"
-            variant="primary"
-            icon={<Plus className="w-3.5 h-3.5" />}
-            disabled={creating}
-          >
-            {creating ? 'Creating...' : 'Create Connector'}
-          </Button>
-        </div>
       </form>
     </Modal>
   );
