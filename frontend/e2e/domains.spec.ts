@@ -95,7 +95,7 @@ test.describe('Domain management', () => {
     await expect(dialog).toHaveCount(0);
   });
 
-  test('keeps the domain when the confirmation is cancelled', async ({
+  test('keeps the domain when the confirmation is canceled', async ({
     page,
   }) => {
     let deleteCalled = false;

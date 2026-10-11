@@ -50,7 +50,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const confirm = useCallback<ConfirmFn>((options) => {
-    // A second request replaces an unanswered one, which counts as cancelled.
+    // A second request replaces an unanswered one, which counts as canceled.
     pendingRef.current?.resolve(false);
     return new Promise<boolean>((resolve) => {
       const active = document.activeElement;
