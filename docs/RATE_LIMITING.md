@@ -28,7 +28,7 @@ Three connector categories use the same limit on every tier:
 |----------|-------|-----------|--------|
 | `public-strict` | 10/min | client IP | `POST /connectors/enroll`, `POST /connectors/rotate` |
 | `connector-token` | 60/min | client IP | `POST /connectors/token` |
-| `connector-report` | 60/hr | connector | `POST /connectors/report` |
+| `connector-report` | 60/hr | connector | `POST /connectors/report`, `PUT /connectors/config`, `DELETE /connectors/config` (each its own bucket) |
 
 Why these numbers:
 
@@ -47,7 +47,7 @@ Defined in `interfaces/rate-limit-category.enum.ts`:
 | `public` | `PUBLIC` | Unauthenticated endpoints: `/`, `/health`, the login, registration and OAuth callback routes under `/auth`, `POST /public-scan` |
 | `public-strict` | `PUBLIC_STRICT` | Unauthenticated connector credential exchanges: `POST /connectors/enroll`, `POST /connectors/rotate` |
 | `connector-token` | `CONNECTOR_TOKEN` | `POST /connectors/token` |
-| `connector-report` | `CONNECTOR_REPORT` | `POST /connectors/report` |
+| `connector-report` | `CONNECTOR_REPORT` | `POST /connectors/report`, `PUT /connectors/config`, `DELETE /connectors/config` |
 | `read` | `AUTHENTICATED_READ` | Authenticated reads: list domains, view certificates, endpoint history |
 | `write` | `AUTHENTICATED_WRITE` | Authenticated mutations: create domain, delete certificate, update endpoint |
 | `expensive` | `EXPENSIVE` | Resource-heavy operations: certificate issuance, renewal, retry, revocation, domain verification |

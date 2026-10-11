@@ -6,11 +6,14 @@ import type { Connector } from '@krakenkey/shared';
 import { server } from '../../test/mocks/server';
 import { API_URL } from '../../services/api';
 import {
+  CONFIG_HASH,
   activeConnector,
   expiredConnector,
+  mockConfigSummary,
   mockDeployments,
   waitingConnector,
 } from '../../test/mocks/connectors';
+import { CONNECTOR_DOCS_URL } from '../../utils/connectors';
 import ConnectorDetail from '../ConnectorDetail';
 
 vi.mock('../../utils/clipboard', () => ({ copyToClipboard: vi.fn() }));
@@ -243,5 +246,176 @@ describe('ConnectorDetail', () => {
     );
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(await screen.findByText('certs:read')).toBeInTheDocument();
+  });
+
+  describe('configuration', () => {
+    const shared = (over: Partial<Connector> = {}): Connector => ({
+      ...activeConnector,
+      deployments: mockDeployments,
+      configSummary: mockConfigSummary,
+      configHash: CONFIG_HASH,
+      configReportedAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+      ...over,
+    });
+    const section = async () =>
+      within(await screen.findByRole('region', { name: 'Configuration' }));
+
+    it('explains how sharing works when nothing is shared', async () => {
+      current = {
+        ...activeConnector,
+        deployments: [],
+        configSummary: null,
+        configHash: null,
+        configReportedAt: null,
+      };
+      renderPage(activeConnector.id);
+      const config = await section();
+      expect(
+        config.getByText(/has not shared its configuration/),
+      ).toBeInTheDocument();
+      expect(config.getByText(/from\s+version 0.3.0/)).toBeInTheDocument();
+      expect(
+        config.getByText('krakenkey.share_config: false'),
+      ).toBeInTheDocument();
+      expect(
+        config.getByRole('link', { name: 'connector docs' }),
+      ).toHaveAttribute('href', CONNECTOR_DOCS_URL);
+      expect(config.queryByText('Read-only')).toBeNull();
+      expect(config.queryByRole('table')).toBeNull();
+    });
+
+    it('treats a connector without the fields (older API) as not shared', async () => {
+      renderPage(activeConnector.id);
+      const config = await section();
+      expect(
+        config.getByText(/has not shared its configuration/),
+      ).toBeInTheDocument();
+    });
+
+    it('shows the shared summary, read-only', async () => {
+      current = shared();
+      renderPage(activeConnector.id);
+      const config = await section();
+
+      expect(config.getByText('Read-only')).toBeInTheDocument();
+      expect(config.getByText(/change it there/)).toBeInTheDocument();
+      expect(
+        config.getByText('10 minutes ago', { exact: false }),
+      ).toBeInTheDocument();
+      const hash = config.getByText(CONFIG_HASH.slice(0, 12));
+      expect(hash).toHaveAttribute('title', CONFIG_HASH);
+      expect(config.getByText('1 hour')).toBeInTheDocument();
+
+      const plugins = within(config.getByRole('table', { name: 'Plugins' }));
+      const rows = plugins.getAllByRole('row');
+      expect(rows[0]).toHaveTextContent('azure-keyvault0.3.0Bundled');
+      expect(rows[1]).toHaveTextContent('file—Built in');
+
+      // Certificate card: link, names, key store with its settings
+      expect(
+        await config.findByRole('link', { name: '#1 example.com' }),
+      ).toHaveAttribute('href', '/dashboard/certificates');
+      expect(
+        config.getByText('example.com, www.example.com'),
+      ).toBeInTheDocument();
+      expect(config.getByText('ecdsa-p256')).toBeInTheDocument();
+      expect(config.getAllByText('vault: kv-prod')).toHaveLength(2);
+      expect(config.getAllByText('certificate_name: www')).toHaveLength(2);
+
+      const targets = within(
+        config.getByRole('table', { name: 'Targets for certificate #1' }),
+      );
+      const [vault, nginx, haproxy] = targets.getAllByRole('row');
+      expect(
+        within(vault).getByText('Added automatically'),
+      ).toBeInTheDocument();
+      expect(within(vault).queryByText(/Runs a command/)).toBeNull();
+      expect(within(vault).getByText('No check')).toBeInTheDocument();
+      expect(within(vault).getByText('Not reported')).toBeInTheDocument();
+
+      expect(
+        within(nginx).getByText('Runs a command after deploy'),
+      ).toBeInTheDocument();
+      expect(within(nginx).queryByText('Added automatically')).toBeNull();
+      expect(
+        within(nginx).getByText('www.example.com:443'),
+      ).toBeInTheDocument();
+      expect(
+        within(nginx).getByText('dir: /etc/nginx/certs'),
+      ).toBeInTheDocument();
+      expect(
+        within(nginx).getByText('fullchain: site.pem'),
+      ).toBeInTheDocument();
+      expect(within(nginx).queryByText('Chain validation skipped')).toBeNull();
+      // Joined with the deployment the connector reported
+      expect(within(nginx).getByText('Verified')).toBeInTheDocument();
+
+      expect(within(haproxy).getByText('port 8443')).toBeInTheDocument();
+      expect(
+        within(haproxy).getByText('Chain validation skipped'),
+      ).toBeInTheDocument();
+      expect(within(haproxy).getByText('Failed')).toBeInTheDocument();
+
+      // Certificate 2 has no targets
+      expect(config.getByText('No targets in the config.')).toBeInTheDocument();
+
+      // Nothing to edit
+      expect(config.queryAllByRole('button')).toHaveLength(0);
+      expect(config.queryAllByRole('textbox')).toHaveLength(0);
+      expect(config.queryByText(/shortened this summary/)).toBeNull();
+    });
+
+    it('flags certificates outside the restrictions and allowed ones missing from the config', async () => {
+      current = shared({ allowedCertIds: [1, 3] });
+      renderPage(activeConnector.id);
+      const config = await section();
+      const drift = within(
+        config.getByRole('note', { name: 'Configuration drift' }),
+      );
+      const notAllowed = await drift.findByText(
+        /In the config but outside this connector's restrictions/,
+      );
+      expect(notAllowed).toHaveTextContent('#2 pending.com');
+      expect(notAllowed).not.toHaveTextContent('#1');
+      const missing = drift.getByText(/Allowed but not in the config/);
+      expect(missing).toHaveTextContent('#3');
+      expect(missing).not.toHaveTextContent('#1');
+    });
+
+    it('shows no drift when the config matches the restrictions', async () => {
+      current = shared({
+        configSummary: {
+          ...mockConfigSummary,
+          certificates: [mockConfigSummary.certificates[0]],
+        },
+      });
+      renderPage(activeConnector.id);
+      const config = await section();
+      expect(config.queryByRole('note')).toBeNull();
+    });
+
+    it('cannot compare a domain-only restriction', async () => {
+      current = shared({ allowedCertIds: null });
+      renderPage(activeConnector.id);
+      const config = await section();
+      expect(config.queryByRole('note')).toBeNull();
+    });
+
+    it('says when the summary was cut to the limits', async () => {
+      current = shared({
+        allowedCertIds: [1, 2, 3],
+        configSummary: { ...mockConfigSummary, truncated: true },
+      });
+      renderPage(activeConnector.id);
+      const config = await section();
+      expect(
+        config.getByText(
+          'The connector shortened this summary to fit; see its log.',
+        ),
+      ).toBeInTheDocument();
+      expect(
+        config.getByText(/or they were cut from the summary/),
+      ).toBeInTheDocument();
+    });
   });
 });

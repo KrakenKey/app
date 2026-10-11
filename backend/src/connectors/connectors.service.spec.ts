@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   HttpException,
   NotFoundException,
   ServiceUnavailableException,
@@ -621,6 +622,153 @@ describe('ConnectorsService', () => {
       await expect(svc.rotate(rotateDto(key, 'AAAA'))).rejects.toThrow(
         BadRequestException,
       );
+    });
+  });
+
+  describe('config summary', () => {
+    const SUMMARY = {
+      hash: 'b'.repeat(64),
+      version: '0.3.0',
+      checkIntervalSeconds: 3600,
+      plugins: [{ name: 'aws-acm', version: '0.3.0', source: 'bundled' }],
+      certificates: [
+        {
+          certificateId: 7,
+          names: ['www.example.com'],
+          keyStore: { plugin: 'local', keyType: null, settings: {} },
+          targets: [
+            {
+              label: 'acm',
+              plugin: 'aws-acm',
+              implicit: false,
+              runsCommand: false,
+              verify: null,
+              settings: { region: 'eu-west-1' },
+            },
+          ],
+        },
+        {
+          // Outside the connector's allowedCertIds: stored all the same
+          certificateId: 99,
+          names: [],
+          keyStore: { plugin: 'local', keyType: 'rsa-2048', settings: {} },
+          targets: [],
+        },
+      ],
+      truncated: false,
+    };
+    const connectorUser = (connectorId: string | null = ID) =>
+      ({
+        userId: 'u1',
+        apiKey: { id: 'k1', scopes: ['certs:read'], connectorId },
+      }) as any;
+
+    it('stores the summary, its hash and the time, and counts as contact', async () => {
+      await svc.storeConfig(connectorUser(), { ...SUMMARY } as any);
+      expect(repo.update).toHaveBeenCalledTimes(1);
+      const [where, changes] = repo.update.mock.calls[0];
+      expect(where).toEqual({
+        id: ID,
+        userId: 'u1',
+        revokedAt: expect.anything(),
+      });
+      expect(changes).toEqual({
+        configSummary: SUMMARY,
+        configHash: SUMMARY.hash,
+        configReportedAt: expect.any(Date),
+        lastSeenAt: changes.configReportedAt,
+        staleAlertedAt: null,
+      });
+    });
+
+    it('stores only the summary fields, not whatever else the DTO holds', async () => {
+      const dto = { ...SUMMARY, extra: 'x' } as any;
+      await svc.storeConfig(connectorUser(), dto);
+      expect(repo.update.mock.calls[0][1].configSummary).not.toHaveProperty(
+        'extra',
+      );
+    });
+
+    it('clears the three columns, also when nothing is stored', async () => {
+      await svc.clearConfig(connectorUser());
+      expect(repo.update).toHaveBeenCalledWith(
+        { id: ID, userId: 'u1', revokedAt: expect.anything() },
+        expect.objectContaining({
+          configSummary: null,
+          configHash: null,
+          configReportedAt: null,
+        }),
+      );
+    });
+
+    it('refuses keys not issued to a connector and dashboard sessions', async () => {
+      for (const user of [
+        // A user API key, then a dashboard session (no key at all)
+        connectorUser(null),
+        { userId: 'u1' } as any,
+      ]) {
+        await expect(
+          svc.storeConfig(user, { ...SUMMARY } as any),
+        ).rejects.toThrow(ForbiddenException);
+        await expect(svc.clearConfig(user)).rejects.toThrow(
+          'Only a key issued to a connector can share its config.',
+        );
+      }
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a revoked connector', async () => {
+      repo.update.mockResolvedValue({ affected: 0 });
+      await expect(
+        svc.storeConfig(connectorUser(), { ...SUMMARY } as any),
+      ).rejects.toThrow('This connector has been revoked.');
+      await expect(svc.clearConfig(connectorUser())).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('is on GET /connectors/:id', async () => {
+      const at = new Date('2026-10-11T08:00:00Z');
+      row = enrolled({ configHash: SUMMARY.hash, configReportedAt: at });
+      repo.findOne
+        .mockResolvedValueOnce(row)
+        .mockResolvedValueOnce({ id: ID, configSummary: SUMMARY });
+      const got = await svc.get('u1', ID);
+      expect(got).toMatchObject({
+        configSummary: SUMMARY,
+        configHash: SUMMARY.hash,
+        configReportedAt: '2026-10-11T08:00:00.000Z',
+      });
+      // The hidden column is asked for explicitly, for the same owner
+      expect(repo.findOne).toHaveBeenLastCalledWith({
+        where: { id: ID, userId: 'u1' },
+        select: { id: true, configSummary: true },
+      });
+    });
+
+    it('is null on GET /connectors/:id until shared, without a second query', async () => {
+      row = enrolled({ configHash: null, configReportedAt: null });
+      const got = await svc.get('u1', ID);
+      expect(got).toMatchObject({
+        configSummary: null,
+        configHash: null,
+        configReportedAt: null,
+      });
+      expect(repo.findOne).toHaveBeenCalledTimes(1);
+    });
+
+    it('is not on the list', async () => {
+      repo.find.mockResolvedValue([
+        enrolled({
+          configSummary: SUMMARY,
+          configHash: SUMMARY.hash,
+          configReportedAt: new Date(),
+        }),
+      ]);
+      const [listed] = await svc.list('u1');
+      expect(listed).not.toHaveProperty('configSummary');
+      expect(listed).not.toHaveProperty('configHash');
+      expect(listed).not.toHaveProperty('configReportedAt');
     });
   });
 });

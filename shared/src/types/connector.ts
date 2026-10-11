@@ -76,6 +76,15 @@ export interface Connector {
   deployments?: ConnectorDeployment[];
   /** Only on `GET /connectors`: counts of what the connector last reported. */
   deploymentSummary?: ConnectorDeploymentSummary;
+  /**
+   * Only on `GET /connectors/:id`: the config summary the connector last
+   * shared, or null when it has not shared one (or turned sharing off).
+   */
+  configSummary?: ConnectorConfigSummary | null;
+  /** Only on `GET /connectors/:id`: hash of the stored summary. */
+  configHash?: string | null;
+  /** Only on `GET /connectors/:id`: when the summary was last received. */
+  configReportedAt?: string | null;
 }
 
 /** Counts of a connector's reported deployments, for the connector list. */
@@ -253,4 +262,119 @@ export interface ConnectorReportRequest {
 export interface ConnectorReportResponse {
   accepted: number;
   rejectedCertificateIds: number[];
+}
+
+// --- Config summary --------------------------------------------------------
+
+/** Where a connector loaded a plugin from. */
+export const CONNECTOR_PLUGIN_SOURCES = [
+  'bundled',
+  'data_dir',
+  'path',
+  'builtin',
+] as const;
+
+export type ConnectorPluginSource = (typeof CONNECTOR_PLUGIN_SOURCES)[number];
+
+/** Plugin names: letters, digits, `.`, `_` and `-`, 1 to 64 characters. */
+export const CONNECTOR_PLUGIN_NAME_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+
+/** Keys of a `settings` map: lowercase, starting with a letter, at most 32. */
+export const CONNECTOR_SETTING_KEY_PATTERN = /^[a-z][a-z0-9_]{0,31}$/;
+
+/** sha256 of the canonical summary, lowercase hex. */
+export const CONNECTOR_CONFIG_HASH_PATTERN = /^[0-9a-f]{64}$/;
+
+/** Upper bounds on `PUT /connectors/config`. */
+export const CONNECTOR_CONFIG_LIMITS = {
+  plugins: 50,
+  certificates: CONNECTOR_REPORT_LIMITS.certificates,
+  namesPerCertificate: 100,
+  nameLength: 253,
+  targetsPerCertificate: CONNECTOR_REPORT_LIMITS.targetsPerCertificate,
+  settingsKeys: 10,
+  settingValueLength: 256,
+  versionLength: 64,
+  keyTypeLength: 32,
+  hostLength: 253,
+  /** checkIntervalSeconds: 1 second to 7 days. */
+  maxCheckIntervalSeconds: 7 * 24 * 60 * 60,
+} as const;
+
+/** A setting value: text, a flag or a number. Nothing nested. */
+export type ConnectorConfigSettingValue = string | number | boolean;
+
+/**
+ * A flat map of known-safe settings. The connector only sends keys on its
+ * allowlist for the plugin, so commands, owners, tags, account ids and
+ * secrets are never included.
+ */
+export type ConnectorConfigSettings = Record<
+  string,
+  ConnectorConfigSettingValue
+>;
+
+export interface ConnectorConfigPlugin {
+  name: string;
+  /** Null for plugins without a version, such as one loaded from a path. */
+  version: string | null;
+  source: ConnectorPluginSource;
+}
+
+export interface ConnectorConfigKeyStore {
+  plugin: string;
+  /** e.g. `ecdsa-p256`; null when the config leaves it to the default. */
+  keyType: string | null;
+  settings: ConnectorConfigSettings;
+}
+
+/** The TLS check a connector runs after deploying to a target. */
+export interface ConnectorConfigVerify {
+  host: string | null;
+  port: number | null;
+  skipChainValidation: boolean;
+}
+
+export interface ConnectorConfigTarget {
+  label: string;
+  plugin: string;
+  /** Added by the connector (e.g. a key store that is also a target). */
+  implicit: boolean;
+  /** Runs a command after deploying, or is the `exec` target. */
+  runsCommand: boolean;
+  verify: ConnectorConfigVerify | null;
+  settings: ConnectorConfigSettings;
+}
+
+export interface ConnectorConfigCertificate {
+  certificateId: number;
+  names: string[];
+  keyStore: ConnectorConfigKeyStore;
+  targets: ConnectorConfigTarget[];
+}
+
+/**
+ * `PUT /connectors/config`, with a key issued to the connector: a read-only
+ * summary of what the connector is configured to do. KrakenKey stores and
+ * shows it; nothing in KrakenKey changes the config, which lives on the
+ * connector's host. `DELETE /connectors/config` clears it.
+ */
+export interface ConnectorConfigSummary {
+  /**
+   * sha256 (lowercase hex) of the connector's canonical summary without
+   * `hash`. Opaque to KrakenKey: stored as sent, never recomputed.
+   */
+  hash: string;
+  /** Connector version. */
+  version: string;
+  /** Seconds between passes; null when not reported. */
+  checkIntervalSeconds: number | null;
+  plugins: ConnectorConfigPlugin[];
+  /** Every certificate in the config, in config order. */
+  certificates: ConnectorConfigCertificate[];
+  /**
+   * True when the connector cut anything to fit the limits: certificates,
+   * targets, plugins, names or long setting values.
+   */
+  truncated: boolean;
 }

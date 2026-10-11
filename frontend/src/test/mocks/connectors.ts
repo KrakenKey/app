@@ -1,4 +1,8 @@
-import type { Connector, ConnectorDeployment } from '@krakenkey/shared';
+import type {
+  Connector,
+  ConnectorConfigSummary,
+  ConnectorDeployment,
+} from '@krakenkey/shared';
 
 const HOUR = 60 * 60 * 1000;
 const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
@@ -94,4 +98,66 @@ export const expiredConnector: Connector = {
   id: EXPIRED_ID,
   name: 'mail-05',
   enrollmentTokenExpiresAt: ago(2 * HOUR),
+};
+
+export const CONFIG_HASH =
+  '3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a';
+
+/** Certificate 1 is allowed; certificate 2 is not (see activeConnector). */
+export const mockConfigSummary: ConnectorConfigSummary = {
+  hash: CONFIG_HASH,
+  version: '0.3.0',
+  checkIntervalSeconds: 3600,
+  plugins: [
+    { name: 'azure-keyvault', version: '0.3.0', source: 'bundled' },
+    { name: 'file', version: null, source: 'builtin' },
+  ],
+  certificates: [
+    {
+      certificateId: 1,
+      names: ['example.com', 'www.example.com'],
+      keyStore: {
+        plugin: 'azure-keyvault',
+        keyType: 'ecdsa-p256',
+        settings: { vault: 'kv-prod', certificate_name: 'www' },
+      },
+      targets: [
+        {
+          label: 'azure-keyvault',
+          plugin: 'azure-keyvault',
+          implicit: true,
+          runsCommand: false,
+          verify: null,
+          settings: { vault: 'kv-prod', certificate_name: 'www' },
+        },
+        {
+          label: 'nginx-main',
+          plugin: 'file',
+          implicit: false,
+          runsCommand: true,
+          verify: {
+            host: 'www.example.com',
+            port: 443,
+            skipChainValidation: false,
+          },
+          settings: { dir: '/etc/nginx/certs', fullchain: 'site.pem' },
+        },
+        {
+          label: 'haproxy',
+          plugin: 'file',
+          implicit: false,
+          runsCommand: false,
+          verify: { host: null, port: 8443, skipChainValidation: true },
+          settings: { dir: '/etc/haproxy/certs' },
+        },
+      ],
+    },
+    {
+      certificateId: 2,
+      names: ['pending.com'],
+      keyStore: { plugin: 'local', keyType: null, settings: {} },
+      targets: [],
+    },
+  ],
+  truncated: false,
 };

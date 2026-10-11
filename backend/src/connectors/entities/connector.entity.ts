@@ -7,7 +7,7 @@ import {
   ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
-import type { ConnectorScope } from '@krakenkey/shared';
+import type { ConnectorConfigSummary, ConnectorScope } from '@krakenkey/shared';
 import { User } from '../../users/entities/user.entity';
 
 /**
@@ -79,6 +79,21 @@ export class Connector {
 
   @Column({ type: 'varchar', length: 32, nullable: true })
   arch: string | null;
+
+  /**
+   * Read-only summary of the connector's config (PUT /connectors/config),
+   * built by the connector from an allowlist of safe settings. Not loaded
+   * unless asked for: it can be large and only the detail page shows it.
+   */
+  @Column({ type: 'jsonb', nullable: true, select: false })
+  configSummary?: ConnectorConfigSummary | null;
+
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  configHash: string | null;
+
+  /** When the config summary was last received. */
+  @Column({ type: 'timestamp', nullable: true })
+  configReportedAt: Date | null;
 
   @CreateDateColumn()
   createdAt: Date;
