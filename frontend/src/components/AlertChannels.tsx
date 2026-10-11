@@ -557,7 +557,7 @@ const AlertChannels: React.FC = () => {
                     disabled={isBusy}
                     onClick={() => handleToggleEnabled(channel)}
                     className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors duration-200 ${
-                      channel.enabled ? 'bg-cyan-600' : 'bg-zinc-700'
+                      channel.enabled ? 'bg-cyan-500/55' : 'bg-zinc-700'
                     } ${isBusy ? 'opacity-50' : ''}`}
                   >
                     <span

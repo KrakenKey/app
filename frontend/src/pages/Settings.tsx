@@ -241,7 +241,7 @@ const Settings: React.FC = () => {
                   disabled={savingNotifications}
                   onClick={() => handleToggleNotification(type)}
                   className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors duration-200 ${
-                    enabled ? 'bg-cyan-600' : 'bg-zinc-700'
+                    enabled ? 'bg-cyan-500/55' : 'bg-zinc-700'
                   } ${savingNotifications ? 'opacity-50' : ''}`}
                 >
                   <span

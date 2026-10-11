@@ -664,7 +664,7 @@ export default function EndpointManagement() {
                           <ChevronRight className="w-4 h-4 text-zinc-500" />
                         )}
                       </TableCell>
-                      <TableCell className="pl-1 max-w-[320px]">
+                      <TableCell className="pl-1 max-w-[210px] sm:max-w-[320px]">
                         <div
                           className="truncate whitespace-nowrap font-medium text-zinc-100"
                           title={`${ep.host}:${ep.port}`}
@@ -689,7 +689,7 @@ export default function EndpointManagement() {
                             <ExpiryDays days={summary.worstExpiry} />
                           )}
                           {summary.latestScan && (
-                            <span className="text-zinc-500">
+                            <span className="whitespace-nowrap text-zinc-500">
                               {formatRelative(summary.latestScan)}
                             </span>
                           )}

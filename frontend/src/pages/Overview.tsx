@@ -169,7 +169,7 @@ function HealthSummary({
               key={s}
               className="rounded-lg border border-border-subtle bg-bg/50 px-3 py-2.5"
             >
-              <dt className="flex items-center gap-1.5 text-xs text-text-muted">
+              <dt className="flex items-center gap-1.5 whitespace-nowrap text-xs text-text-muted">
                 <span
                   className={`h-1.5 w-1.5 rounded-full ${SEVERITY_META[s].dot}`}
                 />
@@ -344,7 +344,18 @@ function KpiTile({
   );
 }
 
-function useKpis(data: HealthData | null) {
+interface ResourceCounts {
+  domains: number;
+  certificates: number;
+  apiKeys: number;
+}
+
+/**
+ * Tile numbers. Totals for domains and certificates come from the profile's
+ * resource counts when present (pooled across an organization); the
+ * breakdowns come from the lists.
+ */
+function useKpis(data: HealthData | null, counts: ResourceCounts | null) {
   return useMemo(() => {
     if (!data) return null;
 
@@ -392,7 +403,7 @@ function useKpis(data: HealthData | null) {
 
     return {
       domains: {
-        total: data.domains.length,
+        total: counts?.domains ?? data.domains.length,
         segments: [
           { label: 'Verified', value: verified, color: 'bg-slate-400' },
           {
@@ -403,7 +414,7 @@ function useKpis(data: HealthData | null) {
         ],
       },
       certs: {
-        total: data.certs.length,
+        total: counts?.certificates ?? data.certs.length,
         segments: [
           { label: 'Valid', value: valid, color: 'bg-slate-400' },
           { label: 'Expiring', value: expiring, color: 'bg-amber-400' },
@@ -434,7 +445,7 @@ function useKpis(data: HealthData | null) {
         ],
       },
     };
-  }, [data]);
+  }, [data, counts]);
 }
 
 /* ── Page ───────────────────────────────────────────────────────────────── */
@@ -455,7 +466,10 @@ export default function Overview() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const { data, items, loading, checkedAt, refresh } = useHealth();
-  const kpis = useKpis(data);
+  const counts =
+    (user as { resourceCounts?: ResourceCounts } | null)?.resourceCounts ??
+    null;
+  const kpis = useKpis(data, counts);
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const [confirming, setConfirming] = useState(false);
 
@@ -503,8 +517,9 @@ export default function Overview() {
     }
   }, []);
 
-  const isNewAccount =
-    !!data && data.domains.length === 0 && data.certs.length === 0;
+  const isNewAccount = counts
+    ? counts.domains === 0 && counts.certificates === 0
+    : !!data && data.domains.length === 0 && data.certs.length === 0;
 
   return (
     <div>
@@ -646,11 +661,11 @@ export default function Overview() {
           />
 
           <div className="grid gap-6 xl:grid-cols-3 items-start">
-            <div className="xl:col-span-2">
+            <div className="min-w-0 xl:col-span-2">
               <AttentionList items={items} />
             </div>
 
-            <div className="space-y-6">
+            <div className="min-w-0 space-y-6">
               {kpis && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2 gap-3">
                   <KpiTile

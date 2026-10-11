@@ -1256,7 +1256,7 @@ function CertTable({
                     )}
                   </button>
                 </TableCell>
-                <TableCell className="pl-1 max-w-[340px]">
+                <TableCell className="pl-1 max-w-[230px] sm:max-w-[340px]">
                   <CertName cert={cert} polling={pollingIds.has(cert.id)} />
                   <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs md:hidden">
                     <span className="sm:hidden">

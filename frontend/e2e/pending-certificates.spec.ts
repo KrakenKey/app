@@ -59,10 +59,11 @@ test.describe('Pending certificates', () => {
     page.on('dialog', (dialog) => dialog.accept());
 
     await page.goto('/dashboard/certificates');
+    // Destructive actions live in the row's overflow menu
     await page
-      .getByRole('button', { name: /delete/i })
-      .first()
+      .getByRole('button', { name: /More actions for app\.example\.com/ })
       .click();
+    await page.getByRole('menuitem', { name: /delete/i }).click();
     await expect.poll(() => deleted).toBe(true);
   });
 
@@ -80,6 +81,7 @@ test.describe('Pending certificates', () => {
     });
 
     await page.goto('/dashboard/certificates');
+    await page.getByRole('button', { name: 'Request certificate' }).click();
     await page.getByRole('radio', { name: /Issued by a connector/ }).check();
     await page
       .getByRole('textbox', { name: 'Names' })
@@ -125,6 +127,7 @@ test.describe('Pending certificates', () => {
     await expect(page.getByText('app.example.com').first()).toBeVisible();
     expect(calls).toBe(0);
 
+    await page.getByRole('button', { name: 'Show details' }).click();
     await page.getByRole('button', { name: /Deployed to/ }).click();
     await expect(page.getByRole('link', { name: 'web-01' })).toBeVisible();
     await expect(page.getByText('nginx-main')).toBeVisible();
