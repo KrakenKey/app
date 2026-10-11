@@ -171,7 +171,7 @@ function HealthSummary({
             >
               <dt className="flex items-center gap-1.5 whitespace-nowrap text-xs text-text-muted">
                 <span
-                  className={`h-1.5 w-1.5 rounded-full ${SEVERITY_META[s].dot}`}
+                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${SEVERITY_META[s].dot}`}
                 />
                 {SEVERITY_META[s].label}
               </dt>
