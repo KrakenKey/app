@@ -146,7 +146,7 @@ export const CONNECTOR_DOCS_URL = 'https://krakenkey.io/docs/connector/';
  */
 export function dockerCommands(): string {
   return [
-    'VERSION=0.2.0   # the connector release to run, without the leading v',
+    'VERSION=0.3.0   # the connector release to run, without the leading v',
     '',
     `# the image runs as uid ${CONNECTOR_IMAGE_UID}, so the token file must belong to it`,
     `sudo install -m 0600 -o ${CONNECTOR_IMAGE_UID} /dev/null ${CONNECTOR_TOKEN_PATH}  # paste the token into this file`,
