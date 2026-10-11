@@ -116,19 +116,25 @@ export function formatRelative(iso: string, now: number = Date.now()): string {
 export const CONNECTOR_CONFIG_PATH = '/etc/krakenkey-connector/config.yaml';
 export const CONNECTOR_TOKEN_PATH = '/etc/krakenkey-connector/enrollment-token';
 export const CONNECTOR_IMAGE = 'ghcr.io/krakenkey/connector:v${VERSION}';
+/** The service user the Linux packages create. */
+export const CONNECTOR_USER = 'krakenkey-connector';
+/** The image runs as this uid, so files it reads must be owned by it. */
+export const CONNECTOR_IMAGE_UID = 10001;
 
-/** Enrolls a connector installed on the host. */
+/**
+ * Enrolls a connector installed on the host, as the user it runs as. The
+ * token file must be readable by that user and not by others.
+ */
 export function enrollCommand(): string {
   return [
-    `install -m 0600 /dev/null ${CONNECTOR_TOKEN_PATH}  # paste the token into this file`,
-    `KK_ENROLLMENT_TOKEN_FILE=${CONNECTOR_TOKEN_PATH} \\`,
+    `sudo install -m 0640 -g ${CONNECTOR_USER} /dev/null ${CONNECTOR_TOKEN_PATH}  # paste the token into this file`,
+    `sudo -u ${CONNECTOR_USER} env KK_ENROLLMENT_TOKEN_FILE=${CONNECTOR_TOKEN_PATH} \\`,
     `  krakenkey-connector enroll --config ${CONNECTOR_CONFIG_PATH}`,
-    `rm ${CONNECTOR_TOKEN_PATH}  # it works only once`,
+    `sudo rm ${CONNECTOR_TOKEN_PATH}  # it works only once`,
   ].join('\n');
 }
 
-export const CONNECTOR_DOCS_URL =
-  'https://github.com/KrakenKey/connector/blob/main/README.md#install';
+export const CONNECTOR_DOCS_URL = 'https://krakenkey.io/docs/connector/';
 
 /**
  * Enrolls a connector that runs in Docker, then starts it. Its identity
@@ -138,6 +144,8 @@ export function dockerCommands(): string {
   return [
     'VERSION=0.1.0   # the connector release to run, without the leading v',
     '',
+    `# the image runs as uid ${CONNECTOR_IMAGE_UID}, so the token file must belong to it`,
+    `sudo install -m 0600 -o ${CONNECTOR_IMAGE_UID} /dev/null ${CONNECTOR_TOKEN_PATH}  # paste the token into this file`,
     'docker run --rm \\',
     '  -e KK_ENROLLMENT_TOKEN_FILE=/run/secrets/kk_enrollment_token \\',
     `  -v ${CONNECTOR_TOKEN_PATH}:/run/secrets/kk_enrollment_token:ro \\`,
