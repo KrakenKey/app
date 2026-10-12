@@ -166,7 +166,7 @@ POST /endpoints/:id/regions
 }
 ```
 
-Subject to plan-based hosted region limits.
+Subject to plan-based hosted limits. The region limit counts distinct regions in use across the account, so adding a region that another endpoint already uses does not count against it. The hosted endpoint limit counts endpoints with at least one hosted region.
 
 ### Remove Hosted Region
 
