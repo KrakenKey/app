@@ -251,6 +251,57 @@ describe('Reports (e2e)', () => {
     });
   });
 
+  describe('org roles', () => {
+    const apps: Record<string, INestApplication> = {};
+    const forRole = (role: string) => request(apps[role].getHttpServer());
+
+    beforeAll(async () => {
+      for (const role of ['owner', 'admin', 'member', 'viewer']) {
+        ({ app: apps[role] } = await createTestApp({
+          controllers: [ReportsController],
+          providers: [{ provide: ReportsService, useValue: reportsService }],
+          orgRole: role,
+        }));
+      }
+    });
+    afterAll(() => Promise.all(Object.values(apps).map((a) => a.close())));
+
+    it('lets a viewer read reports', async () => {
+      await forRole('viewer').get('/reports').expect(200);
+      await forRole('viewer').get(`/reports/${ID}`).expect(200);
+      await forRole('viewer').get(`/reports/${ID}/export`).expect(200);
+    });
+
+    it('refuses report changes for a viewer', async () => {
+      await forRole('viewer')
+        .post('/reports')
+        .send({ hosts: ['example.com'] })
+        .expect(403);
+      await forRole('viewer').delete(`/reports/${ID}`).expect(403);
+      await forRole('viewer').post(`/reports/${ID}/share`).expect(403);
+      await forRole('viewer').delete(`/reports/${ID}/share`).expect(403);
+      expect(reportsService.create).not.toHaveBeenCalled();
+      expect(reportsService.remove).not.toHaveBeenCalled();
+      expect(reportsService.createShare).not.toHaveBeenCalled();
+      expect(reportsService.revokeShare).not.toHaveBeenCalled();
+    });
+
+    it.each(['owner', 'admin', 'member'])(
+      'lets an org %s create, share and delete reports',
+      async (role) => {
+        await forRole(role)
+          .post('/reports')
+          .send({ hosts: ['example.com'] })
+          .expect(201);
+        await forRole(role).post(`/reports/${ID}/share`).expect(201);
+        await forRole(role).delete(`/reports/${ID}/share`).expect(204);
+        await forRole(role).delete(`/reports/${ID}`).expect(204);
+        expect(reportsService.create).toHaveBeenCalledTimes(1);
+        expect(reportsService.remove).toHaveBeenCalledTimes(1);
+      },
+    );
+  });
+
   describe('public shared view', () => {
     it('serves the report without credentials and without caching', async () => {
       reportsService.findShared.mockResolvedValue(PUBLIC_REPORT);

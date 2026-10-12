@@ -20,8 +20,8 @@ Organizations allow teams to share domains, certificates, and endpoints under a 
 - Each organization has exactly one owner
 - Only owners can transfer ownership, delete the organization, or manage billing
 - Admins can invite/remove members and update settings but cannot change the owner or access billing
-- Members can create and manage resources (domains, certs, endpoints) but cannot manage the organization itself
-- Viewers have read-only access
+- Members can create and manage resources (domains, certs, endpoints, portfolio reports, alert channels, connectors) but cannot manage the organization itself
+- Viewers have read-only access: they get `403` on every route that creates or changes those resources. They can still edit their own profile, manage their own API keys and GitHub trust policies, and revoke their own connectors
 
 ## API Endpoints
 
