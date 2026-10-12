@@ -551,7 +551,7 @@ function scheduleNote(r: ScheduleRow): string {
     case 'connector':
       return r.connectorName
         ? `Renewed by ${r.connectorName}`
-        : 'Renewed by a connector';
+        : 'Connector-managed';
     case 'manual':
       return 'Auto-renew is off';
     case 'overdue':

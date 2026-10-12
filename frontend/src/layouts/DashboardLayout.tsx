@@ -24,7 +24,7 @@ export function DashboardLayout() {
         <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
         <main className="flex-1 min-w-0 overflow-y-auto">
           <MobileTopBar onMenu={() => setSidebarOpen(true)} />
-          <div className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-10 lg:py-9 2xl:px-12">
+          <div className="w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-10 lg:py-9 2xl:px-12">
             <Outlet />
           </div>
         </main>
