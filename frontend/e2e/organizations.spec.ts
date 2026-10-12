@@ -118,7 +118,7 @@ test.describe('Organizations — owner managing org', () => {
       .or(page.locator('dialog input').first());
     await emailInput.fill('newuser@example.com');
     // Select role if there's a dropdown
-    const roleSelect = page.locator('select').first();
+    const roleSelect = page.locator('dialog select').first();
     if (await roleSelect.isVisible()) {
       await roleSelect.selectOption('member');
     }
@@ -144,10 +144,15 @@ test.describe('Organizations — owner managing org', () => {
 
     await page.goto('/dashboard/organizations');
 
-    // Find Bob's row and click remove
+    // Remove sits in Bob's row menu
     await page
       .getByRole('row', { name: /bob/i })
-      .getByRole('button', { name: /remove/i })
+      .getByRole('button', { name: /more actions/i })
+      .click();
+    await page.getByRole('menuitem', { name: /remove/i }).click();
+    await page
+      .getByRole('dialog', { name: 'Remove member?' })
+      .getByRole('button', { name: 'Remove member' })
       .click();
     await page
       .getByRole('dialog', { name: 'Remove member?' })

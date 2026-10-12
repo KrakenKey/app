@@ -1,5 +1,6 @@
 export { Button } from './Button';
 export { Input } from './Input';
+export { Select } from './Select';
 export { Textarea } from './Textarea';
 export { Card, CardHeader } from './Card';
 export { Badge } from './Badge';
@@ -9,3 +10,4 @@ export { ConfirmDialog } from './ConfirmDialog';
 export { RowMenu } from './Menu';
 export { EmptyState } from './EmptyState';
 export { PageHeader } from './PageHeader';
+export { Switch } from './Switch';

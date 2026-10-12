@@ -113,8 +113,11 @@ describe('AlertChannels', () => {
     expect(
       within(row).getByText('https://hooks.slack.com/…a1B2'),
     ).toBeInTheDocument();
+    expect(within(row).getByText('2 events')).toBeInTheDocument();
     expect(within(row).getByText('cert expiring')).toBeInTheDocument();
-    expect(within(row).getByText(/failed \(HTTP 404\)/)).toBeInTheDocument();
+    const failure = within(row).getByTestId('delivery-error');
+    expect(within(failure).getByText('Delivery failed')).toBeInTheDocument();
+    expect(within(failure).getByText('HTTP 404')).toBeInTheDocument();
     expect(within(row).getByRole('switch')).toHaveAttribute(
       'aria-checked',
       'true',
@@ -123,6 +126,34 @@ describe('AlertChannels', () => {
       within(row).queryByRole('button', { name: /rotate secret/i }),
     ).not.toBeInTheDocument();
     expect(screen.getByText(/1 of 10 channels used/)).toBeInTheDocument();
+  });
+
+  it('shows a healthy last delivery without a failure badge', async () => {
+    listReturns([
+      channel({
+        lastDeliveryAt: '2026-10-04T10:00:00.000Z',
+        lastDeliveryStatus: 'ok',
+      }),
+    ]);
+    render(<AlertChannels />);
+
+    const row = await screen.findByTestId('alert-channel-ch-1');
+    expect(within(row).getByText(/Last delivery/)).toBeInTheDocument();
+    expect(within(row).queryByTestId('delivery-error')).not.toBeInTheDocument();
+    expect(within(row).queryByText('Delivery failed')).not.toBeInTheDocument();
+  });
+
+  it('collapses events to a count with a disclosure', async () => {
+    const user = userEvent.setup();
+    listReturns([channel({ events: ['cert.failed'] })]);
+    render(<AlertChannels />);
+
+    const row = await screen.findByTestId('alert-channel-ch-1');
+    const details = row.querySelector('details')!;
+    expect(details.open).toBe(false);
+    await user.click(within(row).getByText('1 event'));
+    expect(details.open).toBe(true);
+    expect(within(row).getByText('cert failed')).toBeVisible();
   });
 
   it.each([

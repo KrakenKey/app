@@ -71,26 +71,50 @@ describe('Settings', () => {
     expect(screen.getByText(mockProfile.email)).toBeInTheDocument();
     expect(screen.getByText(mockProfile.groups.join(', '))).toBeInTheDocument();
     expect(
-      screen.getByText(new Date(mockProfile.createdAt).toLocaleDateString()),
+      screen.getByText(
+        new Date(mockProfile.createdAt).toLocaleDateString(undefined, {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        }),
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Test Display Name')).toBeInTheDocument();
+  });
+
+  it('shows the page description in the header', async () => {
+    render(<Settings />);
+    expect(
+      await screen.findByText(
+        'Your profile, email notifications and alert channels.',
+      ),
     ).toBeInTheDocument();
   });
 
-  it('renders resource counts', async () => {
+  it('does not repeat the resource counts from the overview', async () => {
     render(<Settings />);
-    await waitFor(() => {
-      expect(screen.getByText('3')).toBeInTheDocument();
-    });
-    expect(screen.getByText('2')).toBeInTheDocument();
-    expect(screen.getByText('1')).toBeInTheDocument();
+    await screen.findByText(mockProfile.username);
+    expect(screen.queryByText('Resources')).not.toBeInTheDocument();
   });
 
-  it('populates display name from profile', async () => {
+  it('edits the display name inline and can cancel', async () => {
+    const user = userEvent.setup();
     render(<Settings />);
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText('Enter display name')).toHaveValue(
-        'Test Display Name',
-      );
-    });
+    await user.click(
+      await screen.findByRole('button', { name: 'Edit display name' }),
+    );
+
+    const input = screen.getByPlaceholderText('Enter display name');
+    expect(input).toHaveValue('Test Display Name');
+    await user.clear(input);
+    await user.type(input, 'Something else');
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(
+      screen.queryByPlaceholderText('Enter display name'),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('Test Display Name')).toBeInTheDocument();
+    expect(mockApi.patch).not.toHaveBeenCalled();
   });
 
   it('updates display name on form submit', async () => {
@@ -100,11 +124,9 @@ describe('Settings', () => {
     });
 
     render(<Settings />);
-    await waitFor(() => {
-      expect(
-        screen.getByPlaceholderText('Enter display name'),
-      ).toBeInTheDocument();
-    });
+    await user.click(
+      await screen.findByRole('button', { name: 'Edit display name' }),
+    );
 
     const input = screen.getByPlaceholderText('Enter display name');
     await user.clear(input);
@@ -116,6 +138,10 @@ describe('Settings', () => {
         displayName: 'New Name',
       });
     });
+    expect(await screen.findByText('New Name')).toBeInTheDocument();
+    expect(
+      screen.queryByPlaceholderText('Enter display name'),
+    ).not.toBeInTheDocument();
   });
 
   it('shows error when profile fails to load', async () => {
@@ -205,12 +231,16 @@ describe('Settings', () => {
       },
     });
     render(<Settings />);
-    await screen.findByText('Deployment Failed');
-    expect(screen.getByText('Connector Offline')).toBeInTheDocument();
+    const connectors = await screen.findByRole('region', {
+      name: 'Connectors',
+    });
+    expect(
+      within(connectors).getByText('Connector offline'),
+    ).toBeInTheDocument();
 
-    const toggle = within(
-      screen.getByText('Deployment Failed').closest('label')!,
-    ).getByRole('switch');
+    const toggle = within(connectors).getByRole('switch', {
+      name: /Deployment failed/,
+    });
     expect(toggle).toHaveAttribute('aria-checked', 'true');
     await user.click(toggle);
 
@@ -219,5 +249,16 @@ describe('Settings', () => {
         notificationPreferences: { deploy_failed: false },
       }),
     );
+  });
+
+  it('groups email notifications by topic', async () => {
+    render(<Settings />);
+    const certs = await screen.findByRole('region', { name: 'Certificates' });
+    expect(within(certs).getAllByRole('switch')).toHaveLength(5);
+    expect(
+      within(screen.getByRole('region', { name: 'Domains' })).getAllByRole(
+        'switch',
+      ),
+    ).toHaveLength(1);
   });
 });

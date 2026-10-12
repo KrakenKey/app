@@ -1,0 +1,78 @@
+/*
+ * Print styles for a shared report (.report-print). The theme's colors are
+ * CSS variables, so remapping them here turns the dark page into a light one
+ * on paper: white background, dark text, no shadows, and status colors dark
+ * enough to read on white.
+ */
+@media print {
+  @page {
+    margin: 14mm 12mm;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+  }
+
+  .report-print {
+    color-scheme: light;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+
+    --color-bg: #fff;
+    --color-bg-sunken: #fff;
+    --color-sidebar: #fff;
+    --color-surface: #fff;
+    --color-surface-elevated: #f8fafc;
+    --color-surface-hover: #fff;
+    --color-border: #cbd5e1;
+    --color-border-subtle: #e2e8f0;
+    --color-border-strong: #cbd5e1;
+    --color-text: #0f172a;
+    --color-text-secondary: #1e293b;
+    --color-text-muted: #475569;
+    --color-text-faint: #64748b;
+    --color-accent: #0e7490;
+    --color-accent-hover: #0e7490;
+    --color-accent-text: #0e7490;
+
+    --color-zinc-100: #0f172a;
+    --color-zinc-200: #1e293b;
+    --color-zinc-300: #334155;
+    --color-zinc-400: #475569;
+    --color-zinc-500: #64748b;
+    --color-zinc-600: #94a3b8;
+    --color-zinc-700: #cbd5e1;
+    --color-zinc-800: #e2e8f0;
+    --color-zinc-900: #fff;
+    --color-zinc-950: #fff;
+
+    --color-red-300: #b91c1c;
+    --color-red-400: #b91c1c;
+    --color-amber-300: #92400e;
+    --color-amber-400: #92400e;
+    --color-violet-300: #6d28d9;
+    --color-violet-400: #6d28d9;
+    --color-emerald-300: #047857;
+    --color-emerald-400: #047857;
+
+    background: #fff !important;
+  }
+
+  .report-print *,
+  .report-print *::before,
+  .report-print *::after {
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+  }
+
+  /* Paper has no links: spell out where the footer link goes. */
+  .report-print footer a[href^='https://']::after {
+    content: ' (' attr(href) ')';
+  }
+
+  /* Keep each host row on one page. */
+  .report-print tr {
+    break-inside: avoid;
+  }
+}

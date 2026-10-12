@@ -18,8 +18,8 @@ test.describe('Billing — free plan user', () => {
   test('shows starter and team upgrade cards', async ({ page }) => {
     await page.goto('/dashboard/billing');
 
-    await expect(page.getByText('Starter — $29/mo')).toBeVisible();
-    await expect(page.getByText('Team — $79/mo')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Starter' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Team' })).toBeVisible();
   });
 
   test('clicking upgrade calls checkout endpoint', async ({ page }) => {
@@ -120,6 +120,26 @@ test.describe('Billing — team+ plan user', () => {
     await expect(
       page.getByRole('button', { name: /manage subscription/i }),
     ).toBeVisible();
+  });
+
+  test('shows usage against the plan limits', async ({ page }) => {
+    await page.goto('/dashboard/billing');
+
+    const domains = page.getByRole('meter', { name: 'Domains' });
+    await expect(domains).toBeVisible();
+    await expect(domains).toHaveAttribute('aria-valuemax', '25');
+    await expect(
+      page.getByRole('meter', { name: 'Monitored endpoints' }),
+    ).toHaveAttribute('aria-valuemax', '50');
+  });
+
+  test('links to the pricing page for Business', async ({ page }) => {
+    await page.goto('/dashboard/billing');
+
+    await expect(page.getByRole('heading', { name: 'Business' })).toBeVisible();
+    await expect(
+      page.getByRole('link', { name: /compare plans/i }),
+    ).toHaveAttribute('href', 'https://krakenkey.io/pricing');
   });
 
   test('manage subscription opens Stripe portal', async ({ page }) => {

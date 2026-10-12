@@ -16,7 +16,7 @@ test.describe('Settings', () => {
     // Profile card shows username and email (also in sidebar, so use .first())
     await expect(page.getByRole('main').getByText('testuser')).toBeVisible();
     await expect(
-      page.getByRole('main').getByText('test@example.com'),
+      page.getByRole('main').getByText('test@example.com', { exact: true }),
     ).toBeVisible();
   });
 
@@ -42,6 +42,7 @@ test.describe('Settings', () => {
     await page.goto('/settings');
     await page.waitForSelector('text=Display Name', { timeout: 10000 });
 
+    await page.getByRole('button', { name: 'Edit display name' }).click();
     const nameInput = page.getByPlaceholder(/display name/i);
     await nameInput.clear();
     await nameInput.fill('New Name');
