@@ -1,11 +1,11 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { http, HttpResponse } from 'msw';
+import { delay, http, HttpResponse } from 'msw';
 import { render } from '../../test/test-utils';
 import { server } from '../../test/mocks/server';
 import { API_URL } from '../../services/api';
 import { mockCerts, mockUser } from '../../test/mocks/data';
-import { HealthProvider } from '../../context/HealthContext';
+import { HEALTH_TIMEOUT_MS, HealthProvider } from '../../context/HealthContext';
 import Overview from '../Overview';
 
 // Stable reference to avoid infinite useEffect([user]) loop
@@ -226,6 +226,146 @@ describe('Overview', () => {
       expect(
         screen.getAllByRole('button', { name: /add endpoint/i }).length,
       ).toBeGreaterThan(1);
+    });
+  });
+
+  describe('when health requests fail', () => {
+    const fail = () => HttpResponse.json({}, { status: 500 });
+    const cleanAccount = [
+      http.get(`${API_URL}/certs/tls`, () => HttpResponse.json([])),
+      http.get(`${API_URL}/domains`, () =>
+        HttpResponse.json([
+          { id: 'd1', hostname: 'example.com', isVerified: true },
+        ]),
+      ),
+    ];
+
+    it('never says all clear when one source failed, and retries it', async () => {
+      let connectorsUp = false;
+      server.use(
+        ...cleanAccount,
+        http.get(`${API_URL}/connectors`, () =>
+          connectorsUp ? HttpResponse.json([]) : fail(),
+        ),
+      );
+      renderOverview();
+      expect(
+        await screen.findByText("Couldn't check everything"),
+      ).toBeInTheDocument();
+      expect(screen.queryByText('All clear')).not.toBeInTheDocument();
+      expect(
+        screen.getByText(
+          /^Couldn't load connectors\. Nothing in what did load/,
+        ),
+      ).toBeInTheDocument();
+      // The connectors panel and tile say so instead of showing zero.
+      expect(screen.getByText("Couldn't load connectors")).toBeInTheDocument();
+      expect(
+        screen.getByRole('link', { name: /^Connectors\s*\?\s*Couldn't load/ }),
+      ).toBeInTheDocument();
+      // What did load is still shown.
+      expect(screen.getByText('Nothing to renew yet')).toBeInTheDocument();
+
+      connectorsUp = true;
+      await userEvent.click(
+        screen.getAllByRole('button', { name: 'Retry' })[0],
+      );
+      expect(await screen.findByText('All clear')).toBeInTheDocument();
+      expect(
+        screen.queryByText("Couldn't check everything"),
+      ).not.toBeInTheDocument();
+    });
+
+    it('names every area when every source failed', async () => {
+      server.use(
+        http.get(`${API_URL}/certs/tls`, fail),
+        http.get(`${API_URL}/endpoints`, fail),
+        http.get(`${API_URL}/endpoints/probes/mine`, fail),
+        http.get(`${API_URL}/connectors`, fail),
+        http.get(`${API_URL}/domains`, fail),
+      );
+      renderOverview();
+      expect(
+        await screen.findByText(
+          "Couldn't load certificates, endpoints, connectors and domains. Nothing in what did load needs you right now.",
+        ),
+      ).toBeInTheDocument();
+      expect(screen.queryByText('All clear')).not.toBeInTheDocument();
+      expect(screen.getAllByText("Couldn't load")).toHaveLength(6);
+      for (const what of ['certificates', 'endpoints', 'connectors']) {
+        expect(screen.getByText(`Couldn't load ${what}`)).toBeInTheDocument();
+      }
+    });
+
+    it('warns that the list may be incomplete next to what it found', async () => {
+      server.use(
+        http.get(`${API_URL}/certs/tls`, () =>
+          HttpResponse.json([{ ...mockCerts[0], status: 'failed' }]),
+        ),
+        http.get(`${API_URL}/domains`, fail),
+      );
+      renderOverview();
+      expect(
+        await screen.findByText(
+          "Couldn't load domains, so this list may be incomplete.",
+        ),
+      ).toBeInTheDocument();
+      expect(screen.getByText('Issuance failed')).toBeInTheDocument();
+    });
+
+    it('treats endpoints with missing latest results as unknown', async () => {
+      server.use(
+        ...cleanAccount,
+        http.get(`${API_URL}/endpoints`, () =>
+          HttpResponse.json([
+            { id: 'e1', host: 'a.example.com', port: 443, isActive: true },
+            { id: 'e2', host: 'b.example.com', port: 443, isActive: true },
+          ]),
+        ),
+        http.get(`${API_URL}/endpoints/:id/results/latest`, ({ params }) =>
+          params.id === 'e2' ? fail() : HttpResponse.json([]),
+        ),
+      );
+      renderOverview();
+      expect(
+        await screen.findByText(
+          /^Couldn't load the latest scan for 1 endpoint\./,
+        ),
+      ).toBeInTheDocument();
+      expect(screen.queryByText('All clear')).not.toBeInTheDocument();
+      expect(
+        screen.getByRole('img', {
+          name: "0 healthy, 0 expiring, 0 failing, 1 inactive, 1 couldn't load",
+        }),
+      ).toBeInTheDocument();
+    });
+
+    it('stops waiting for a request that hangs', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        server.use(
+          ...cleanAccount,
+          http.get(`${API_URL}/connectors`, async () => {
+            await delay('infinite');
+            return HttpResponse.json([]);
+          }),
+        );
+        renderOverview();
+        // The rest of the page renders while connectors are still loading.
+        expect(
+          await screen.findByText('Nothing to renew yet'),
+        ).toBeInTheDocument();
+        expect(screen.getByText('Checking your account')).toBeInTheDocument();
+        expect(screen.queryByText('All clear')).not.toBeInTheDocument();
+
+        await act(() => vi.advanceTimersByTimeAsync(HEALTH_TIMEOUT_MS));
+        expect(
+          await screen.findByText("Couldn't load connectors"),
+        ).toBeInTheDocument();
+        expect(screen.queryByText('All clear')).not.toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

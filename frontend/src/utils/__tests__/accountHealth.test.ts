@@ -7,6 +7,7 @@ import type {
 } from '@krakenkey/shared';
 import { mockCerts } from '../../test/mocks/data';
 import {
+  areaLoadStates,
   balancePanels,
   certRenewal,
   computeAttention,
@@ -14,9 +15,13 @@ import {
   estimatePanelHeight,
   fleetCounts,
   greetingName,
+  joinWords,
+  loadFailures,
   renewalSchedule,
   renewalWindowDays,
   summarizeEndpoint,
+  type HealthSource,
+  type LoadState,
 } from '../accountHealth';
 import { connectorHealth, type ConnectorHealth } from '../connectors';
 import { shortDate } from '../dates';
@@ -267,6 +272,101 @@ describe('ordering and actions', () => {
   });
 });
 
+describe('endpoints whose latest results did not load', () => {
+  const input = {
+    ...empty,
+    endpoints: [
+      endpoint({ id: 'a' }),
+      endpoint({ id: 'b' }),
+      endpoint({ id: 'c', isActive: false }),
+    ],
+    latestResults: { a: [scan({ connectionSuccess: false })] },
+    resultsUnavailable: ['b', 'c'],
+  };
+
+  it('counts them as unknown, not healthy or inactive', () => {
+    expect(fleetCounts(input).endpoints).toEqual({
+      total: 3,
+      healthy: 0,
+      expiring: 0,
+      failing: 1,
+      inactive: 1,
+      unknown: 1,
+    });
+  });
+
+  it('lists no problem for them', () => {
+    expect(computeAttention(input).map((i) => i.id)).toEqual(['ep-a']);
+  });
+});
+
+describe('load state', () => {
+  const all = (state: LoadState) =>
+    ({
+      certs: state,
+      endpoints: state,
+      latestResults: state,
+      probes: state,
+      connectors: state,
+      domains: state,
+    }) as Record<HealthSource, LoadState>;
+
+  it('folds sources into areas', () => {
+    expect(areaLoadStates(all('loaded'))).toEqual({
+      certificates: 'loaded',
+      endpoints: 'loaded',
+      connectors: 'loaded',
+      domains: 'loaded',
+    });
+    expect(
+      areaLoadStates({ ...all('loaded'), connectors: 'failed' }).connectors,
+    ).toBe('failed');
+    // Endpoints loaded, but not all their latest results or the probes.
+    expect(
+      areaLoadStates({ ...all('loaded'), latestResults: 'partial' }).endpoints,
+    ).toBe('partial');
+    expect(
+      areaLoadStates({ ...all('loaded'), latestResults: 'failed' }).endpoints,
+    ).toBe('partial');
+    expect(
+      areaLoadStates({ ...all('loaded'), probes: 'failed' }).endpoints,
+    ).toBe('partial');
+    expect(
+      areaLoadStates({ ...all('loaded'), probes: 'loading' }).endpoints,
+    ).toBe('loading');
+    expect(
+      areaLoadStates({ ...all('failed'), probes: 'loaded' }).endpoints,
+    ).toBe('failed');
+  });
+
+  it('names what could not be loaded', () => {
+    expect(loadFailures(all('loaded'))).toEqual([]);
+    expect(loadFailures(all('loading'))).toEqual([]);
+    // Probes belong to the endpoints area, which already failed.
+    expect(loadFailures(all('failed'))).toEqual([
+      'certificates',
+      'endpoints',
+      'connectors',
+      'domains',
+    ]);
+    expect(loadFailures({ ...all('loaded'), probes: 'failed' })).toEqual([
+      'probes',
+    ]);
+    expect(
+      loadFailures({ ...all('loaded'), latestResults: 'partial' }, 2),
+    ).toEqual(['the latest scans for 2 endpoints']);
+    expect(
+      loadFailures({ ...all('loaded'), latestResults: 'partial' }, 1),
+    ).toEqual(['the latest scan for 1 endpoint']);
+  });
+
+  it('joins words for a sentence', () => {
+    expect(joinWords(['a'])).toBe('a');
+    expect(joinWords(['a', 'b'])).toBe('a and b');
+    expect(joinWords(['a', 'b', 'c'])).toBe('a, b and c');
+  });
+});
+
 describe('fleetCounts', () => {
   it('counts certificates, endpoint states, connectors and domains', () => {
     const f = fleetCounts({
@@ -330,6 +430,7 @@ describe('fleetCounts', () => {
       expiring: 0,
       failing: 1,
       inactive: 1,
+      unknown: 0,
     });
     expect(f.connectors).toEqual({ total: 1, stale: 1, failingTargets: 1 });
     expect(f.domains).toEqual({ total: 2, pending: 1 });

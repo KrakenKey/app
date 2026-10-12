@@ -170,7 +170,7 @@ function PlanCard({
 
 export default function Billing() {
   const { user } = useAuth();
-  const { data: health } = useHealth();
+  const { data: health, status: healthStatus } = useHealth();
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
@@ -218,10 +218,15 @@ export default function Billing() {
   )?.resourceCounts;
   const rows = usageRows({
     plan,
-    domains: health?.domains.length ?? counts?.domains ?? null,
+    // Only sources that loaded: a failed request is not an empty account.
+    domains:
+      health && healthStatus.domains === 'loaded'
+        ? health.domains.length
+        : (counts?.domains ?? null),
     apiKeys: counts?.apiKeys ?? null,
-    certs: health?.certs ?? null,
-    endpoints: health?.endpoints ?? null,
+    certs: health && healthStatus.certs === 'loaded' ? health.certs : null,
+    endpoints:
+      health && healthStatus.endpoints === 'loaded' ? health.endpoints : null,
   });
 
   const upgradeTargets = canManageBilling ? (UPGRADE_TARGETS[plan] ?? []) : [];

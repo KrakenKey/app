@@ -37,7 +37,7 @@ export default function DomainManagement() {
   const confirm = useConfirm();
   // Certificates come from the account health data the sidebar already
   // loads; without it the count column is left out.
-  const { data: health } = useHealth();
+  const { data: health, status: healthStatus } = useHealth();
   const [domains, setDomains] = useState<Domain[]>([]);
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
@@ -68,8 +68,11 @@ export default function DomainManagement() {
   };
 
   const certCounts = useMemo(
-    () => (health ? countCertsByDomain(domains, health.certs) : null),
-    [domains, health],
+    () =>
+      health && healthStatus.certs === 'loaded'
+        ? countCertsByDomain(domains, health.certs)
+        : null,
+    [domains, health, healthStatus.certs],
   );
 
   const closeAdd = () => {

@@ -32,7 +32,17 @@ vi.mock('../../hooks/useAuth', () => ({
 }));
 
 vi.mock('../../hooks/useHealth', () => ({
-  useHealth: () => ({ data: healthState.data }),
+  useHealth: () => ({
+    data: healthState.data,
+    status: {
+      certs: 'loaded',
+      endpoints: 'loaded',
+      latestResults: 'loaded',
+      probes: 'loaded',
+      connectors: 'loaded',
+      domains: 'loaded',
+    },
+  }),
 }));
 
 vi.mock('../../services/billingService', () => ({

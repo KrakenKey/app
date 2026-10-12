@@ -23,6 +23,7 @@ import {
   greetingName,
   type AreaCount,
   type HealthArea,
+  type LoadState,
 } from '../utils/accountHealth';
 
 interface NavItem {
@@ -104,7 +105,32 @@ function initials(name: string | undefined): string {
   return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || '?';
 }
 
-function AttentionCount({ area }: { area: AreaCount }) {
+/** Shown instead of a count when an area could not be loaded. */
+function UnknownCount() {
+  return (
+    <span
+      className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-white/[0.04] px-1.5 text-[11px] font-semibold text-text-muted ring-1 ring-inset ring-white/10"
+      aria-label="Couldn't load"
+      title="Couldn't load. Open the Overview to retry."
+    >
+      ?
+    </span>
+  );
+}
+
+function AttentionCount({
+  area,
+  state,
+}: {
+  area: AreaCount;
+  state: LoadState;
+}) {
+  // A failed area has no count to show: a zero would read as "all fine".
+  // A partly loaded one shows what it found, and the "?" when it found
+  // nothing.
+  if (state === 'failed' || (state === 'partial' && area.count === 0)) {
+    return <UnknownCount />;
+  }
   if (area.count === 0) return null;
   const tone =
     area.severity === 'critical'
@@ -142,7 +168,7 @@ interface SidebarProps {
 
 export function Sidebar({ open, onClose }: SidebarProps) {
   const { user, logout } = useAuth();
-  const { byArea } = useHealth();
+  const { byArea, areas } = useHealth();
   const navigate = useNavigate();
   const plan = (user as { plan?: string } | null)?.plan ?? 'free';
   const name = user ? greetingName(user) : undefined;
@@ -217,7 +243,12 @@ export function Sidebar({ open, onClose }: SidebarProps) {
                             className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-cyan-400' : 'text-text-faint group-hover:text-text-secondary'}`}
                           />
                           {label}
-                          {area && <AttentionCount area={byArea[area]} />}
+                          {area && (
+                            <AttentionCount
+                              area={byArea[area]}
+                              state={areas[area]}
+                            />
+                          )}
                         </>
                       )}
                     </NavLink>
@@ -289,9 +320,12 @@ export function Sidebar({ open, onClose }: SidebarProps) {
 /** Top bar on small screens: menu button, brand, and the attention count. */
 export function MobileTopBar({ onMenu }: { onMenu: () => void }) {
   const navigate = useNavigate();
-  const { items } = useHealth();
+  const { items, areas } = useHealth();
   const problems = items.filter((i) => i.severity !== 'notice');
   const critical = problems.some((i) => i.severity === 'critical');
+  const incomplete = Object.values(areas).some(
+    (s) => s === 'failed' || s === 'partial',
+  );
   return (
     <div className="lg:hidden sticky top-0 z-30 h-14 flex items-center gap-3 px-4 border-b border-border-subtle bg-bg/85 backdrop-blur-md">
       <button
@@ -315,6 +349,15 @@ export function MobileTopBar({ onMenu }: { onMenu: () => void }) {
             className={`h-1.5 w-1.5 rounded-full ${critical ? 'bg-red-400' : 'bg-amber-400'}`}
           />
           <span className="tnum">{problems.length}</span> need attention
+        </Link>
+      )}
+      {problems.length === 0 && incomplete && (
+        <Link
+          to="/dashboard"
+          className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-white/[0.04] px-2.5 py-1 text-xs font-medium text-text-muted ring-1 ring-inset ring-white/10"
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
+          Couldn't load
         </Link>
       )}
     </div>
