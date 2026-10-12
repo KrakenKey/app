@@ -58,9 +58,10 @@ describe('EndpointsService', () => {
       save: jest.fn((entity) => Promise.resolve(entity)),
       delete: jest.fn().mockResolvedValue({ affected: 1 }),
       createQueryBuilder: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
         innerJoin: jest.fn().mockReturnThis(),
         where: jest.fn().mockReturnThis(),
-        getCount: jest.fn().mockResolvedValue(0),
+        getRawMany: jest.fn().mockResolvedValue([]),
       }),
     };
 
@@ -301,6 +302,152 @@ describe('EndpointsService', () => {
 
       expect(result).toEqual(existingRegion);
       expect(hostedRegionRepo.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('addHostedRegion plan limits (starter: 2 regions, 5 hosted endpoints)', () => {
+    // In-memory account state: endpoint id -> assigned regions.
+    let state: Map<string, string[]>;
+
+    const addEndpoint = (id: string, regions: string[] = []) =>
+      state.set(id, [...regions]);
+
+    beforeEach(() => {
+      state = new Map();
+      billingService.resolveUserTier.mockResolvedValue('starter');
+
+      endpointRepo.findOne.mockImplementation(
+        ({ where }: { where: { id: string } }) =>
+          Promise.resolve(
+            state.has(where.id)
+              ? {
+                  ...mockEndpoint,
+                  id: where.id,
+                  hostedRegions: state
+                    .get(where.id)!
+                    .map((region) => ({ endpointId: where.id, region })),
+                }
+              : null,
+          ),
+      );
+      // Endpoints with at least one hosted region
+      endpointRepo.createQueryBuilder.mockImplementation(() => ({
+        innerJoin: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        getCount: jest.fn(() =>
+          Promise.resolve([...state.values()].filter((r) => r.length).length),
+        ),
+      }));
+      // Distinct regions in use
+      hostedRegionRepo.createQueryBuilder.mockImplementation(() => ({
+        select: jest.fn().mockReturnThis(),
+        innerJoin: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        getRawMany: jest.fn(() =>
+          Promise.resolve(
+            [...new Set([...state.values()].flat())].map((region) => ({
+              region,
+            })),
+          ),
+        ),
+      }));
+      hostedRegionRepo.findOne.mockImplementation(
+        ({ where }: { where: { endpointId: string; region: string } }) =>
+          Promise.resolve(
+            state.get(where.endpointId)?.includes(where.region)
+              ? { endpointId: where.endpointId, region: where.region }
+              : null,
+          ),
+      );
+      hostedRegionRepo.save.mockImplementation(
+        (entity: { endpointId: string; region: string }) => {
+          state.get(entity.endpointId)!.push(entity.region);
+          return Promise.resolve(entity);
+        },
+      );
+    });
+
+    const limitError = async (p: Promise<unknown>) => {
+      const err = await p.then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(HttpException);
+      return (err as HttpException).getResponse() as Record<string, unknown>;
+    };
+
+    it('allows five endpoints in the same region', async () => {
+      for (let i = 1; i <= 5; i++) {
+        addEndpoint(`ep-${i}`);
+        await expect(
+          service.addHostedRegion(`ep-${i}`, userId, 'us-east-1'),
+        ).resolves.toMatchObject({ region: 'us-east-1' });
+      }
+      expect(hostedRegionRepo.save).toHaveBeenCalledTimes(5);
+    });
+
+    it('refuses a third distinct region with the distinct count', async () => {
+      addEndpoint('ep-1', ['us-east-1']);
+      addEndpoint('ep-2', ['us-east-1', 'eu-west-1']);
+      addEndpoint('ep-3', ['eu-west-1']);
+      addEndpoint('ep-4');
+
+      const body = await limitError(
+        service.addHostedRegion('ep-4', userId, 'ap-southeast-1'),
+      );
+      expect(body).toMatchObject({
+        message: 'Hosted region limit reached',
+        code: 'plan_limit_exceeded',
+        limit: 2,
+        current: 2,
+        plan: 'starter',
+      });
+      expect(hostedRegionRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('allows a region already in use on another endpoint when at the region limit', async () => {
+      addEndpoint('ep-1', ['us-east-1']);
+      addEndpoint('ep-2', ['eu-west-1']);
+      addEndpoint('ep-3');
+
+      await expect(
+        service.addHostedRegion('ep-3', userId, 'eu-west-1'),
+      ).resolves.toMatchObject({ region: 'eu-west-1' });
+      // A second in-use region on an endpoint that already has one
+      await expect(
+        service.addHostedRegion('ep-3', userId, 'us-east-1'),
+      ).resolves.toMatchObject({ region: 'us-east-1' });
+    });
+
+    it('allows a second distinct region while under the region limit', async () => {
+      addEndpoint('ep-1', ['us-east-1']);
+
+      await expect(
+        service.addHostedRegion('ep-1', userId, 'eu-west-1'),
+      ).resolves.toMatchObject({ region: 'eu-west-1' });
+    });
+
+    it('refuses a sixth hosted endpoint even in an in-use region', async () => {
+      for (let i = 1; i <= 5; i++) addEndpoint(`ep-${i}`, ['us-east-1']);
+      addEndpoint('ep-6');
+
+      const body = await limitError(
+        service.addHostedRegion('ep-6', userId, 'us-east-1'),
+      );
+      expect(body).toMatchObject({
+        message: 'Hosted endpoint limit reached',
+        code: 'plan_limit_exceeded',
+        limit: 5,
+        current: 5,
+      });
+    });
+
+    it('does not count a second region on an existing hosted endpoint as a new hosted endpoint', async () => {
+      for (let i = 1; i <= 5; i++) addEndpoint(`ep-${i}`, ['us-east-1']);
+
+      await expect(
+        service.addHostedRegion('ep-5', userId, 'eu-west-1'),
+      ).resolves.toMatchObject({ region: 'eu-west-1' });
     });
   });
 

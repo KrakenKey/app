@@ -20,6 +20,8 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { JwtOrApiKeyGuard } from '../../auth/guards/jwt-or-api-key.guard';
+import { RoleGuard } from '../../auth/guards/role.guard';
+import { Roles } from '../../auth/decorators/roles.decorator';
 import type { RequestWithUser } from '../../auth/interfaces/request-with-user.interface';
 import { RequireScope } from '../../auth/decorators/require-scope.decorator';
 import { RateLimitCategoryDecorator } from '../../throttler/decorators/rate-limit-category.decorator';
@@ -34,7 +36,7 @@ import {
 @Controller('notifications/channels')
 @ApiTags('Notification channels')
 @ApiBearerAuth()
-@UseGuards(JwtOrApiKeyGuard)
+@UseGuards(JwtOrApiKeyGuard, RoleGuard)
 export class NotificationChannelsController {
   constructor(private readonly channels: NotificationChannelsService) {}
 
@@ -71,6 +73,11 @@ export class NotificationChannelsController {
     status: 400,
     description: 'Invalid URL, unknown event or channel limit reached',
   })
+  @ApiResponse({
+    status: 403,
+    description: 'Viewers cannot manage notification channels',
+  })
+  @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
   create(
     @Request() req: RequestWithUser,
@@ -86,6 +93,11 @@ export class NotificationChannelsController {
   @ApiParam({ name: 'id', description: 'Channel UUID' })
   @ApiResponse({ status: 200, description: 'Channel updated' })
   @ApiResponse({ status: 404, description: 'Channel not found' })
+  @ApiResponse({
+    status: 403,
+    description: 'Viewers cannot manage notification channels',
+  })
+  @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
   update(
     @Request() req: RequestWithUser,
@@ -103,6 +115,11 @@ export class NotificationChannelsController {
   @ApiParam({ name: 'id', description: 'Channel UUID' })
   @ApiResponse({ status: 204, description: 'Channel deleted' })
   @ApiResponse({ status: 404, description: 'Channel not found' })
+  @ApiResponse({
+    status: 403,
+    description: 'Viewers cannot manage notification channels',
+  })
+  @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
   async remove(
     @Request() req: RequestWithUser,
@@ -123,6 +140,11 @@ export class NotificationChannelsController {
   @ApiParam({ name: 'id', description: 'Channel UUID' })
   @ApiResponse({ status: 200, description: '{ ok, status, error }' })
   @ApiResponse({ status: 404, description: 'Channel not found' })
+  @ApiResponse({
+    status: 403,
+    description: 'Viewers cannot manage notification channels',
+  })
+  @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.EXPENSIVE)
   test(
     @Request() req: RequestWithUser,
@@ -144,6 +166,11 @@ export class NotificationChannelsController {
   @ApiResponse({ status: 200, description: '{ secret }' })
   @ApiResponse({ status: 400, description: 'Not a webhook channel' })
   @ApiResponse({ status: 404, description: 'Channel not found' })
+  @ApiResponse({
+    status: 403,
+    description: 'Viewers cannot manage notification channels',
+  })
+  @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
   rotateSecret(
     @Request() req: RequestWithUser,

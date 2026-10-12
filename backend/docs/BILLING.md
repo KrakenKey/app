@@ -48,6 +48,8 @@ Redirect the user to the returned URL. After payment, Stripe redirects back to K
 
 Valid plan values: `starter`, `team`, `business`, `enterprise`
 
+Checkout is only for starting a subscription. If the user, or the organization they bill for, already has a subscription that is `active`, `past_due`, `trialing` or `unpaid`, the request fails with `409 Conflict`; use `POST /billing/upgrade` or the billing portal instead. Repeating the same request within about a minute returns the same Stripe session.
+
 ### Get Current Subscription
 
 ```
@@ -143,6 +145,8 @@ Internal endpoint — receives signed webhook events from Stripe. Not called by 
 3. User completes payment on Stripe
 4. `checkout.session.completed` webhook fires
 5. Backend creates a `Subscription` record linked to the user (or organization)
+
+If the record already points at a different subscription that Stripe still reports as live (for example, two checkout tabs were completed), the webhook keeps the existing subscription, cancels the new one immediately, and logs an error with both IDs. The new subscription's first invoice is not refunded automatically; refund it from the Stripe dashboard. A repeated delivery of the same event changes nothing.
 
 ### Plan Upgrade
 1. User requests upgrade preview to see prorated cost

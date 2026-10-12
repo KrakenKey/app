@@ -2,7 +2,11 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { getQueueToken } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { BillingService } from './billing.service';
 import { Subscription } from './entities/subscription.entity';
 import { User } from '../users/entities/user.entity';
@@ -15,7 +19,7 @@ const mockStripe = {
   customers: { create: jest.fn() },
   checkout: { sessions: { create: jest.fn() } },
   billingPortal: { sessions: { create: jest.fn() } },
-  subscriptions: { retrieve: jest.fn(), update: jest.fn() },
+  subscriptions: { retrieve: jest.fn(), update: jest.fn(), cancel: jest.fn() },
   prices: { retrieve: jest.fn() },
   invoiceItems: { create: jest.fn() },
   invoices: { create: jest.fn(), pay: jest.fn() },
@@ -280,8 +284,15 @@ describe('BillingService', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
+    const freeSubscription: Partial<Subscription> = {
+      ...mockSubscription,
+      stripeSubscriptionId: null,
+      plan: 'free',
+      status: 'active',
+    };
+
     it('creates checkout session for valid plan', async () => {
-      mockRepository.findOne.mockResolvedValue(mockSubscription);
+      mockRepository.findOne.mockResolvedValue(freeSubscription);
       mockStripe.checkout.sessions.create.mockResolvedValue({
         url: 'https://checkout.stripe.com/session123',
       });
@@ -298,7 +309,123 @@ describe('BillingService', () => {
           mode: 'subscription',
           metadata: expect.objectContaining({ plan: 'starter' }),
         }),
+        {
+          idempotencyKey: expect.stringMatching(
+            new RegExp(`^checkout-user-${userId}-starter-\\d+$`),
+          ),
+        },
       );
+    });
+
+    it.each(['active', 'past_due', 'trialing', 'unpaid'])(
+      'rejects with 409 when the user already has a %s subscription',
+      async (status) => {
+        mockRepository.findOne.mockResolvedValue({
+          ...mockSubscription,
+          status,
+        });
+
+        const err = await service
+          .createCheckoutSession(userId, 'test@example.com', 'team')
+          .catch((e: unknown) => e);
+
+        expect(err).toBeInstanceOf(ConflictException);
+        expect((err as ConflictException).message).toMatch(/billing portal/);
+        expect(mockStripe.checkout.sessions.create).not.toHaveBeenCalled();
+        expect(mockStripe.customers.create).not.toHaveBeenCalled();
+      },
+    );
+
+    it('rejects with 409 when the org the owner bills for is already paid', async () => {
+      const orgId = 'org-1';
+      const userRepo = (service as any).userRepository;
+      userRepo.findOne.mockResolvedValue({
+        id: userId,
+        organizationId: orgId,
+        role: 'owner',
+      });
+      mockRepository.findOne.mockImplementation(({ where }: any) =>
+        Promise.resolve(
+          where.organizationId === orgId
+            ? {
+                ...mockSubscription,
+                userId: null,
+                organizationId: orgId,
+                plan: 'team',
+              }
+            : null,
+        ),
+      );
+
+      await expect(
+        service.createCheckoutSession(userId, 'test@example.com', 'team'),
+      ).rejects.toThrow(ConflictException);
+      expect(mockRepository.findOne).toHaveBeenCalledWith({
+        where: { organizationId: orgId },
+      });
+      expect(mockStripe.checkout.sessions.create).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a canceled subscription', { status: 'canceled' }],
+      ['a free row', { stripeSubscriptionId: null }],
+    ])('allows checkout with %s', async (_label, overrides) => {
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        ...overrides,
+      });
+      mockStripe.checkout.sessions.create.mockResolvedValue({
+        url: 'https://checkout.stripe.com/session123',
+      });
+
+      await expect(
+        service.createCheckoutSession(userId, 'test@example.com', 'starter'),
+      ).resolves.toBe('https://checkout.stripe.com/session123');
+    });
+
+    it('allows checkout when there is no subscription row yet', async () => {
+      mockRepository.findOne.mockResolvedValue(null);
+      mockStripe.customers.create.mockResolvedValue({ id: 'cus_new' });
+      mockRepository.create.mockImplementation((d: any) => d);
+      mockRepository.save.mockImplementation((d: any) => Promise.resolve(d));
+      mockStripe.checkout.sessions.create.mockResolvedValue({
+        url: 'https://checkout.stripe.com/session123',
+      });
+
+      await expect(
+        service.createCheckoutSession(userId, 'test@example.com', 'starter'),
+      ).resolves.toBe('https://checkout.stripe.com/session123');
+    });
+
+    it('sends the same idempotency key for two quick clicks', async () => {
+      mockRepository.findOne.mockResolvedValue(freeSubscription);
+      mockStripe.checkout.sessions.create.mockResolvedValue({
+        url: 'https://checkout.stripe.com/session123',
+      });
+      const now = jest.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000);
+
+      try {
+        await service.createCheckoutSession(userId, 'a@b.c', 'starter');
+        await service.createCheckoutSession(userId, 'a@b.c', 'starter');
+      } finally {
+        now.mockRestore();
+      }
+
+      const [first, second] = mockStripe.checkout.sessions.create.mock.calls;
+      expect(first[1].idempotencyKey).toBe(second[1].idempotencyKey);
+    });
+
+    it('maps a Stripe idempotency error to 409', async () => {
+      mockRepository.findOne.mockResolvedValue(freeSubscription);
+      mockStripe.checkout.sessions.create.mockRejectedValue(
+        Object.assign(new Error('Keys for idempotent requests'), {
+          type: 'StripeIdempotencyError',
+        }),
+      );
+
+      await expect(
+        service.createCheckoutSession(userId, 'test@example.com', 'team'),
+      ).rejects.toThrow(ConflictException);
     });
   });
 
@@ -327,8 +454,12 @@ describe('BillingService', () => {
         current_period_end: Math.floor(Date.now() / 1000) + 86400 * 30,
         cancel_at_period_end: false,
       });
-      // findOne returns existing sub for find-then-save pattern
-      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+      // findOne returns the existing free row for find-then-save pattern
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        stripeSubscriptionId: null,
+        plan: 'free',
+      });
       mockRepository.save.mockResolvedValue({ ...mockSubscription });
 
       await service.handleWebhookEvent({
@@ -349,6 +480,124 @@ describe('BillingService', () => {
           stripeSubscriptionId: 'sub_new123',
         }),
       );
+    });
+
+    describe('checkout.session.completed with an existing subscription', () => {
+      const checkoutEvent = (subscription: string) =>
+        ({
+          type: 'checkout.session.completed',
+          data: {
+            object: {
+              id: 'cs_test_2',
+              metadata: { userId, plan: 'team' },
+              subscription,
+              customer: 'cus_test123',
+            },
+          },
+        }) as any;
+
+      const stripeSubs: Record<string, any> = {};
+      beforeEach(() => {
+        for (const k of Object.keys(stripeSubs)) delete stripeSubs[k];
+        mockStripe.subscriptions.retrieve.mockImplementation((id: string) =>
+          stripeSubs[id]
+            ? Promise.resolve(stripeSubs[id])
+            : Promise.reject(
+                Object.assign(new Error('No such subscription'), {
+                  type: 'StripeInvalidRequestError',
+                  code: 'resource_missing',
+                }),
+              ),
+        );
+      });
+
+      it('keeps the tracked subscription and cancels the duplicate', async () => {
+        stripeSubs.sub_test123 = { id: 'sub_test123', status: 'active' };
+        stripeSubs.sub_dup = { id: 'sub_dup', status: 'active' };
+        mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+        const errorLog = jest
+          .spyOn((service as any).logger, 'error')
+          .mockImplementation(() => undefined);
+
+        await service.handleWebhookEvent(checkoutEvent('sub_dup'));
+
+        expect(mockRepository.save).not.toHaveBeenCalled();
+        expect(mockStripe.subscriptions.cancel).toHaveBeenCalledWith('sub_dup');
+        expect(errorLog).toHaveBeenCalledWith(
+          expect.stringMatching(/kept=sub_test123 duplicate=sub_dup/),
+        );
+      });
+
+      it('does not cancel twice when the event is redelivered', async () => {
+        stripeSubs.sub_test123 = { id: 'sub_test123', status: 'active' };
+        stripeSubs.sub_dup = { id: 'sub_dup', status: 'canceled' };
+        mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+
+        await service.handleWebhookEvent(checkoutEvent('sub_dup'));
+
+        expect(mockRepository.save).not.toHaveBeenCalled();
+        expect(mockStripe.subscriptions.cancel).not.toHaveBeenCalled();
+      });
+
+      it('replaces the row when Stripe says the old subscription ended', async () => {
+        // The old subscription's deleted event has not arrived yet.
+        stripeSubs.sub_test123 = { id: 'sub_test123', status: 'canceled' };
+        stripeSubs.sub_new = {
+          id: 'sub_new',
+          status: 'active',
+          current_period_end: Math.floor(Date.now() / 1000) + 86400 * 30,
+          cancel_at_period_end: false,
+          cancel_at: null,
+        };
+        mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+
+        await service.handleWebhookEvent(checkoutEvent('sub_new'));
+
+        expect(mockStripe.subscriptions.cancel).not.toHaveBeenCalled();
+        expect(mockRepository.save).toHaveBeenCalledWith(
+          expect.objectContaining({
+            stripeSubscriptionId: 'sub_new',
+            plan: 'team',
+          }),
+        );
+      });
+
+      it('replaces a canceled row without asking Stripe about it', async () => {
+        stripeSubs.sub_new = {
+          id: 'sub_new',
+          status: 'active',
+          current_period_end: Math.floor(Date.now() / 1000) + 86400 * 30,
+          cancel_at_period_end: false,
+          cancel_at: null,
+        };
+        mockRepository.findOne.mockResolvedValue({
+          ...mockSubscription,
+          status: 'canceled',
+        });
+
+        await service.handleWebhookEvent(checkoutEvent('sub_new'));
+
+        expect(mockStripe.subscriptions.retrieve).not.toHaveBeenCalledWith(
+          'sub_test123',
+        );
+        expect(mockRepository.save).toHaveBeenCalledWith(
+          expect.objectContaining({ stripeSubscriptionId: 'sub_new' }),
+        );
+      });
+
+      it('is a no-op when the same session is delivered again', async () => {
+        mockRepository.findOne.mockResolvedValue({
+          ...mockSubscription,
+          stripeSubscriptionId: 'sub_dup',
+          plan: 'business',
+        });
+
+        await service.handleWebhookEvent(checkoutEvent('sub_dup'));
+
+        expect(mockRepository.save).not.toHaveBeenCalled();
+        expect(mockStripe.subscriptions.retrieve).not.toHaveBeenCalled();
+        expect(mockStripe.subscriptions.cancel).not.toHaveBeenCalled();
+      });
     });
 
     it('handles customer.subscription.updated', async () => {

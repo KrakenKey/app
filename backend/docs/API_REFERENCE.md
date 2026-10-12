@@ -652,6 +652,8 @@ Create a Stripe Checkout session. Returns a URL to redirect the user to.
 
 Valid plans: `starter`, `team`, `business`, `enterprise`
 
+Returns `409 Conflict` when the user, or the organization they bill for, already has an `active`, `past_due`, `trialing` or `unpaid` subscription. Use `POST /billing/upgrade` or the billing portal to change plans.
+
 ### GET /billing/subscription
 
 Get the current user's (or organization's) subscription.
