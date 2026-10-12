@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Key, Plus, Ban, Copy, AlertTriangle, Info } from 'lucide-react';
+import { Key, Plus, Ban, Copy, AlertTriangle, Info, X } from 'lucide-react';
 import { toast } from '../utils/toast';
 import { API_KEY_RESTRICTION_LIMITS } from '@krakenkey/shared';
 import type { ApiKey } from '@krakenkey/shared';
-import { getExpirationBadge } from '../utils/expiration';
+import { getKeyExpiry } from '../utils/expiration';
+import { fullDateTime, shortDate } from '../utils/dates';
+import { formatRelative } from '../utils/connectors';
 import { copyToClipboard } from '../utils/clipboard';
 import { parseIpList } from '../utils/apiKeyAccess';
 import { useActionSet } from '../hooks/useActionSet';
@@ -15,11 +17,12 @@ import {
   AccessSummary,
   RestrictionFields,
 } from './AccessFields';
-import { Card } from './ui/Card';
+import { Card, CardHeader } from './ui/Card';
 import { Button } from './ui/Button';
-import { Input } from './ui/Input';
+import { Input, fieldClass } from './ui/Input';
 import { Textarea } from './ui/Textarea';
-import { Badge } from './ui/Badge';
+import { Modal } from './ui/Modal';
+import { RowMenu } from './ui/Menu';
 import { Table, TableHeader, TableRow, TableHead, TableCell } from './ui/Table';
 import { PageHeader } from './ui/PageHeader';
 import { EmptyState } from './ui/EmptyState';
@@ -32,7 +35,11 @@ export default function ApiKeyManagement() {
   const confirm = useConfirm();
   const [newKeyName, setNewKeyName] = useState('');
   const [newKeyExpiry, setNewKeyExpiry] = useState('');
-  const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newlyCreatedKey, setNewlyCreatedKey] = useState<{
+    name: string;
+    key: string;
+  } | null>(null);
   const [ipText, setIpText] = useState('');
   const [ipError, setIpError] = useState<string | null>(null);
 
@@ -58,6 +65,16 @@ export default function ApiKeyManagement() {
   useEffect(() => {
     fetchKeys();
   }, [fetchKeys]);
+
+  // The dialog would otherwise focus its close button.
+  useEffect(() => {
+    if (createOpen) document.getElementById('api-key-name')?.focus();
+  }, [createOpen]);
+
+  const closeCreate = () => {
+    setCreateOpen(false);
+    resetForm();
+  };
 
   const resetForm = () => {
     setNewKeyName('');
@@ -104,9 +121,10 @@ export default function ApiKeyManagement() {
           allowedIps,
         },
       );
-      setNewlyCreatedKey(data.apiKey);
+      setNewlyCreatedKey({ name, key: data.apiKey });
       toast.success(`API key "${name}" created!`);
       resetForm();
+      setCreateOpen(false);
       await fetchKeys();
     } catch (error) {
       // The API client already shows the server's message.
@@ -146,65 +164,90 @@ export default function ApiKeyManagement() {
 
   const activeCount = keys.filter((k) => k.revokedAt === null).length;
 
-  const handleCopyKey = () => {
-    if (newlyCreatedKey) {
-      copyToClipboard(newlyCreatedKey);
-    }
-  };
-
   const ipCount = parseIpList(ipText).entries.length;
   const ipSummary =
     ipCount > 0 ? [`${ipCount} IP ${ipCount === 1 ? 'entry' : 'entries'}`] : [];
 
+  const createButton = (
+    <Button
+      variant="primary"
+      icon={<Plus className="w-4 h-4" />}
+      onClick={() => setCreateOpen(true)}
+    >
+      Create API key
+    </Button>
+  );
+
+  const header = (
+    <PageHeader
+      title="API Keys"
+      description="Personal access tokens for the CLI, scripts and CI."
+      actions={createButton}
+    />
+  );
+
   if (loading) {
     return (
       <div>
-        <PageHeader title="API Keys" icon={<Key className="w-6 h-6" />} />
-        <p className="text-zinc-400">Loading API keys...</p>
+        {header}
+        <p className="text-sm text-text-muted">Loading API keys...</p>
       </div>
     );
   }
 
   return (
     <div>
-      <PageHeader
-        title="API Keys"
-        description="Create and manage Personal Access Tokens for automation."
-        icon={<Key className="w-6 h-6" />}
-      />
+      {header}
 
-      {/* Create Key Form */}
-      <Card className="mb-6">
-        <h3 className="text-sm font-medium text-zinc-400 mb-4">
-          Create New API Key
-        </h3>
+      <Modal
+        open={createOpen}
+        onClose={closeCreate}
+        title="Create API key"
+        description="The key is shown once, right after you create it."
+        size="xl"
+        footer={
+          <>
+            <Button type="button" onClick={closeCreate} disabled={creating}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              form="create-api-key-form"
+              variant="primary"
+              disabled={creating}
+            >
+              {creating ? 'Creating...' : 'Create key'}
+            </Button>
+          </>
+        }
+      >
         <form
+          id="create-api-key-form"
           onSubmit={handleCreate}
           aria-label="Create API key"
           className="space-y-5"
         >
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="flex-1">
-              <Input
-                id="api-key-name"
-                label="Name"
-                placeholder="e.g., ci-deploy"
-                value={newKeyName}
-                onChange={(e) => setNewKeyName(e.target.value)}
-                disabled={creating}
-              />
-            </div>
+          <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+            <Input
+              id="api-key-name"
+              label="Name"
+              placeholder="e.g., ci-deploy"
+              value={newKeyName}
+              onChange={(e) => setNewKeyName(e.target.value)}
+              disabled={creating}
+              autoComplete="off"
+            />
             <div className="flex flex-col gap-1.5">
               <label
                 htmlFor="api-key-expiry"
-                className="text-sm font-medium text-zinc-300"
+                className="text-sm font-medium text-text-secondary"
               >
                 Expires (optional)
               </label>
               <input
                 id="api-key-expiry"
                 type="date"
-                className="bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-300 focus:border-zinc-600 focus:ring-1 focus:ring-zinc-600 focus:outline-none"
+                className={fieldClass}
                 value={newKeyExpiry}
                 onChange={(e) => setNewKeyExpiry(e.target.value)}
                 disabled={creating}
@@ -243,93 +286,61 @@ export default function ApiKeyManagement() {
             />
           </RestrictionFields>
 
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-1">
-            <p className="text-xs text-zinc-500 flex items-start gap-1.5">
-              <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-              Access and restrictions can't be changed after the key is created.
-              To change them, create a new key and revoke the old one.
-            </p>
-            <Button
-              type="submit"
-              variant="primary"
-              disabled={creating}
-              icon={<Plus className="w-3.5 h-3.5" />}
-              className="shrink-0"
-            >
-              {creating ? 'Creating...' : 'Create Key'}
-            </Button>
-          </div>
+          <p className="text-xs text-text-muted flex items-start gap-1.5">
+            <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            Access and restrictions can't be changed after the key is created.
+            To change them, create a new key and revoke the old one.
+          </p>
         </form>
-      </Card>
+      </Modal>
 
-      {/* Newly Created Key Banner */}
       {newlyCreatedKey && (
-        <Card className="mb-6 border-emerald-500/20 bg-emerald-500/5">
-          <div className="flex flex-col gap-3">
-            <p className="text-sm font-medium text-emerald-400">
-              Your new API key:
-            </p>
-            <code className="block bg-zinc-950 rounded-lg px-4 py-3 font-mono text-sm text-zinc-200 break-all">
-              {newlyCreatedKey}
-            </code>
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                variant="secondary"
-                icon={<Copy className="w-3.5 h-3.5" />}
-                onClick={handleCopyKey}
-              >
-                Copy
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setNewlyCreatedKey(null)}
-              >
-                Dismiss
-              </Button>
-            </div>
-            <p className="text-xs text-amber-400 flex items-center gap-1.5">
-              <AlertTriangle className="w-3.5 h-3.5" />
-              Copy this key now. It will not be shown again.
-            </p>
-          </div>
-        </Card>
+        <NewKeyReveal
+          name={newlyCreatedKey.name}
+          secret={newlyCreatedKey.key}
+          onDismiss={() => setNewlyCreatedKey(null)}
+        />
       )}
 
-      {/* Keys List */}
-      <Card>
-        <h3 className="text-sm font-medium text-zinc-400 mb-4">
-          Your API Keys ({activeCount})
-        </h3>
-
-        {keys.length === 0 ? (
+      {keys.length === 0 ? (
+        <Card>
           <EmptyState
-            icon={<Key className="w-8 h-8" />}
+            icon={<Key className="w-6 h-6" />}
             title="No API keys yet"
-            description="Create one above to get started."
+            description="Create a key for the CLI, a script or a CI pipeline."
+            action={createButton}
           />
-        ) : (
-          <Table>
+        </Card>
+      ) : (
+        <Card flush>
+          <CardHeader title={`Your API Keys (${activeCount})`} />
+          <Table className="sm:min-w-[720px]">
             <TableHeader>
-              <TableHead>Name</TableHead>
+              <TableHead className="pl-5">Name</TableHead>
               <TableHead>Access</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead>Last used</TableHead>
-              <TableHead>Expires</TableHead>
-              <TableHead>Actions</TableHead>
+              <TableHead className="hidden lg:table-cell">Created</TableHead>
+              <TableHead className="hidden sm:table-cell">Last used</TableHead>
+              <TableHead className="hidden sm:table-cell">Expires</TableHead>
+              <TableHead className="text-right pr-5">Actions</TableHead>
             </TableHeader>
             <tbody>
               {keys.map((key) => {
-                const expBadge = getExpirationBadge(key.expiresAt);
                 const revoked = key.revokedAt !== null;
+                const revoking = revokingIds.has(key.id);
+                const expiry = (
+                  <KeyExpiryText
+                    expiresAt={key.expiresAt}
+                    revokedAt={key.revokedAt}
+                  />
+                );
                 return (
                   <TableRow
                     key={key.id}
                     className={revoked ? 'opacity-60' : undefined}
                   >
-                    <TableCell className="font-medium text-zinc-200">
-                      {key.name}
+                    <TableCell className="pl-5">
+                      <span className="font-medium text-text">{key.name}</span>
+                      <div className="mt-1 text-xs sm:hidden">{expiry}</div>
                     </TableCell>
                     <TableCell>
                       <AccessSummary
@@ -340,60 +351,143 @@ export default function ApiKeyManagement() {
                         domainNames={domainNames}
                       />
                     </TableCell>
-                    <TableCell>
-                      {new Date(key.createdAt).toLocaleDateString()}
+                    <TableCell className="hidden lg:table-cell whitespace-nowrap">
+                      <span title={fullDateTime(key.createdAt)}>
+                        {shortDate(key.createdAt)}
+                      </span>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="hidden sm:table-cell whitespace-nowrap">
                       {key.lastUsedAt ? (
-                        <span title={new Date(key.lastUsedAt).toLocaleString()}>
-                          {new Date(key.lastUsedAt).toLocaleDateString()}
+                        <span title={fullDateTime(key.lastUsedAt)}>
+                          {formatRelative(key.lastUsedAt)}
                           {key.lastUsedIp && (
-                            <span className="block text-xs text-zinc-500 font-mono">
+                            <span className="block text-xs text-text-muted font-mono">
                               {key.lastUsedIp}
                             </span>
                           )}
                         </span>
                       ) : (
-                        <span className="text-zinc-500">Never</span>
+                        <span className="text-text-muted">Never</span>
                       )}
                     </TableCell>
-                    <TableCell>
-                      {revoked ? (
-                        <Badge variant="danger">
-                          Revoked{' '}
-                          {new Date(key.revokedAt!).toLocaleDateString()}
-                        </Badge>
-                      ) : (
-                        <Badge variant={expBadge.variant}>
-                          {expBadge.label}
-                        </Badge>
-                      )}
+                    <TableCell className="hidden sm:table-cell">
+                      {expiry}
                     </TableCell>
-                    <TableCell>
-                      {!revoked && (
-                        <Button
-                          size="sm"
-                          variant="danger"
-                          icon={<Ban className="w-3.5 h-3.5" />}
-                          onClick={() => handleRevoke(key)}
-                          disabled={revokingIds.has(key.id)}
-                        >
-                          {revokingIds.has(key.id) ? 'Revoking...' : 'Revoke'}
-                        </Button>
-                      )}
+                    <TableCell className="pr-5">
+                      <div className="flex justify-end">
+                        {!revoked && (
+                          <RowMenu
+                            label={`More actions for ${key.name}`}
+                            items={[
+                              {
+                                label: revoking ? 'Revoking...' : 'Revoke',
+                                icon: <Ban className="w-3.5 h-3.5" />,
+                                danger: true,
+                                disabled: revoking,
+                                onClick: () => handleRevoke(key),
+                              },
+                            ]}
+                          />
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 );
               })}
             </tbody>
           </Table>
-        )}
-        {keys.length > activeCount && (
-          <p className="text-xs text-zinc-500 mt-3">
-            Revoked keys stay listed for 30 days.
-          </p>
-        )}
-      </Card>
+          {keys.length > activeCount && (
+            <p className="text-xs text-text-muted px-5 py-3 border-t border-border-subtle">
+              Revoked keys stay listed for 30 days.
+            </p>
+          )}
+        </Card>
+      )}
     </div>
+  );
+}
+
+/** Expiry date; colored only when 30 days or less remain. */
+function KeyExpiryText({
+  expiresAt,
+  revokedAt,
+}: {
+  expiresAt: string | null;
+  revokedAt: string | null;
+}) {
+  if (revokedAt) {
+    return (
+      <span className="text-text-muted whitespace-nowrap">
+        Revoked {shortDate(revokedAt)}
+      </span>
+    );
+  }
+  const expiry = getKeyExpiry(expiresAt);
+  if (!expiry.days) {
+    return <span className="text-text-muted">{expiry.label}</span>;
+  }
+  const tone =
+    expiry.tone === 'danger'
+      ? 'text-red-300'
+      : expiry.tone === 'warning'
+        ? 'text-amber-300'
+        : 'text-text-faint';
+  return (
+    <span className="whitespace-nowrap tnum">
+      <span className="text-text-secondary">{expiry.label}</span>{' '}
+      <span className={tone}>({expiry.days})</span>
+    </span>
+  );
+}
+
+/** The one-time view of a new key's secret. */
+function NewKeyReveal({
+  name,
+  secret,
+  onDismiss,
+}: {
+  name: string;
+  secret: string;
+  onDismiss: () => void;
+}) {
+  return (
+    <Card
+      role="status"
+      aria-label="New API key"
+      className="mb-6 border-emerald-400/25 bg-emerald-400/[0.04]"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-text">
+            API key <span className="font-mono">{name}</span> created
+          </p>
+          <p className="text-xs text-amber-300 flex items-center gap-1.5 mt-1">
+            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+            Copy this key now. It will not be shown again.
+          </p>
+        </div>
+        <button
+          type="button"
+          aria-label="Dismiss"
+          onClick={onDismiss}
+          className="text-text-muted hover:text-text p-1 -mr-1 -mt-1 rounded-lg hover:bg-white/[0.06] transition-colors cursor-pointer"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+      <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+        <code className="min-w-0 flex-1 break-all rounded-lg border border-border-subtle bg-bg px-3.5 py-2.5 font-mono text-sm text-text">
+          {secret}
+        </code>
+        <Button
+          variant="secondary"
+          icon={<Copy className="w-3.5 h-3.5" />}
+          onClick={() => copyToClipboard(secret)}
+          className="shrink-0"
+        >
+          Copy key
+        </Button>
+      </div>
+    </Card>
   );
 }

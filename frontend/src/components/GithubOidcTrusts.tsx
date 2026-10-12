@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Workflow, Plus, Trash2, Copy, Info } from 'lucide-react';
+import { Workflow, Plus, Trash2, Copy, Info, X } from 'lucide-react';
 import type { GithubOidcTrust } from '@krakenkey/shared';
 import { toast } from '../utils/toast';
 import { copyToClipboard } from '../utils/clipboard';
@@ -19,7 +19,11 @@ import {
   AccessSummary,
   RestrictionFields,
 } from './AccessFields';
-import { Card } from './ui/Card';
+import { Card, CardHeader } from './ui/Card';
+import { Modal } from './ui/Modal';
+import { RowMenu } from './ui/Menu';
+import { fullDateTime } from '../utils/dates';
+import { formatRelative } from '../utils/connectors';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { Textarea } from './ui/Textarea';
@@ -32,6 +36,7 @@ export default function GithubOidcTrusts() {
   const [trusts, setTrusts] = useState<GithubOidcTrust[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const deletingIds = useActionSet<string>();
   const confirm = useConfirm();
 
@@ -70,6 +75,11 @@ export default function GithubOidcTrusts() {
     fetchTrusts();
   }, [fetchTrusts]);
 
+  // The dialog would otherwise focus its close button.
+  useEffect(() => {
+    if (addOpen) document.getElementById('github-oidc-name')?.focus();
+  }, [addOpen]);
+
   const atLimit = trusts.length >= MAX_GITHUB_OIDC_TRUSTS;
 
   const resetForm = () => {
@@ -82,6 +92,11 @@ export default function GithubOidcTrusts() {
     setRepositoryId('');
     setRepoIdError(null);
     accessForm.reset();
+  };
+
+  const closeAdd = () => {
+    setAddOpen(false);
+    resetForm();
   };
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -147,6 +162,7 @@ export default function GithubOidcTrusts() {
         );
       }
       resetForm();
+      setAddOpen(false);
       setTrusts((prev) => [...prev, trust]);
     } catch (error) {
       // The API client already shows the server's message.
@@ -184,27 +200,59 @@ export default function GithubOidcTrusts() {
     }
   };
 
+  const limitNote = `You have the maximum of ${MAX_GITHUB_OIDC_TRUSTS} trust policies. Delete one to add another.`;
+
   return (
     <section aria-labelledby="github-oidc-heading" className="mt-10">
-      <div className="flex items-center gap-3 mb-2">
-        <Workflow className="w-5 h-5 text-zinc-400" />
-        <h2
-          id="github-oidc-heading"
-          className="text-lg font-semibold text-zinc-100"
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between mb-4">
+        <div className="min-w-0">
+          <h2
+            id="github-oidc-heading"
+            className="text-base font-semibold tracking-tight text-text"
+          >
+            GitHub Actions (no stored key)
+          </h2>
+          <p className="text-sm text-text-muted mt-1 max-w-2xl">
+            Workflows in a trusted repository get a 15-minute key from their
+            GitHub OIDC token, so no API key is stored as a secret.
+          </p>
+        </div>
+        <Button
+          variant="secondary"
+          icon={<Plus className="w-4 h-4" />}
+          onClick={() => setAddOpen(true)}
+          disabled={atLimit}
+          title={atLimit ? limitNote : undefined}
+          className="shrink-0 self-start sm:self-auto"
         >
-          GitHub Actions (no stored key)
-        </h2>
+          Add trust policy
+        </Button>
       </div>
-      <p className="text-sm text-zinc-400 mb-6">
-        Workflows in a trusted repository get a 15-minute key from their GitHub
-        OIDC token, so no API key is stored as a secret.
-      </p>
 
-      <Card className="mb-6">
-        <h3 className="text-sm font-medium text-zinc-400 mb-4">
-          Add Trust Policy
-        </h3>
+      <Modal
+        open={addOpen}
+        onClose={closeAdd}
+        title="Add trust policy"
+        description="Lets workflows in one repository exchange their GitHub OIDC token for a short-lived key."
+        size="xl"
+        footer={
+          <>
+            <Button type="button" onClick={closeAdd} disabled={creating}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              form="add-github-trust-form"
+              variant="primary"
+              disabled={creating || atLimit}
+            >
+              {creating ? 'Adding...' : 'Add policy'}
+            </Button>
+          </>
+        }
+      >
         <form
+          id="add-github-trust-form"
           onSubmit={handleCreate}
           aria-label="Add GitHub trust policy"
           className="space-y-5"
@@ -218,6 +266,7 @@ export default function GithubOidcTrusts() {
               onChange={(e) => setName(e.target.value)}
               disabled={creating || atLimit}
               maxLength={100}
+              autoComplete="off"
             />
             <Input
               id="github-oidc-repository"
@@ -232,6 +281,8 @@ export default function GithubOidcTrusts() {
               error={repoError ?? undefined}
               aria-invalid={repoError ? true : undefined}
               className="font-mono"
+              autoComplete="off"
+              spellCheck={false}
             />
           </div>
 
@@ -294,157 +345,162 @@ export default function GithubOidcTrusts() {
             disabled={creating || atLimit}
           />
 
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-1">
-            <p className="text-xs text-zinc-500 flex items-start gap-1.5">
-              <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-              {atLimit
-                ? `You have the maximum of ${MAX_GITHUB_OIDC_TRUSTS} trust policies. Delete one to add another.`
-                : "Policies can't be edited. To change one, add a new policy and delete the old one."}
-            </p>
-            <Button
-              type="submit"
-              variant="primary"
-              disabled={creating || atLimit}
-              icon={<Plus className="w-3.5 h-3.5" />}
-              className="shrink-0"
-            >
-              {creating ? 'Adding...' : 'Add Trust Policy'}
-            </Button>
-          </div>
+          <p className="text-xs text-text-muted flex items-start gap-1.5">
+            <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            {atLimit
+              ? limitNote
+              : "Policies can't be edited. To change one, add a new policy and delete the old one."}
+          </p>
         </form>
-      </Card>
+      </Modal>
 
       {snippet && (
-        <Card className="mb-6 border-emerald-500/20 bg-emerald-500/5">
-          <div className="flex flex-col gap-3">
-            <p className="text-sm font-medium text-emerald-400">
-              Add this to a workflow in {snippet.trust.repository}:
+        <Card
+          role="status"
+          aria-label="New trust policy"
+          className="mb-6 border-emerald-400/25 bg-emerald-400/[0.04]"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <p className="text-sm font-semibold text-text">
+              Add this to a workflow in{' '}
+              <span className="font-mono">{snippet.trust.repository}</span>:
             </p>
-            <pre
-              aria-label="Workflow snippet"
-              className="bg-zinc-950 rounded-lg px-4 py-3 font-mono text-xs text-zinc-200 overflow-x-auto"
+            <button
+              type="button"
+              aria-label="Dismiss"
+              onClick={() => setSnippet(null)}
+              className="text-text-muted hover:text-text p-1 -mr-1 -mt-1 rounded-lg hover:bg-white/[0.06] transition-colors cursor-pointer"
             >
-              {snippet.text}
-            </pre>
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                variant="secondary"
-                icon={<Copy className="w-3.5 h-3.5" />}
-                onClick={() => copyToClipboard(snippet.text)}
-              >
-                Copy snippet
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setSnippet(null)}
-              >
-                Dismiss
-              </Button>
-            </div>
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <pre
+            aria-label="Workflow snippet"
+            className="mt-3 rounded-lg border border-border-subtle bg-bg px-3.5 py-3 font-mono text-xs text-text overflow-x-auto"
+          >
+            {snippet.text}
+          </pre>
+          <div className="mt-3">
+            <Button
+              variant="secondary"
+              icon={<Copy className="w-3.5 h-3.5" />}
+              onClick={() => copyToClipboard(snippet.text)}
+            >
+              Copy snippet
+            </Button>
           </div>
         </Card>
       )}
 
-      <Card>
-        <h3 className="text-sm font-medium text-zinc-400 mb-4">
-          Trust Policies ({trusts.length} of {MAX_GITHUB_OIDC_TRUSTS})
-        </h3>
-
-        {loading ? (
-          <p className="text-zinc-400 text-sm">Loading trust policies...</p>
-        ) : trusts.length === 0 ? (
+      {loading ? (
+        <p className="text-sm text-text-muted">Loading trust policies...</p>
+      ) : trusts.length === 0 ? (
+        <Card>
           <EmptyState
-            icon={<Workflow className="w-8 h-8" />}
+            icon={<Workflow className="w-6 h-6" />}
             title="No trust policies yet"
-            description="Add one above so a repository's workflows can get keys without a stored secret."
+            description="Add one so a repository's workflows can get keys without a stored secret."
           />
-        ) : (
-          <Table>
+        </Card>
+      ) : (
+        <Card flush>
+          <CardHeader
+            title={`Trust Policies (${trusts.length} of ${MAX_GITHUB_OIDC_TRUSTS})`}
+            description={atLimit ? limitNote : undefined}
+          />
+          <Table className="sm:min-w-[760px]">
             <TableHeader>
-              <TableHead>Name</TableHead>
+              <TableHead className="pl-5">Name</TableHead>
               <TableHead>Repository</TableHead>
-              <TableHead>Branches and environment</TableHead>
-              <TableHead>Access</TableHead>
-              <TableHead>Last used</TableHead>
-              <TableHead>Actions</TableHead>
+              <TableHead className="hidden md:table-cell">
+                Branches and environment
+              </TableHead>
+              <TableHead className="hidden md:table-cell">Access</TableHead>
+              <TableHead className="hidden sm:table-cell">Last used</TableHead>
+              <TableHead className="text-right pr-5">Actions</TableHead>
             </TableHeader>
             <tbody>
-              {trusts.map((trust) => (
-                <TableRow key={trust.id}>
-                  <TableCell className="font-medium text-zinc-200">
-                    {trust.name}
-                  </TableCell>
-                  <TableCell>
-                    <span className="font-mono text-xs text-zinc-200">
-                      {trust.repository}
-                    </span>
-                    <span className="block text-xs text-zinc-500">
-                      {trust.repositoryId
-                        ? `pinned to repo id ${trust.repositoryId}`
-                        : 'pins on its first run'}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    {trust.allowedRefs?.length ? (
-                      <span className="block font-mono text-xs text-zinc-300">
-                        {trust.allowedRefs.join(', ')}
+              {trusts.map((trust) => {
+                const deleting = deletingIds.has(trust.id);
+                return (
+                  <TableRow key={trust.id}>
+                    <TableCell className="pl-5 font-medium text-text">
+                      {trust.name}
+                    </TableCell>
+                    <TableCell>
+                      <span className="font-mono text-xs text-text">
+                        {trust.repository}
                       </span>
-                    ) : (
-                      <span className="block text-xs text-zinc-500">
-                        Any branch or tag
+                      <span className="block text-xs text-text-muted">
+                        {trust.repositoryId
+                          ? `pinned to repo id ${trust.repositoryId}`
+                          : 'pins on its first run'}
                       </span>
-                    )}
-                    {trust.environment && (
-                      <span className="block text-xs text-zinc-500">
-                        environment:{' '}
-                        <span className="font-mono text-zinc-300">
-                          {trust.environment}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">
+                      {trust.allowedRefs?.length ? (
+                        <span className="block font-mono text-xs text-text-secondary">
+                          {trust.allowedRefs.join(', ')}
                         </span>
-                      </span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <AccessSummary
-                      scopes={trust.scopes}
-                      allowedDomainIds={trust.allowedDomainIds}
-                      allowedCertIds={trust.allowedCertIds}
-                      domainNames={domainNames}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    {trust.lastUsedAt ? (
-                      <span title={new Date(trust.lastUsedAt).toLocaleString()}>
-                        {new Date(trust.lastUsedAt).toLocaleDateString()}
-                        {trust.lastUsedRef && (
-                          <span className="block text-xs text-zinc-500 font-mono">
-                            {trust.lastUsedRef}
+                      ) : (
+                        <span className="block text-xs text-text-muted">
+                          Any branch or tag
+                        </span>
+                      )}
+                      {trust.environment && (
+                        <span className="block text-xs text-text-muted">
+                          environment:{' '}
+                          <span className="font-mono text-text-secondary">
+                            {trust.environment}
                           </span>
-                        )}
-                      </span>
-                    ) : (
-                      <span className="text-zinc-500">Never</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      size="sm"
-                      variant="danger"
-                      icon={<Trash2 className="w-3.5 h-3.5" />}
-                      onClick={() => handleDelete(trust)}
-                      disabled={deletingIds.has(trust.id)}
-                      aria-label={`Delete trust policy ${trust.name}`}
-                    >
-                      {deletingIds.has(trust.id) ? 'Deleting...' : 'Delete'}
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">
+                      <AccessSummary
+                        scopes={trust.scopes}
+                        allowedDomainIds={trust.allowedDomainIds}
+                        allowedCertIds={trust.allowedCertIds}
+                        domainNames={domainNames}
+                      />
+                    </TableCell>
+                    <TableCell className="hidden sm:table-cell whitespace-nowrap">
+                      {trust.lastUsedAt ? (
+                        <span title={fullDateTime(trust.lastUsedAt)}>
+                          {formatRelative(trust.lastUsedAt)}
+                          {trust.lastUsedRef && (
+                            <span className="block text-xs text-text-muted font-mono">
+                              {trust.lastUsedRef}
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="text-text-muted">Never</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="pr-5">
+                      <div className="flex justify-end">
+                        <RowMenu
+                          label={`More actions for ${trust.name}`}
+                          items={[
+                            {
+                              label: deleting ? 'Deleting...' : 'Delete',
+                              icon: <Trash2 className="w-3.5 h-3.5" />,
+                              danger: true,
+                              disabled: deleting,
+                              onClick: () => handleDelete(trust),
+                            },
+                          ]}
+                        />
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </tbody>
           </Table>
-        )}
-      </Card>
+        </Card>
+      )}
     </section>
   );
 }

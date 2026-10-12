@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { CertStatus } from '@krakenkey/shared';
-import { getCertDomains, parseNameList } from '../certDomains';
+import type { TlsCert } from '@krakenkey/shared';
+import {
+  countCertsByDomain,
+  getCertDomains,
+  parseNameList,
+} from '../certDomains';
 import { STATUS_LABEL, STATUS_ORDER } from '../statusMappings';
 import { mockAwaitingCsrCert, mockCerts } from '../../test/mocks/data';
 
@@ -65,5 +70,48 @@ describe('parseNameList', () => {
 
   it('returns nothing for blank text', () => {
     expect(parseNameList(' \n , ')).toEqual({ names: [], invalid: [] });
+  });
+});
+
+describe('countCertsByDomain', () => {
+  const cert = (id: number, names: string[], status = 'issued'): TlsCert =>
+    ({
+      ...mockAwaitingCsrCert,
+      id,
+      status,
+      requestedNames: names,
+    }) as TlsCert;
+  const domains = [
+    { id: 'apex', hostname: 'example.com' },
+    { id: 'sub', hostname: 'shop.example.com' },
+    { id: 'other', hostname: 'other.test' },
+  ];
+
+  it('counts each certificate once per covering domain', () => {
+    const counts = countCertsByDomain(domains, [
+      cert(1, ['example.com', 'www.example.com']),
+      cert(2, ['*.example.com']),
+      cert(3, ['api.other.test', 'example.com']),
+    ]);
+    expect(counts.get('apex')).toBe(3);
+    expect(counts.get('other')).toBe(1);
+    expect(counts.get('sub')).toBe(0);
+  });
+
+  it('uses the most specific domain when registered domains nest', () => {
+    const counts = countCertsByDomain(domains, [
+      cert(1, ['cdn.shop.example.com']),
+      cert(2, ['SHOP.example.com']),
+    ]);
+    expect(counts.get('sub')).toBe(2);
+    expect(counts.get('apex')).toBe(0);
+  });
+
+  it('skips revoked certificates and names on no domain', () => {
+    const counts = countCertsByDomain(domains, [
+      cert(1, ['example.com'], 'revoked'),
+      cert(2, ['notexample.com']),
+    ]);
+    expect(counts.get('apex')).toBe(0);
   });
 });

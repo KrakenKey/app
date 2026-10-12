@@ -23,13 +23,13 @@ const certLabel = (cert: TlsCert) =>
 const choiceCardClass = (selected: boolean) =>
   `flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
     selected
-      ? 'border-cyan-500/50 bg-cyan-500/5'
-      : 'border-zinc-800 hover:border-zinc-700 hover:bg-zinc-800/30'
+      ? 'border-cyan-400/50 bg-cyan-400/[0.06] shadow-[inset_0_0_0_1px_rgb(34_211_238/0.15)]'
+      : 'border-border-strong/70 hover:border-border-strong hover:bg-white/[0.02]'
   }`;
 
-const legendClass = 'text-sm font-medium text-zinc-300 mb-2';
+const legendClass = 'text-sm font-medium text-text-secondary mb-2';
 const checkListClass =
-  'max-h-48 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-950 p-2 space-y-1';
+  'max-h-48 overflow-y-auto rounded-lg border border-border-strong/70 bg-bg p-2 space-y-1';
 const checkRowClass =
   'flex items-center gap-2 px-2 py-1 rounded text-sm text-zinc-300 cursor-pointer hover:bg-zinc-800/50';
 
@@ -60,13 +60,13 @@ export function AccessChoiceFields({
                 value={preset}
                 checked={access === preset}
                 onChange={() => chooseAccess(preset)}
-                className="accent-cyan-500 mt-0.5"
+                className="mt-0.5"
               />
               <span>
-                <span className="block text-sm font-medium text-zinc-200">
+                <span className="block text-sm font-medium text-text">
                   {API_KEY_PRESET_LABELS[preset]}
                 </span>
-                <span className="block text-xs text-zinc-500">
+                <span className="block text-xs text-text-muted mt-0.5">
                   {API_KEY_PRESET_DESCRIPTIONS[preset]}
                 </span>
               </span>
@@ -79,13 +79,13 @@ export function AccessChoiceFields({
               value="custom"
               checked={access === 'custom'}
               onChange={() => chooseAccess('custom')}
-              className="accent-cyan-500 mt-0.5"
+              className="mt-0.5"
             />
             <span>
-              <span className="block text-sm font-medium text-zinc-200">
+              <span className="block text-sm font-medium text-text">
                 Custom
               </span>
-              <span className="block text-xs text-zinc-500">
+              <span className="block text-xs text-text-muted mt-0.5">
                 Pick the scopes yourself.
               </span>
             </span>
@@ -109,7 +109,7 @@ export function AccessChoiceFields({
                   type="checkbox"
                   checked={selectedScopes.includes(scope)}
                   onChange={() => toggleScope(scope)}
-                  className="accent-cyan-500 mt-0.5"
+                  className="mt-0.5"
                 />
                 <span>
                   <span className="block font-mono text-xs text-zinc-200">
@@ -262,7 +262,6 @@ export function DomainChecklist({
                       !checked &&
                       domainIds.length >= API_KEY_RESTRICTION_LIMITS.domains
                     }
-                    className="accent-cyan-500"
                   />
                   <span className="font-mono text-xs">{d.hostname}</span>
                   {!d.isVerified && (
@@ -321,7 +320,6 @@ export function CertChecklist({
                       !checked &&
                       certIds.length >= API_KEY_RESTRICTION_LIMITS.certs
                     }
-                    className="accent-cyan-500"
                   />
                   <span className="font-mono text-xs">{certLabel(c)}</span>
                   <span className="text-xs text-zinc-500">({c.status})</span>

@@ -17,7 +17,12 @@ test.describe('Domain management', () => {
 
     await expect(page.getByText('example.com').first()).toBeVisible();
     await expect(page.getByText('staging.example.com')).toBeVisible();
-    await expect(page.getByText(/verified/i).first()).toBeVisible();
+    await expect(
+      page.getByText('Verified', { exact: true }).filter({ visible: true }),
+    ).toHaveCount(1);
+    await expect(
+      page.getByText('Pending', { exact: true }).filter({ visible: true }),
+    ).toHaveCount(1);
   });
 
   test('can add a new domain', async ({ page }) => {
@@ -40,11 +45,18 @@ test.describe('Domain management', () => {
 
     await page.goto('/dashboard/domains');
 
-    await page.getByPlaceholder('example.com').fill('new.example.com');
-    await page.getByRole('button', { name: /add domain/i }).click();
+    await page.getByRole('button', { name: 'Add domain' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Add a domain' });
+    await dialog.getByPlaceholder('example.com').fill('new.example.com');
+    await dialog.getByRole('button', { name: 'Add domain' }).click();
 
+    await expect(dialog).toHaveCount(0);
     await expect(
-      page.getByRole('heading', { name: 'new.example.com' }),
+      page.getByRole('cell', { name: /new\.example\.com/ }).first(),
+    ).toBeVisible();
+    // The new domain's DNS records open right away
+    await expect(
+      page.getByText('_acme-challenge.new.example.com', { exact: true }),
     ).toBeVisible();
   });
 
@@ -62,10 +74,33 @@ test.describe('Domain management', () => {
 
     await page.goto('/dashboard/domains');
 
+    await page.getByRole('button', { name: 'Verify', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Verify' })).toHaveCount(0);
+  });
+
+  test("shows a pending domain's DNS records in an expandable row", async ({
+    page,
+  }) => {
+    await page.goto('/dashboard/domains');
+
+    const toggle = page.getByRole('button', {
+      name: 'Show DNS records for staging.example.com',
+    });
+    await toggle.click();
+    await expect(
+      page.getByRole('button', { name: 'Copy TXT value' }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'Copy CNAME target' }),
+    ).toBeVisible();
     await page
-      .getByRole('button', { name: /verify/i })
-      .first()
+      .getByRole('button', {
+        name: 'Hide DNS records for staging.example.com',
+      })
       .click();
+    await expect(
+      page.getByRole('button', { name: 'Copy TXT value' }),
+    ).toHaveCount(0);
   });
 
   test('can delete a domain after confirming', async ({ page }) => {
@@ -80,11 +115,11 @@ test.describe('Domain management', () => {
 
     await page.goto('/dashboard/domains');
 
-    // Click delete on the first domain
+    // Delete lives in the row's overflow menu
     await page
-      .getByRole('button', { name: /delete/i })
-      .first()
+      .getByRole('button', { name: 'More actions for example.com' })
       .click();
+    await page.getByRole('menuitem', { name: 'Delete' }).click();
     const dialog = page.getByRole('dialog', { name: 'Delete domain?' });
     await expect(dialog).toContainText('example.com');
     // Cancel has focus, so a stray Enter does not delete
@@ -106,9 +141,9 @@ test.describe('Domain management', () => {
 
     await page.goto('/dashboard/domains');
     await page
-      .getByRole('button', { name: /delete/i })
-      .first()
+      .getByRole('button', { name: 'More actions for example.com' })
       .click();
+    await page.getByRole('menuitem', { name: 'Delete' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
     await page.keyboard.press('Escape');
 
