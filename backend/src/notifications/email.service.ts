@@ -18,6 +18,7 @@ import {
   apiKeyExpiredUseTemplate,
   deployFailedTemplate,
   connectorStaleTemplate,
+  paymentFailedTemplate,
 } from './templates';
 import type { EmailBranding, EmailContent } from './templates';
 import { User } from '../users/entities/user.entity';
@@ -115,6 +116,17 @@ export interface ConnectorStaleContext {
   username: string;
   email: string;
   connectors: StaleConnector[];
+}
+
+export interface PaymentFailedContext {
+  userId?: string;
+  username: string;
+  email: string;
+  plan: string;
+  /** When the paid plan's limits stop applying if the payment isn't fixed. */
+  graceEndsAt: Date;
+  /** Set when the subscription belongs to an organization. */
+  organizationName?: string;
 }
 
 @Injectable()
@@ -357,6 +369,18 @@ export class EmailService {
       ctx.email,
       subject,
       connectorStaleTemplate(ctx, this.brand),
+    );
+  }
+
+  /**
+   * Billing notice: not gated by notification preferences, since the
+   * account loses its paid limits if nobody acts on it.
+   */
+  async sendPaymentFailed(ctx: PaymentFailedContext): Promise<void> {
+    await this.send(
+      ctx.email,
+      'Action required: your KrakenKey payment failed',
+      paymentFailedTemplate(ctx, this.brand),
     );
   }
 

@@ -47,6 +47,14 @@ export class Subscription {
   @Column({ default: false })
   cancelAtPeriodEnd: boolean;
 
+  /**
+   * When the first payment of the current past_due run failed. The paid plan
+   * keeps applying for PAST_DUE_GRACE_DAYS from here. Cleared when a payment
+   * succeeds again or the subscription ends.
+   */
+  @Column({ type: 'timestamp', nullable: true, default: null })
+  pastDueSince: Date | null;
+
   @ManyToOne(() => User, { onDelete: 'CASCADE', nullable: true })
   @JoinColumn({ name: 'userId' })
   user: User;

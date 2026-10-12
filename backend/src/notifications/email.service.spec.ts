@@ -536,6 +536,75 @@ describe('EmailService', () => {
     });
   });
 
+  describe('payment failed email', () => {
+    const ctx = {
+      userId: 'u1',
+      username: 'testuser',
+      email: 'test@example.com',
+      plan: 'team',
+      graceEndsAt: new Date('2026-10-26T15:00:00Z'),
+    };
+    const sent = () =>
+      mockSendMail.mock.calls[0][0] as {
+        to: string;
+        subject: string;
+        html: string;
+        text: string;
+      };
+
+    it('says when the paid limits end and links to billing', async () => {
+      mockConfigService.get.mockImplementation(
+        (key: string, defaultValue?: any) =>
+          key === 'KK_APP_DOMAIN'
+            ? 'dev-web.krakenkey.io'
+            : key === 'KK_SMTP_HOST'
+              ? 'smtp.example.com'
+              : defaultValue,
+      );
+
+      await service.sendPaymentFailed(ctx);
+
+      const mail = sent();
+      expect(mail.to).toBe('test@example.com');
+      expect(mail.subject).toBe(
+        'Action required: your KrakenKey payment failed',
+      );
+      expect(mail.html).toContain('October 26, 2026');
+      expect(mail.html).toContain('Team limits');
+      expect(mail.html).toContain(
+        'https://dev-web.krakenkey.io/dashboard/billing',
+      );
+      expect(mail.html).toContain('<table role="presentation"');
+      expect(mail.text).toContain('October 26, 2026');
+      expect(mail.text).toContain(
+        'Update payment method: https://dev-web.krakenkey.io/dashboard/billing',
+      );
+      expect(mail.text).not.toContain('<');
+    });
+
+    it('names the organization for an org subscription', async () => {
+      await service.sendPaymentFailed({ ...ctx, organizationName: 'Acme' });
+
+      expect(sent().text).toContain(
+        "the Acme organization's Team subscription",
+      );
+    });
+
+    it('is sent regardless of notification preferences', async () => {
+      mockUserRepo.findOne.mockResolvedValue({
+        id: 'u1',
+        notificationPreferences: Object.fromEntries(
+          Object.values(NotificationType).map((t) => [t, false]),
+        ),
+      });
+
+      await service.sendPaymentFailed(ctx);
+
+      expect(mockSendMail).toHaveBeenCalledTimes(1);
+      expect(sent().html).not.toContain('Manage email notifications');
+    });
+  });
+
   describe('transport errors', () => {
     it('does not throw when sendMail fails', async () => {
       mockUserRepo.findOne.mockResolvedValue({

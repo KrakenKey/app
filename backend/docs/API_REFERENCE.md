@@ -652,9 +652,13 @@ Create a Stripe Checkout session. Returns a URL to redirect the user to.
 
 Valid plans: `starter`, `team`, `business`, `enterprise`
 
+Returns `409 Conflict` when the user, or the organization they bill for, already has an `active`, `past_due`, `trialing` or `unpaid` subscription. Use `POST /billing/upgrade` or the billing portal to change plans.
+
 ### GET /billing/subscription
 
 Get the current user's (or organization's) subscription.
+
+While a payment has failed (`status: "past_due"`), `pastDueSince` is when the first payment failed and `graceEndsAt` is when the paid plan's limits stop applying unless the payment goes through (14 days later). Both are `null` otherwise.
 
 ### POST /billing/portal
 

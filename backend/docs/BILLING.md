@@ -48,6 +48,8 @@ Redirect the user to the returned URL. After payment, Stripe redirects back to K
 
 Valid plan values: `starter`, `team`, `business`, `enterprise`
 
+Checkout is only for starting a subscription. If the user, or the organization they bill for, already has a subscription that is `active`, `past_due`, `trialing` or `unpaid`, the request fails with `409 Conflict`; use `POST /billing/upgrade` or the billing portal instead. Repeating the same request within about a minute returns the same Stripe session.
+
 ### Get Current Subscription
 
 ```
@@ -67,6 +69,8 @@ GET /billing/subscription
 ```
 
 Returns `null` for users on the free tier (no active subscription).
+
+While a payment has failed, `status` is `past_due`, `pastDueSince` is the time of the first failure and `graceEndsAt` is when the paid limits stop applying unless the payment goes through. Both are `null` otherwise.
 
 ### Manage Subscription (Stripe Portal)
 
@@ -142,6 +146,8 @@ Internal endpoint — receives signed webhook events from Stripe. Not called by 
 4. `checkout.session.completed` webhook fires
 5. Backend creates a `Subscription` record linked to the user (or organization)
 
+If the record already points at a different subscription that Stripe still reports as live (for example, two checkout tabs were completed), the webhook keeps the existing subscription, cancels the new one immediately, and logs an error with both IDs. The new subscription's first invoice is not refunded automatically; refund it from the Stripe dashboard. A repeated delivery of the same event changes nothing.
+
 ### Plan Upgrade
 1. User requests upgrade preview to see prorated cost
 2. User confirms upgrade
@@ -156,10 +162,14 @@ Internal endpoint — receives signed webhook events from Stripe. Not called by 
 4. User reverts to free tier limits
 
 ### Failed Payment
-1. `invoice.payment_failed` webhook fires
-2. Backend marks subscription as `past_due`
-3. Stripe retries payment per its dunning settings
-4. If retries succeed, `customer.subscription.updated` restores `active` status
+1. `invoice.payment_failed` (or `customer.subscription.updated` with status `past_due`, whichever arrives first) fires
+2. Backend marks the subscription `past_due` and records `pastDueSince`, the time of the first failure. Later failures don't move it.
+3. The account owner (the organization owner for an org subscription) gets one "payment failed" email with a link to the billing page and the date the paid limits end. It is a billing notice and ignores email preferences.
+4. Stripe retries the payment per its dunning settings. Meanwhile the plan's limits, renewal window, rate limits and scan retention keep applying for a 14-day grace period from `pastDueSince` (`PAST_DUE_GRACE_DAYS` in `src/billing/entitlement.ts`). The billing page shows a banner with that date and a button to the Stripe portal.
+5. If a retry succeeds, `invoice.paid` or `customer.subscription.updated` restores `active` status and clears `pastDueSince`
+6. The account drops to Free limits when the grace period ends, when Stripe marks the subscription `unpaid`, or when it cancels it (`customer.subscription.deleted`)
+
+Every tier lookup goes through `effectivePlan()` in `src/billing/entitlement.ts` (SQL queries use `entitledSubscriptionSql()`), so active subscriptions and past_due ones inside the grace period resolve to their plan and everything else resolves to Free. Subscriptions that were already `past_due` before `pastDueSince` existed get no grace until the next Stripe event for them records the start.
 
 ## Organization Billing
 
@@ -198,7 +208,8 @@ The error message names the owner, both subscription IDs and the organization, b
 | Status | Description |
 |--------|-------------|
 | `active` | Subscription is current and payment is up to date |
-| `past_due` | Payment failed, Stripe is retrying |
+| `past_due` | Payment failed, Stripe is retrying. Paid limits apply for 14 days from the first failure |
+| `unpaid` | Stripe gave up retrying. Free limits apply |
 | `canceled` | Subscription has been canceled |
 | `incomplete` | Initial payment has not completed |
 | `trialing` | Subscription is in a trial period |

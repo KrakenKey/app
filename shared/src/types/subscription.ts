@@ -8,6 +8,7 @@ export type SubscriptionPlan =
 export type SubscriptionStatus =
   | 'active'
   | 'past_due'
+  | 'unpaid'
   | 'canceled'
   | 'incomplete'
   | 'trialing';
@@ -19,6 +20,13 @@ export interface Subscription {
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
   organizationId?: string | null;
+  /** When the first payment of the current past_due run failed. */
+  pastDueSince?: string | null;
+  /**
+   * While past_due: when the paid plan's limits stop applying unless the
+   * payment goes through. Null otherwise.
+   */
+  graceEndsAt?: string | null;
   createdAt: string;
 }
 

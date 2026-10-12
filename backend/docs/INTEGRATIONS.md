@@ -249,6 +249,7 @@ KrakenKey uses Stripe for subscription billing. The integration supports checkou
      - `customer.subscription.updated`
      - `customer.subscription.deleted`
      - `invoice.payment_failed`
+     - `invoice.paid`
    - Copy the signing secret to `KK_STRIPE_WEBHOOK_SECRET`
 
 3. **For local development**, use the Stripe CLI:
@@ -262,9 +263,10 @@ stripe listen --forward-to localhost:8080/billing/webhook
 | Event | Action |
 |-------|--------|
 | `checkout.session.completed` | Creates subscription record, links to user/org |
-| `customer.subscription.updated` | Updates plan, status, billing period |
+| `customer.subscription.updated` | Updates plan, status, billing period; starts the grace period on `past_due`, clears it on `active` |
 | `customer.subscription.deleted` | Marks subscription as canceled, resets to free tier |
-| `invoice.payment_failed` | Updates subscription status to `past_due` |
+| `invoice.payment_failed` | Sets status `past_due`, records `pastDueSince` on the first failure and emails the owner |
+| `invoice.paid` | Restores `active` and clears `pastDueSince` after a failed payment |
 
 ---
 

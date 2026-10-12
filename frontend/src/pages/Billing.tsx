@@ -1,5 +1,6 @@
 import { useState, useEffect, type ReactNode } from 'react';
-import { Check, CreditCard, ExternalLink } from 'lucide-react';
+import { AlertTriangle, Check, CreditCard, ExternalLink } from 'lucide-react';
+import axios from 'axios';
 import type {
   Subscription,
   SubscriptionPlan,
@@ -197,6 +198,16 @@ export default function Billing() {
   const plan = subscription?.plan ?? 'free';
   const isPaid = plan !== 'free';
   const isPastDue = subscription?.status === 'past_due';
+  // Stripe retries a failed payment for a while; the paid limits keep
+  // applying until graceEndsAt. After that (or once Stripe marks the
+  // subscription unpaid) the account is on Free limits.
+  const paymentFailed =
+    isPaid && (isPastDue || subscription?.status === 'unpaid');
+  const graceEndsAt =
+    isPastDue && subscription?.graceEndsAt
+      ? new Date(subscription.graceEndsAt)
+      : null;
+  const inGrace = graceEndsAt !== null && graceEndsAt.getTime() > Date.now();
   const isCanceling = subscription?.cancelAtPeriodEnd === true;
   // The API only lets the owner manage an org's subscription, so other
   // members get a read-only view instead of buttons that would return 403.
@@ -233,8 +244,17 @@ export default function Billing() {
         window.location.href = sessionUrl;
         return;
       }
-    } catch {
-      setUpgradeError('Failed to load upgrade details. Please try again.');
+    } catch (err) {
+      // 409 means a paid subscription already exists; the API says what to do.
+      const msg =
+        axios.isAxiosError(err) && err.response?.status === 409
+          ? err.response.data?.message
+          : null;
+      setUpgradeError(
+        typeof msg === 'string'
+          ? msg
+          : 'Failed to load upgrade details. Please try again.',
+      );
     } finally {
       setActionLoading(false);
     }
@@ -294,9 +314,45 @@ export default function Billing() {
     );
   }
 
+  const planLabel = PLAN_LABELS[plan] ?? plan;
+
   return (
     <div className="space-y-6">
       {header}
+
+      {paymentFailed && (
+        <div
+          role="alert"
+          className="flex flex-col gap-4 rounded-xl border border-red-500/30 bg-red-500/10 p-4 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-400" />
+            <div className="space-y-1 text-sm">
+              <p className="font-medium text-red-200">
+                {inGrace && graceEndsAt
+                  ? `Your last payment failed. Update your payment method by ${formatDate(graceEndsAt.toISOString())} to keep ${planLabel} limits.`
+                  : `Your last payment failed. Your account is on Free limits until you update your payment method and the ${planLabel} payment goes through.`}
+              </p>
+              {!canManageBilling && (
+                <p className="text-red-200/80">
+                  Ask your organization owner to update the payment method.
+                </p>
+              )}
+            </div>
+          </div>
+          {canManageBilling && (
+            <Button
+              variant="primary"
+              icon={<ExternalLink className="w-4 h-4" />}
+              onClick={handleManageSubscription}
+              disabled={actionLoading}
+              className="shrink-0 self-start sm:self-auto"
+            >
+              Update payment method
+            </Button>
+          )}
+        </div>
+      )}
 
       {/* Current plan */}
       <Card>
@@ -307,7 +363,7 @@ export default function Billing() {
             </h2>
             <div className="flex flex-wrap items-center gap-3">
               <span className="text-lg font-semibold text-text">
-                {PLAN_LABELS[plan] ?? plan}
+                {planLabel}
               </span>
               {isPaid && PLAN_PRICES[plan] && (
                 <span className="text-sm text-text-muted tabular-nums">

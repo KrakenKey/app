@@ -303,10 +303,16 @@ export class EndpointsService {
       );
     }
 
-    // Check hosted endpoint limit (endpoints with at least one hosted region)
+    const memberIds =
+      limits.hostedMonitoredEndpoints !== Infinity ||
+      limits.hostedProbeRegions !== Infinity
+        ? await this.billingService.getResourceCountUserIds(userId)
+        : [];
+
+    // Check hosted endpoint limit (endpoints with at least one hosted region).
+    // getCount() on the endpoint alias counts distinct endpoints, so an
+    // endpoint with several regions counts once.
     if (limits.hostedMonitoredEndpoints !== Infinity) {
-      const memberIds =
-        await this.billingService.getResourceCountUserIds(userId);
       const hostedEndpointCount = await this.endpointRepo
         .createQueryBuilder('e')
         .innerJoin('endpoint_hosted_region', 'ehr', 'ehr."endpointId" = e.id')
@@ -331,22 +337,26 @@ export class EndpointsService {
       }
     }
 
-    // Check total hosted regions across all endpoints
+    // Check distinct hosted regions in use across the account's endpoints.
+    // A region already used by another endpoint doesn't count again.
     if (limits.hostedProbeRegions !== Infinity) {
-      const memberIds =
-        await this.billingService.getResourceCountUserIds(userId);
-      const regionCount = await this.hostedRegionRepo
+      const rows = await this.hostedRegionRepo
         .createQueryBuilder('ehr')
+        .select('DISTINCT ehr.region', 'region')
         .innerJoin('endpoint', 'e', 'e.id = ehr."endpointId"')
         .where('e."userId" IN (:...memberIds)', { memberIds })
-        .getCount();
-      if (regionCount >= limits.hostedProbeRegions) {
+        .getRawMany<{ region: string }>();
+      const regionsInUse = new Set(rows.map((r) => r.region));
+      if (
+        !regionsInUse.has(region) &&
+        regionsInUse.size >= limits.hostedProbeRegions
+      ) {
         throw new HttpException(
           {
             message: 'Hosted region limit reached',
             code: 'plan_limit_exceeded',
             limit: limits.hostedProbeRegions,
-            current: regionCount,
+            current: regionsInUse.size,
             plan,
           },
           403,

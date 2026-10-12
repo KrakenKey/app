@@ -18,6 +18,7 @@ import {
 } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
 import { BillingService } from './billing.service';
+import { graceEndsAt } from './entitlement';
 import { CreateCheckoutDto } from './dto/create-checkout.dto';
 import { UpgradePlanDto } from './dto/upgrade-plan.dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-or-api-key.guard';
@@ -40,6 +41,11 @@ export class BillingController {
   @ApiResponse({ status: 201, description: 'Checkout session created' })
   @ApiResponse({ status: 400, description: 'Plan not available' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({
+    status: 409,
+    description:
+      'A paid subscription already exists (use upgrade or the billing portal), or a checkout was just started',
+  })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
   async checkout(
     @Request() req: RequestWithUser,
@@ -70,6 +76,8 @@ export class BillingController {
         currentPeriodEnd: null,
         cancelAtPeriodEnd: false,
         organizationId: null,
+        pastDueSince: null,
+        graceEndsAt: null,
       };
     }
     return {
@@ -79,6 +87,8 @@ export class BillingController {
       currentPeriodEnd: sub.currentPeriodEnd,
       cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
       organizationId: sub.organizationId ?? null,
+      pastDueSince: sub.pastDueSince ?? null,
+      graceEndsAt: graceEndsAt(sub),
       createdAt: sub.createdAt,
     };
   }

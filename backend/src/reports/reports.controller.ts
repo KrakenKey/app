@@ -24,6 +24,8 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-or-api-key.guard';
+import { RoleGuard } from '../auth/guards/role.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { RequireScope } from '../auth/decorators/require-scope.decorator';
 import type { RequestWithUser } from '../auth/interfaces/request-with-user.interface';
 import { RateLimitCategoryDecorator } from '../throttler/decorators/rate-limit-category.decorator';
@@ -63,7 +65,7 @@ export function sendCsv(res: Response, file: CsvExport): void {
 @Controller('reports')
 @ApiTags('Reports')
 @ApiBearerAuth()
-@UseGuards(JwtOrApiKeyGuard)
+@UseGuards(JwtOrApiKeyGuard, RoleGuard)
 export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
 
@@ -76,7 +78,11 @@ export class ReportsController {
   })
   @ApiResponse({ status: 201, description: 'Report created (pending)' })
   @ApiResponse({ status: 400, description: 'Invalid or private host' })
-  @ApiResponse({ status: 403, description: 'Plan limit exceeded' })
+  @ApiResponse({
+    status: 403,
+    description: 'Plan limit exceeded, or viewers cannot create reports',
+  })
+  @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.EXPENSIVE)
   create(@Request() req: RequestWithUser, @Body() dto: CreateReportDto) {
     assertUnrestrictedKey(req);
@@ -134,6 +140,8 @@ export class ReportsController {
   @ApiParam({ name: 'id', description: 'Report UUID' })
   @ApiResponse({ status: 204, description: 'Deleted' })
   @ApiResponse({ status: 404, description: 'Report not found' })
+  @ApiResponse({ status: 403, description: 'Viewers cannot change reports' })
+  @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
   async remove(
     @Request() req: RequestWithUser,
@@ -153,6 +161,8 @@ export class ReportsController {
   @ApiParam({ name: 'id', description: 'Report UUID' })
   @ApiResponse({ status: 201, description: '{ url, token, expiresAt }' })
   @ApiResponse({ status: 404, description: 'Report not found' })
+  @ApiResponse({ status: 403, description: 'Viewers cannot change reports' })
+  @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
   share(
     @Request() req: RequestWithUser,
@@ -169,6 +179,8 @@ export class ReportsController {
   @ApiParam({ name: 'id', description: 'Report UUID' })
   @ApiResponse({ status: 204, description: 'Revoked' })
   @ApiResponse({ status: 404, description: 'Report not found' })
+  @ApiResponse({ status: 403, description: 'Viewers cannot change reports' })
+  @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
   async revokeShare(
     @Request() req: RequestWithUser,

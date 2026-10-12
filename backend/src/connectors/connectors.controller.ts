@@ -30,6 +30,8 @@ import type {
   CreateConnectorResponse,
 } from '@krakenkey/shared';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-or-api-key.guard';
+import { RoleGuard } from '../auth/guards/role.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { SessionOnly } from '../auth/decorators/session-only.decorator';
 import { RequireScope } from '../auth/decorators/require-scope.decorator';
 import type { RequestWithUser } from '../auth/interfaces/request-with-user.interface';
@@ -168,7 +170,8 @@ export class ConnectorsController {
 
   @Post()
   @SessionOnly()
-  @UseGuards(JwtOrApiKeyGuard)
+  @UseGuards(JwtOrApiKeyGuard, RoleGuard)
+  @Roles('owner', 'admin', 'member')
   @ApiBearerAuth()
   @ApiOperation({
     summary:
@@ -179,6 +182,7 @@ export class ConnectorsController {
     description: 'Connector created; the enrollment token is shown once',
   })
   @ApiResponse({ status: 402, description: 'Connector limit reached' })
+  @ApiResponse({ status: 403, description: 'Viewers cannot add connectors' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
   create(
     @Req() req: RequestWithUser,
@@ -189,7 +193,8 @@ export class ConnectorsController {
 
   @Post(':id/enrollment-token')
   @SessionOnly()
-  @UseGuards(JwtOrApiKeyGuard)
+  @UseGuards(JwtOrApiKeyGuard, RoleGuard)
+  @Roles('owner', 'admin', 'member')
   @ApiBearerAuth()
   @ApiOperation({
     summary:
@@ -200,6 +205,7 @@ export class ConnectorsController {
     description: 'New token; any previous token stops working',
   })
   @ApiResponse({ status: 409, description: 'Already enrolled or revoked' })
+  @ApiResponse({ status: 403, description: 'Viewers cannot add connectors' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
   reissueToken(
     @Req() req: RequestWithUser,
@@ -210,12 +216,14 @@ export class ConnectorsController {
 
   @Patch(':id')
   @SessionOnly()
-  @UseGuards(JwtOrApiKeyGuard)
+  @UseGuards(JwtOrApiKeyGuard, RoleGuard)
+  @Roles('owner', 'admin', 'member')
   @ApiBearerAuth()
   @ApiOperation({
     summary:
       'Rename a connector or change its client label (dashboard session only)',
   })
+  @ApiResponse({ status: 403, description: 'Viewers cannot change connectors' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
   update(
     @Req() req: RequestWithUser,
@@ -225,6 +233,8 @@ export class ConnectorsController {
     return this.connectors.update(req.user.userId, id, dto);
   }
 
+  // No @Roles(): like deleting an API key, revoking only shuts off the
+  // caller's own credentials, so a user moved to viewer can still do it.
   @Delete(':id')
   @SessionOnly()
   @UseGuards(JwtOrApiKeyGuard)

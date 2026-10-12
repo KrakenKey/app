@@ -7,6 +7,7 @@ import type {
   ApiKeyExpiredUseContext,
   DeployFailedContext,
   ConnectorStaleContext,
+  PaymentFailedContext,
 } from '../email.service';
 
 export interface EmailContent {
@@ -249,6 +250,8 @@ const CONNECTOR_REASON =
   'You received this because connector notifications are on for your KrakenKey account.';
 const SECURITY_REASON =
   'This is a security notice about your KrakenKey account and is always sent.';
+const BILLING_REASON =
+  'This is a billing notice about your KrakenKey account and is always sent.';
 
 function certRows(ctx: CertEmailContext, expiryLabel = 'Valid until') {
   return details(
@@ -591,6 +594,40 @@ export function apiKeyExpiredUseTemplate(
         button('Manage API keys', `${brand.appUrl}/dashboard/api-keys`),
       ],
       reason: SECURITY_REASON,
+    },
+    brand,
+  );
+}
+
+export function paymentFailedTemplate(
+  ctx: PaymentFailedContext,
+  brand: EmailBranding,
+): EmailContent {
+  const plan = ctx.plan.charAt(0).toUpperCase() + ctx.plan.slice(1);
+  const until = formatDate(ctx.graceEndsAt);
+  const subject = ctx.organizationName
+    ? `the ${ctx.organizationName} organization's ${plan} subscription`
+    : `your ${plan} subscription`;
+  return render(
+    {
+      tone: 'danger',
+      label: 'Payment failed',
+      title: 'Your last payment failed',
+      preheader: `Update your payment method by ${until} to keep your ${plan} limits.`,
+      blocks: [
+        para(
+          `Hi ${ctx.username}, we couldn't charge your payment method for ${subject}. We'll retry the payment over the next few days.`,
+        ),
+        para(
+          `Your ${plan} limits, including the renewal window for your certificates, stay in place until ${until}. If the payment still hasn't gone through by then, your account moves to the Free plan limits.`,
+        ),
+        details(['Plan', plan], ['Paid limits end', until]),
+        button('Update payment method', `${brand.appUrl}/dashboard/billing`),
+        para(
+          `If you've already updated your payment method, you can ignore this email. Questions? Write to ${SUPPORT_EMAIL}.`,
+        ),
+      ],
+      reason: BILLING_REASON,
     },
     brand,
   );
