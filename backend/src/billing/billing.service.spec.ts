@@ -8,6 +8,7 @@ import { Subscription } from './entities/subscription.entity';
 import { User } from '../users/entities/user.entity';
 import { Organization } from '../organizations/entities/organization.entity';
 import { UnrecoverableError } from 'bullmq';
+import { EmailService } from '../notifications/email.service';
 
 // Mock Stripe
 const mockStripe = {
@@ -27,6 +28,9 @@ jest.mock('stripe', () => {
 describe('BillingService', () => {
   let service: BillingService;
   let mockRepository: Record<string, jest.Mock>;
+  let mockUserRepo: Record<string, jest.Mock>;
+  let mockOrgRepo: Record<string, any>;
+  let mockEmailService: { sendPaymentFailed: jest.Mock };
 
   const userId = 'user-123';
   const mockSubscription: Partial<Subscription> = {
@@ -49,14 +53,16 @@ describe('BillingService', () => {
       create: jest.fn(),
       save: jest.fn(),
       upsert: jest.fn(),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
     };
+    mockEmailService = { sendPaymentFailed: jest.fn() };
 
-    const mockUserRepo = {
+    mockUserRepo = {
       findOne: jest
         .fn()
         .mockResolvedValue({ id: userId, organizationId: null }),
     };
-    const mockOrgRepo = {
+    mockOrgRepo = {
       findOne: jest.fn(),
       update: jest.fn(),
       manager: {
@@ -91,6 +97,7 @@ describe('BillingService', () => {
           provide: getQueueToken('orgDissolution'),
           useValue: mockDissolutionQueue,
         },
+        { provide: EmailService, useValue: mockEmailService },
         {
           provide: ConfigService,
           useValue: {
@@ -127,6 +134,7 @@ describe('BillingService', () => {
           {} as any,
           {} as any,
           { get: jest.fn(() => '') } as any,
+          {} as any,
         ),
     ).not.toThrow();
   });
@@ -151,6 +159,64 @@ describe('BillingService', () => {
       });
       const tier = await service.resolveUserTier(userId);
       expect(tier).toBe('free');
+    });
+
+    const daysAgo = (n: number) =>
+      new Date(Date.now() - n * 24 * 60 * 60 * 1000);
+
+    it('keeps the paid plan while past_due inside the grace period', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        status: 'past_due',
+        pastDueSince: daysAgo(13),
+      });
+      expect(await service.resolveUserTier(userId)).toBe('starter');
+    });
+
+    it('drops to free once the grace period has passed', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        status: 'past_due',
+        pastDueSince: daysAgo(15),
+      });
+      expect(await service.resolveUserTier(userId)).toBe('free');
+    });
+
+    it('gives no grace to a past_due row without pastDueSince', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        status: 'past_due',
+        pastDueSince: null,
+      });
+      expect(await service.resolveUserTier(userId)).toBe('free');
+    });
+
+    it('returns free when the subscription is unpaid', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        status: 'unpaid',
+        pastDueSince: daysAgo(1),
+      });
+      expect(await service.resolveUserTier(userId)).toBe('free');
+    });
+
+    it('applies the grace period to an org subscription', async () => {
+      mockUserRepo.findOne.mockResolvedValueOnce({
+        id: userId,
+        organizationId: 'org-1',
+      });
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        userId: null,
+        organizationId: 'org-1',
+        plan: 'team',
+        status: 'past_due',
+        pastDueSince: daysAgo(2),
+      });
+      expect(await service.resolveUserTier(userId)).toBe('team');
+      expect(mockRepository.findOne).toHaveBeenCalledWith({
+        where: { organizationId: 'org-1' },
+      });
     });
   });
 
@@ -326,23 +392,6 @@ describe('BillingService', () => {
       );
     });
 
-    it('handles invoice.payment_failed', async () => {
-      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
-
-      await service.handleWebhookEvent({
-        type: 'invoice.payment_failed',
-        data: {
-          object: { customer: 'cus_test123' },
-        },
-      } as any);
-
-      expect(mockRepository.save).toHaveBeenCalledWith(
-        expect.objectContaining({
-          status: 'past_due',
-        }),
-      );
-    });
-
     it('syncs plan from price ID on subscription.updated', async () => {
       mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
 
@@ -369,6 +418,298 @@ describe('BillingService', () => {
       expect(mockRepository.save).toHaveBeenCalledWith(
         expect.objectContaining({
           plan: 'team',
+        }),
+      );
+    });
+  });
+
+  describe('failed payments', () => {
+    const invoice = (subscription = 'sub_test123') => ({
+      customer: 'cus_test123',
+      parent: { subscription_details: { subscription } },
+    });
+    const event = (type: string, object: unknown) =>
+      ({ type, data: { object } }) as any;
+
+    beforeEach(() => {
+      mockUserRepo.findOne.mockResolvedValue({
+        id: userId,
+        email: 'owner@example.com',
+        username: 'owner',
+      });
+    });
+
+    it('marks the subscription past_due and starts the grace period once', async () => {
+      const sub = { ...mockSubscription, pastDueSince: null };
+      mockRepository.findOne.mockResolvedValue(sub);
+
+      const before = Date.now();
+      await service.handleWebhookEvent(
+        event('invoice.payment_failed', invoice()),
+      );
+
+      expect(mockRepository.findOne).toHaveBeenCalledWith({
+        where: { stripeSubscriptionId: 'sub_test123' },
+      });
+      expect(mockRepository.update).toHaveBeenCalledWith(
+        { id: 'sub-uuid-1', pastDueSince: expect.anything() },
+        { pastDueSince: expect.any(Date) },
+      );
+      const saved = mockRepository.save.mock.calls[0][0];
+      expect(saved.status).toBe('past_due');
+      expect(saved.pastDueSince.getTime()).toBeGreaterThanOrEqual(before);
+
+      expect(mockEmailService.sendPaymentFailed).toHaveBeenCalledTimes(1);
+      const ctx = mockEmailService.sendPaymentFailed.mock.calls[0][0];
+      expect(ctx).toMatchObject({
+        userId,
+        email: 'owner@example.com',
+        username: 'owner',
+        plan: 'starter',
+      });
+      expect(ctx.graceEndsAt.getTime() - saved.pastDueSince.getTime()).toBe(
+        14 * 24 * 60 * 60 * 1000,
+      );
+    });
+
+    it('does not move pastDueSince or email again on later failures', async () => {
+      const first = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        status: 'past_due',
+        pastDueSince: first,
+      });
+
+      await service.handleWebhookEvent(
+        event('invoice.payment_failed', invoice()),
+      );
+
+      expect(mockRepository.update).not.toHaveBeenCalled();
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'past_due', pastDueSince: first }),
+      );
+      expect(mockEmailService.sendPaymentFailed).not.toHaveBeenCalled();
+    });
+
+    it('sends one email when subscription.updated wins the race', async () => {
+      // Both webhooks loaded the row before either stamped it; the
+      // conditional update only succeeds for one of them.
+      const stamped = new Date();
+      mockRepository.findOne
+        .mockResolvedValueOnce({ ...mockSubscription, pastDueSince: null })
+        .mockResolvedValueOnce({ ...mockSubscription, pastDueSince: stamped });
+      mockRepository.update.mockResolvedValueOnce({ affected: 0 });
+
+      await service.handleWebhookEvent(
+        event('invoice.payment_failed', invoice()),
+      );
+
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ pastDueSince: stamped }),
+      );
+      expect(mockEmailService.sendPaymentFailed).not.toHaveBeenCalled();
+    });
+
+    it('starts the grace period from subscription.updated too', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        pastDueSince: null,
+      });
+
+      await service.handleWebhookEvent(
+        event('customer.subscription.updated', {
+          id: 'sub_test123',
+          status: 'past_due',
+          cancel_at_period_end: false,
+          cancel_at: null,
+        }),
+      );
+
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'past_due',
+          pastDueSince: expect.any(Date),
+        }),
+      );
+      expect(mockEmailService.sendPaymentFailed).toHaveBeenCalledTimes(1);
+    });
+
+    it('emails the org owner for an org subscription', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        userId: null,
+        organizationId: 'org-1',
+        plan: 'team',
+        pastDueSince: null,
+      });
+      mockOrgRepo.findOne.mockResolvedValue({
+        id: 'org-1',
+        name: 'Acme',
+        ownerId: 'owner-1',
+      });
+      mockUserRepo.findOne.mockResolvedValue({
+        id: 'owner-1',
+        email: 'boss@example.com',
+        username: 'boss',
+      });
+
+      await service.handleWebhookEvent(
+        event('invoice.payment_failed', invoice()),
+      );
+
+      expect(mockUserRepo.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'owner-1' } }),
+      );
+      expect(mockEmailService.sendPaymentFailed).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'owner-1',
+          email: 'boss@example.com',
+          plan: 'team',
+          organizationName: 'Acme',
+        }),
+      );
+    });
+
+    it('reads the subscription from older invoice payloads', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        pastDueSince: null,
+      });
+
+      await service.handleWebhookEvent(
+        event('invoice.payment_failed', {
+          customer: 'cus_test123',
+          subscription: 'sub_test123',
+        }),
+      );
+
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'past_due' }),
+      );
+    });
+
+    it('ignores failed one-off invoices', async () => {
+      await service.handleWebhookEvent(
+        event('invoice.payment_failed', { customer: 'cus_test123' }),
+      );
+
+      expect(mockRepository.findOne).not.toHaveBeenCalled();
+      expect(mockRepository.save).not.toHaveBeenCalled();
+      expect(mockEmailService.sendPaymentFailed).not.toHaveBeenCalled();
+    });
+
+    it('does not reopen the grace period for an unpaid subscription', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        status: 'unpaid',
+        pastDueSince: null,
+      });
+
+      await service.handleWebhookEvent(
+        event('invoice.payment_failed', invoice()),
+      );
+
+      expect(mockRepository.save).not.toHaveBeenCalled();
+      expect(mockEmailService.sendPaymentFailed).not.toHaveBeenCalled();
+    });
+
+    it('keeps the webhook working when the email fails', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        pastDueSince: null,
+      });
+      mockEmailService.sendPaymentFailed.mockRejectedValueOnce(
+        new Error('smtp down'),
+      );
+
+      await expect(
+        service.handleWebhookEvent(event('invoice.payment_failed', invoice())),
+      ).resolves.toBeUndefined();
+    });
+
+    it('clears the grace period when the invoice is paid', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        status: 'past_due',
+        pastDueSince: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
+      });
+
+      await service.handleWebhookEvent(event('invoice.paid', invoice()));
+
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'active', pastDueSince: null }),
+      );
+    });
+
+    it('leaves an active subscription alone on invoice.paid', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+
+      await service.handleWebhookEvent(event('invoice.paid', invoice()));
+
+      expect(mockRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('clears the grace period when the subscription is active again', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        status: 'past_due',
+        pastDueSince: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
+      });
+
+      await service.handleWebhookEvent(
+        event('customer.subscription.updated', {
+          id: 'sub_test123',
+          status: 'active',
+          cancel_at_period_end: false,
+          cancel_at: null,
+        }),
+      );
+
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'active', pastDueSince: null }),
+      );
+    });
+
+    it('keeps pastDueSince when the subscription becomes unpaid', async () => {
+      const first = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        status: 'past_due',
+        pastDueSince: first,
+      });
+
+      await service.handleWebhookEvent(
+        event('customer.subscription.updated', {
+          id: 'sub_test123',
+          status: 'unpaid',
+          cancel_at_period_end: false,
+          cancel_at: null,
+        }),
+      );
+
+      const saved = mockRepository.save.mock.calls[0][0];
+      expect(saved).toMatchObject({ status: 'unpaid', pastDueSince: first });
+      // The row the webhook saved now resolves to Free.
+      mockRepository.findOne.mockResolvedValue(saved);
+      expect(await service.resolveUserTier(userId)).toBe('free');
+    });
+
+    it('downgrades and clears the grace period when Stripe deletes the subscription', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        status: 'past_due',
+        pastDueSince: new Date(),
+      });
+
+      await service.handleWebhookEvent(
+        event('customer.subscription.deleted', { id: 'sub_test123' }),
+      );
+
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          plan: 'free',
+          status: 'canceled',
+          pastDueSince: null,
         }),
       );
     });

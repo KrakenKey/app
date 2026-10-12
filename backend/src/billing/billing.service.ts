@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager, IsNull, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue, UnrecoverableError } from 'bullmq';
@@ -18,6 +18,8 @@ import { Domain } from '../domains/entities/domain.entity';
 import { TlsCrt } from '../certs/tls/entities/tls-crt.entity';
 import { UserApiKey } from '../auth/entities/user-api-key.entity';
 import type { OrgDissolutionJobPayload } from './processors/org-dissolution.processor';
+import { EmailService } from '../notifications/email.service';
+import { effectivePlan, graceEndsAt } from './entitlement';
 
 const PLAN_ORDER: Record<string, number> = {
   free: 0,
@@ -30,6 +32,20 @@ const PLAN_ORDER: Record<string, number> = {
 const ORG_ELIGIBLE_PLANS = new Set(['team', 'business', 'enterprise']);
 
 const ENDED_STRIPE_STATUSES = new Set(['canceled', 'incomplete_expired']);
+
+/**
+ * The Stripe subscription an invoice belongs to, or null for one-off
+ * invoices. Newer API versions nest it under parent.subscription_details;
+ * older webhook payloads have it at the top level.
+ */
+function invoiceSubscriptionId(invoice: Stripe.Invoice): string | null {
+  const ref =
+    invoice.parent?.subscription_details?.subscription ??
+    (invoice as unknown as { subscription?: string | { id: string } | null })
+      .subscription;
+  if (!ref) return null;
+  return typeof ref === 'string' ? ref : ref.id;
+}
 
 /** True when the subscription is backed by a Stripe subscription that has not ended. */
 function isBillingInStripe(sub: Subscription): boolean {
@@ -54,6 +70,7 @@ export class BillingService {
     @InjectQueue('orgDissolution')
     private readonly dissolutionQueue: Queue<OrgDissolutionJobPayload>,
     private readonly configService: ConfigService,
+    private readonly emailService: EmailService,
   ) {
     // Stripe's constructor throws on an empty key, which would prevent the
     // whole app from booting (certs, auth, everything) just because billing
@@ -96,25 +113,13 @@ export class BillingService {
   // Tier Resolution (org-aware)
   // ---------------------------------------------------------------------------
 
+  /**
+   * The plan whose limits apply to the user: their org's plan or their own.
+   * A past_due subscription keeps its plan during the grace period (see
+   * entitlement.ts); anything else that isn't active counts as Free.
+   */
   async resolveUserTier(userId: string): Promise<string> {
-    const user = await this.userRepository.findOne({
-      where: { id: userId },
-      select: { id: true, organizationId: true },
-    });
-
-    if (user?.organizationId) {
-      const sub = await this.subscriptionRepository.findOne({
-        where: { organizationId: user.organizationId },
-      });
-      if (sub && sub.status === 'active') return sub.plan;
-      return 'free';
-    }
-
-    const sub = await this.subscriptionRepository.findOne({
-      where: { userId },
-    });
-    if (!sub || sub.status !== 'active') return 'free';
-    return sub.plan;
+    return effectivePlan(await this.getSubscription(userId));
   }
 
   async getSubscription(userId: string): Promise<Subscription | null> {
@@ -580,6 +585,7 @@ export class BillingService {
           sub.stripeSubscriptionId = null;
           sub.currentPeriodEnd = null;
           sub.cancelAtPeriodEnd = false;
+          sub.pastDueSince = null;
         }
 
         await manager.save(Subscription, sub);
@@ -628,6 +634,9 @@ export class BillingService {
           event.data.object as Stripe.Invoice,
         );
         break;
+      case 'invoice.paid':
+        await this.handleInvoicePaid(event.data.object as Stripe.Invoice);
+        break;
       default:
         this.logger.debug(`Unhandled Stripe event: ${event.type}`);
     }
@@ -668,6 +677,7 @@ export class BillingService {
       stripeSubscriptionId,
       plan,
       status: 'active' as const,
+      pastDueSince: null,
       currentPeriodEnd: new Date(this.extractPeriodEnd(stripeSub) * 1000),
       cancelAtPeriodEnd:
         stripeSub.cancel_at_period_end || stripeSub.cancel_at !== null,
@@ -710,6 +720,14 @@ export class BillingService {
     const previousPlan = sub.plan;
 
     sub.status = stripeSub.status === 'active' ? 'active' : stripeSub.status;
+    // Stripe may send this before or after invoice.payment_failed, so
+    // whichever arrives first starts the grace period.
+    let graceStarted = false;
+    if (sub.status === 'past_due') {
+      graceStarted = await this.startGracePeriod(sub);
+    } else if (sub.status === 'active') {
+      sub.pastDueSince = null;
+    }
     sub.currentPeriodEnd = new Date(this.extractPeriodEnd(stripeSub) * 1000);
     // Stripe portal may use cancel_at (timestamp) instead of cancel_at_period_end (boolean)
     sub.cancelAtPeriodEnd =
@@ -728,6 +746,7 @@ export class BillingService {
     this.logger.log(
       `Subscription updated: ${ownerLabel} plan=${sub.plan} status=${sub.status}`,
     );
+    if (graceStarted) await this.notifyPaymentFailed(sub);
 
     // Detect downgrade below team for org subscriptions
     if (
@@ -762,33 +781,134 @@ export class BillingService {
     sub.stripeSubscriptionId = null;
     sub.currentPeriodEnd = null;
     sub.cancelAtPeriodEnd = false;
+    sub.pastDueSince = null;
 
     await this.subscriptionRepository.save(sub);
     this.logger.log(`Subscription canceled: user=${sub.userId}`);
   }
 
+  /** Our subscription row for an invoice, or null for one-off invoices. */
+  private async findInvoiceSubscription(
+    invoice: Stripe.Invoice,
+  ): Promise<Subscription | null> {
+    const stripeSubscriptionId = invoiceSubscriptionId(invoice);
+    if (!stripeSubscriptionId) return null;
+    return this.subscriptionRepository.findOne({
+      where: { stripeSubscriptionId },
+    });
+  }
+
   private async handleInvoicePaymentFailed(
     invoice: Stripe.Invoice,
   ): Promise<void> {
-    const customerId =
-      typeof invoice.customer === 'string'
-        ? invoice.customer
-        : invoice.customer?.id;
-
-    if (!customerId) return;
-
-    const sub = await this.subscriptionRepository.findOne({
-      where: { stripeCustomerId: customerId },
-    });
+    const sub = await this.findInvoiceSubscription(invoice);
     if (!sub) return;
 
+    const ownerLabel = sub.organizationId
+      ? `org=${sub.organizationId}`
+      : `user=${sub.userId}`;
+
+    // Stripe stops retrying once it marks a subscription unpaid; a later
+    // failure must not reopen the grace period.
+    if (sub.status !== 'active' && sub.status !== 'past_due') {
+      this.logger.warn(
+        `Payment failed: ${ownerLabel} status=${sub.status}, not starting a grace period`,
+      );
+      return;
+    }
+
     sub.status = 'past_due';
+    const graceStarted = await this.startGracePeriod(sub);
+    await this.subscriptionRepository.save(sub);
+
+    this.logger.warn(
+      `Payment failed: ${ownerLabel} pastDueSince=${sub.pastDueSince?.toISOString()}`,
+    );
+    if (graceStarted) await this.notifyPaymentFailed(sub);
+  }
+
+  private async handleInvoicePaid(invoice: Stripe.Invoice): Promise<void> {
+    const sub = await this.findInvoiceSubscription(invoice);
+    if (!sub) return;
+    if (sub.status !== 'past_due' && sub.status !== 'unpaid') return;
+
+    sub.status = 'active';
+    sub.pastDueSince = null;
     await this.subscriptionRepository.save(sub);
 
     const ownerLabel = sub.organizationId
       ? `org=${sub.organizationId}`
       : `user=${sub.userId}`;
-    this.logger.warn(`Payment failed: ${ownerLabel}`);
+    this.logger.log(`Payment recovered: ${ownerLabel}`);
+  }
+
+  /**
+   * Records the first failed payment of a past_due run. Later failures
+   * don't move it. Returns true only for the call that set it, so the
+   * payment-failed email goes out once even when Stripe delivers
+   * invoice.payment_failed and customer.subscription.updated together.
+   */
+  private async startGracePeriod(sub: Subscription): Promise<boolean> {
+    if (sub.pastDueSince) return false;
+
+    const now = new Date();
+    const result = await this.subscriptionRepository.update(
+      { id: sub.id, pastDueSince: IsNull() },
+      { pastDueSince: now },
+    );
+    if (result.affected) {
+      sub.pastDueSince = now;
+      return true;
+    }
+
+    // Another webhook got there first; keep its timestamp.
+    const current = await this.subscriptionRepository.findOne({
+      where: { id: sub.id },
+    });
+    sub.pastDueSince = current?.pastDueSince ?? now;
+    return false;
+  }
+
+  /**
+   * Emails the account owner (or the org owner, for an org subscription)
+   * that the payment failed and when the paid limits end.
+   */
+  private async notifyPaymentFailed(sub: Subscription): Promise<void> {
+    const endsAt = graceEndsAt(sub);
+    if (!endsAt || sub.plan === 'free') return;
+
+    try {
+      let recipientId = sub.userId;
+      let organizationName: string | undefined;
+      if (sub.organizationId) {
+        const org = await this.orgRepository.findOne({
+          where: { id: sub.organizationId },
+        });
+        recipientId = org?.ownerId ?? null;
+        organizationName = org?.name;
+      }
+      if (!recipientId) return;
+
+      const owner = await this.userRepository.findOne({
+        where: { id: recipientId },
+        select: { id: true, email: true, username: true },
+      });
+      if (!owner?.email) return;
+
+      await this.emailService.sendPaymentFailed({
+        userId: owner.id,
+        username: owner.username,
+        email: owner.email,
+        plan: sub.plan,
+        graceEndsAt: endsAt,
+        organizationName,
+      });
+    } catch (err) {
+      this.logger.error(
+        `Failed to send payment failed email: sub=${sub.id}`,
+        err instanceof Error ? err.stack : err,
+      );
+    }
   }
 
   /**

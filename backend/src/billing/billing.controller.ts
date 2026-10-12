@@ -18,6 +18,7 @@ import {
 } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
 import { BillingService } from './billing.service';
+import { graceEndsAt } from './entitlement';
 import { CreateCheckoutDto } from './dto/create-checkout.dto';
 import { UpgradePlanDto } from './dto/upgrade-plan.dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-or-api-key.guard';
@@ -70,6 +71,8 @@ export class BillingController {
         currentPeriodEnd: null,
         cancelAtPeriodEnd: false,
         organizationId: null,
+        pastDueSince: null,
+        graceEndsAt: null,
       };
     }
     return {
@@ -79,6 +82,8 @@ export class BillingController {
       currentPeriodEnd: sub.currentPeriodEnd,
       cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
       organizationId: sub.organizationId ?? null,
+      pastDueSince: sub.pastDueSince ?? null,
+      graceEndsAt: graceEndsAt(sub),
       createdAt: sub.createdAt,
     };
   }

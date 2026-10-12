@@ -6,9 +6,11 @@ import { ProbeScanResult } from '../entities/probe-scan-result.entity';
 describe('ScanResultCleanupService', () => {
   let service: ScanResultCleanupService;
   let mockExecute: jest.Mock;
+  let mockWhere: jest.Mock;
 
   beforeEach(async () => {
     mockExecute = jest.fn().mockResolvedValue({ affected: 0 });
+    mockWhere = jest.fn().mockReturnValue({ execute: mockExecute });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -18,9 +20,7 @@ describe('ScanResultCleanupService', () => {
           useValue: {
             createQueryBuilder: jest.fn().mockReturnValue({
               delete: jest.fn().mockReturnValue({
-                where: jest.fn().mockReturnValue({
-                  execute: mockExecute,
-                }),
+                where: mockWhere,
               }),
             }),
           },
@@ -49,5 +49,29 @@ describe('ScanResultCleanupService', () => {
 
     // At least 2 calls for orphaned cleanup + calls for tier cleanup
     expect(mockExecute.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('keeps plan retention for past_due subscriptions in the grace period', async () => {
+    const before = Date.now();
+    await service.cleanupExpiredResults();
+
+    const tierCall = mockWhere.mock.calls.find(
+      ([, params]) => params?.tier === 'starter',
+    );
+    expect(tierCall).toBeDefined();
+    const [sql, params] = tierCall!;
+    expect(sql).toContain(
+      `s_personal.status = 'past_due' AND s_personal."pastDueSince" > :graceCutoff`,
+    );
+    expect(sql).toContain(
+      `s_org.status = 'past_due' AND s_org."pastDueSince" > :graceCutoff`,
+    );
+    const fourteenDays = 14 * 24 * 60 * 60 * 1000;
+    expect(params.graceCutoff.getTime()).toBeGreaterThanOrEqual(
+      before - fourteenDays,
+    );
+    expect(params.graceCutoff.getTime()).toBeLessThanOrEqual(
+      Date.now() - fourteenDays,
+    );
   });
 });

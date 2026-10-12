@@ -230,6 +230,24 @@ describe('OrganizationsService', () => {
         service.inviteMember(orgId, ownerId, 'paid@example.com', 'member'),
       ).rejects.toThrow(ConflictException);
     });
+
+    it('should throw if target is past_due within the grace period', async () => {
+      mockUserRepo.findOne.mockResolvedValueOnce({
+        id: 'target',
+        organizationId: null,
+        role: null,
+      });
+      mockBillingService.getSubscription.mockResolvedValue({
+        plan: 'starter',
+        status: 'past_due',
+        pastDueSince: new Date(),
+        cancelAtPeriodEnd: false,
+      });
+
+      await expect(
+        service.inviteMember(orgId, ownerId, 'paid@example.com', 'member'),
+      ).rejects.toThrow(ConflictException);
+    });
   });
 
   describe('removeMember', () => {

@@ -1,8 +1,14 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import Billing from '../Billing';
 
-const { mockFetchSubscription, authState, healthState } = vi.hoisted(() => ({
+const {
+  mockFetchSubscription,
+  mockCreatePortalSession,
+  authState,
+  healthState,
+} = vi.hoisted(() => ({
   mockFetchSubscription: vi.fn(),
+  mockCreatePortalSession: vi.fn(),
   authState: {
     user: null as {
       organizationId: string | null;
@@ -28,7 +34,7 @@ vi.mock('../../hooks/useHealth', () => ({
 vi.mock('../../services/billingService', () => ({
   fetchSubscription: mockFetchSubscription,
   createCheckout: vi.fn(),
-  createPortalSession: vi.fn(),
+  createPortalSession: mockCreatePortalSession,
   previewUpgrade: vi.fn(),
   upgradeSubscription: vi.fn(),
 }));
@@ -224,6 +230,97 @@ describe('Billing', () => {
       expect(
         screen.queryByRole('button', { name: /upgrade to business/i }),
       ).not.toBeInTheDocument();
+    });
+  });
+
+  describe('failed payment', () => {
+    const pastDue = (graceEndsAt: string | null, plan = 'team') => ({
+      ...sub(plan),
+      status: 'past_due',
+      pastDueSince: '2026-10-05T12:00:00.000Z',
+      graceEndsAt,
+    });
+
+    beforeEach(() => {
+      vi.useFakeTimers({
+        now: new Date('2026-10-12T12:00:00Z'),
+        toFake: ['Date'],
+      });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('asks the owner to update the payment method before the grace period ends', async () => {
+      mockFetchSubscription.mockResolvedValue(
+        pastDue('2026-10-19T12:00:00.000Z'),
+      );
+      render(<Billing />);
+
+      const banner = await screen.findByRole('alert');
+      expect(banner).toHaveTextContent(
+        /Your last payment failed\. Update your payment method by October 19, 2026 to keep Team limits\./,
+      );
+      expect(
+        screen.getByRole('button', { name: /update payment method/i }),
+      ).toBeInTheDocument();
+    });
+
+    it('opens the Stripe portal from the banner', async () => {
+      mockFetchSubscription.mockResolvedValue(
+        pastDue('2026-10-19T12:00:00.000Z'),
+      );
+      mockCreatePortalSession.mockResolvedValue({
+        portalUrl: 'https://billing.stripe.com/p/session',
+      });
+      const location = { href: '' };
+      vi.stubGlobal('location', location);
+      render(<Billing />);
+
+      fireEvent.click(
+        await screen.findByRole('button', { name: /update payment method/i }),
+      );
+
+      await waitFor(() =>
+        expect(location.href).toBe('https://billing.stripe.com/p/session'),
+      );
+      expect(mockCreatePortalSession).toHaveBeenCalledTimes(1);
+      vi.unstubAllGlobals();
+    });
+
+    it('says the account is on Free limits once the grace period has passed', async () => {
+      mockFetchSubscription.mockResolvedValue(
+        pastDue('2026-10-10T12:00:00.000Z'),
+      );
+      render(<Billing />);
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        /your account is on Free limits/i,
+      );
+    });
+
+    it('points org members at the owner instead of the portal', async () => {
+      authState.user = { organizationId: 'org_001', role: 'member' };
+      mockFetchSubscription.mockResolvedValue(
+        pastDue('2026-10-19T12:00:00.000Z'),
+      );
+      render(<Billing />);
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        /ask your organization owner/i,
+      );
+      expect(
+        screen.queryByRole('button', { name: /update payment method/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('shows no banner while the subscription is active', async () => {
+      mockFetchSubscription.mockResolvedValue(sub('team'));
+      render(<Billing />);
+
+      await screen.findByRole('button', { name: /manage subscription/i });
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
   });
 });

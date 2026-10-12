@@ -195,11 +195,12 @@ Stripe subscription records linked to users or organizations.
 CREATE TABLE "subscription" (
   "id" UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   "plan" VARCHAR NOT NULL,                        -- starter/team/business/enterprise
-  "status" VARCHAR NOT NULL,                      -- active/past_due/canceled/incomplete/trialing
+  "status" VARCHAR NOT NULL,                      -- active/past_due/unpaid/canceled/incomplete/trialing
   "stripeCustomerId" VARCHAR,
   "stripeSubscriptionId" VARCHAR UNIQUE,
   "currentPeriodStart" TIMESTAMP,
   "currentPeriodEnd" TIMESTAMP,
+  "pastDueSince" TIMESTAMP,                       -- first failed payment while past_due; null otherwise
   "userId" TEXT REFERENCES "user"(id),
   "organizationId" UUID REFERENCES organization(id),
   "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

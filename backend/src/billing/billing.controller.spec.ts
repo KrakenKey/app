@@ -84,7 +84,41 @@ describe('BillingController', () => {
         currentPeriodEnd: null,
         cancelAtPeriodEnd: false,
         organizationId: null,
+        pastDueSince: null,
+        graceEndsAt: null,
       });
+    });
+
+    it('returns when the grace period ends for a past_due subscription', async () => {
+      const pastDueSince = new Date('2026-10-01T12:00:00Z');
+      mockBillingService.getSubscription.mockResolvedValue({
+        id: 'sub-1',
+        plan: 'team',
+        status: 'past_due',
+        pastDueSince,
+        currentPeriodEnd: new Date(),
+        cancelAtPeriodEnd: false,
+        createdAt: new Date(),
+      });
+
+      const result = await controller.getSubscription(mockReq);
+      expect(result.pastDueSince).toEqual(pastDueSince);
+      expect(result.graceEndsAt).toEqual(new Date('2026-10-15T12:00:00Z'));
+    });
+
+    it('returns no grace end once the subscription is active', async () => {
+      mockBillingService.getSubscription.mockResolvedValue({
+        id: 'sub-1',
+        plan: 'team',
+        status: 'active',
+        pastDueSince: null,
+        currentPeriodEnd: new Date(),
+        cancelAtPeriodEnd: false,
+        createdAt: new Date(),
+      });
+
+      const result = await controller.getSubscription(mockReq);
+      expect(result.graceEndsAt).toBeNull();
     });
   });
 

@@ -656,6 +656,8 @@ Valid plans: `starter`, `team`, `business`, `enterprise`
 
 Get the current user's (or organization's) subscription.
 
+While a payment has failed (`status: "past_due"`), `pastDueSince` is when the first payment failed and `graceEndsAt` is when the paid plan's limits stop applying unless the payment goes through (14 days later). Both are `null` otherwise.
+
 ### POST /billing/portal
 
 Create a Stripe Customer Portal session for managing payment methods, invoices, and cancellation.
