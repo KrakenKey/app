@@ -2,6 +2,7 @@ import {
   Injectable,
   Logger,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
@@ -30,6 +31,42 @@ const PLAN_ORDER: Record<string, number> = {
 const ORG_ELIGIBLE_PLANS = new Set(['team', 'business', 'enterprise']);
 
 const ENDED_STRIPE_STATUSES = new Set(['canceled', 'incomplete_expired']);
+
+/**
+ * Stripe statuses where the subscription still bills (or will bill) the
+ * customer. A second checkout on top of one of these creates a duplicate.
+ */
+const LIVE_STRIPE_STATUSES = new Set([
+  'active',
+  'past_due',
+  'trialing',
+  'unpaid',
+]);
+
+/** True when the row points at a Stripe subscription that is still live. */
+function hasLiveStripeSubscription(sub: Subscription | null): boolean {
+  return (
+    !!sub?.stripeSubscriptionId && LIVE_STRIPE_STATUSES.has(sub.status ?? '')
+  );
+}
+
+/**
+ * Window for the checkout idempotency key. Repeat requests for the same
+ * owner and plan inside one window get the same Stripe session back.
+ */
+const CHECKOUT_IDEMPOTENCY_WINDOW_MS = 60_000;
+
+/** Narrows an unknown error to a Stripe SDK error of the given type. */
+function isStripeError(
+  err: unknown,
+  type: string,
+): err is { type: string; code?: string } {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { type?: unknown }).type === type
+  );
+}
 
 /** True when the subscription is backed by a Stripe subscription that has not ended. */
 function isBillingInStripe(sub: Subscription): boolean {
@@ -197,6 +234,15 @@ export class BillingService {
       select: { id: true, organizationId: true },
     });
 
+    // getSubscription resolves the org's subscription for org members, so
+    // this covers both a personal plan and the org pool the owner pays for.
+    const existing = await this.getSubscription(userId);
+    if (hasLiveStripeSubscription(existing)) {
+      throw new ConflictException(
+        'You already have a paid subscription. Upgrade your plan from the billing page or manage it in the billing portal instead of starting a new checkout.',
+      );
+    }
+
     const sub = await this.getOrCreateCustomer(userId, email);
     const appDomain = this.configService.get<string>('KK_APP_DOMAIN');
 
@@ -207,14 +253,37 @@ export class BillingService {
       metadata.userId = userId;
     }
 
-    const session = await this.stripe.checkout.sessions.create({
-      customer: sub.stripeCustomerId,
-      mode: 'subscription',
-      line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `https://${appDomain}/dashboard/billing?success=true`,
-      cancel_url: `https://${appDomain}/dashboard/billing?canceled=true`,
-      metadata,
-    });
+    // Two quick clicks send the same key, so Stripe returns the first
+    // session instead of opening a second one.
+    const owner = user?.organizationId
+      ? `org-${user.organizationId}`
+      : `user-${userId}`;
+    const bucket = Math.floor(Date.now() / CHECKOUT_IDEMPOTENCY_WINDOW_MS);
+    const idempotencyKey = `checkout-${owner}-${plan}-${bucket}`;
+
+    let session: Stripe.Checkout.Session;
+    try {
+      session = await this.stripe.checkout.sessions.create(
+        {
+          customer: sub.stripeCustomerId,
+          mode: 'subscription',
+          line_items: [{ price: priceId, quantity: 1 }],
+          success_url: `https://${appDomain}/dashboard/billing?success=true`,
+          cancel_url: `https://${appDomain}/dashboard/billing?canceled=true`,
+          metadata,
+        },
+        { idempotencyKey },
+      );
+    } catch (err) {
+      // Same key with different parameters, or the first request is still
+      // in flight: both mean a checkout for this plan was just started.
+      if (isStripeError(err, 'StripeIdempotencyError')) {
+        throw new ConflictException(
+          'A checkout for this plan was just started. Wait a moment and try again.',
+        );
+      }
+      throw err;
+    }
 
     if (!session.url) {
       throw new BadRequestException('Failed to create checkout session');
@@ -655,6 +724,37 @@ export class BillingService {
       return;
     }
 
+    // Find existing sub or create a new one.
+    // We can't use TypeORM upsert here because userId/organizationId use
+    // partial unique indexes which aren't compatible with conflictPaths.
+    const where = organizationId ? { organizationId } : { userId: userId! };
+    const owner = organizationId ? `org=${organizationId}` : `user=${userId}`;
+
+    let sub = await this.subscriptionRepository.findOne({ where });
+
+    if (sub?.stripeSubscriptionId === stripeSubscriptionId) {
+      // Stripe redelivered an event we already applied. Applying it again
+      // could roll back a plan change made since, so do nothing.
+      this.logger.log(
+        `Checkout already applied: ${owner} subscription=${stripeSubscriptionId}`,
+      );
+      return;
+    }
+
+    if (
+      sub &&
+      hasLiveStripeSubscription(sub) &&
+      (await this.isStripeSubscriptionLive(sub.stripeSubscriptionId!))
+    ) {
+      await this.cancelDuplicateSubscription(
+        owner,
+        sub.stripeSubscriptionId!,
+        stripeSubscriptionId,
+        session.id,
+      );
+      return;
+    }
+
     const stripeSub: Stripe.Subscription =
       await this.stripe.subscriptions.retrieve(stripeSubscriptionId);
 
@@ -673,13 +773,6 @@ export class BillingService {
         stripeSub.cancel_at_period_end || stripeSub.cancel_at !== null,
     };
 
-    // Find existing sub or create a new one.
-    // We can't use TypeORM upsert here because userId/organizationId use
-    // partial unique indexes which aren't compatible with conflictPaths.
-    const where = organizationId ? { organizationId } : { userId: userId! };
-
-    let sub = await this.subscriptionRepository.findOne({ where });
-
     if (sub) {
       Object.assign(sub, shared);
     } else {
@@ -692,8 +785,59 @@ export class BillingService {
 
     await this.subscriptionRepository.save(sub);
 
-    const owner = organizationId ? `org=${organizationId}` : `user=${userId}`;
     this.logger.log(`Checkout completed: ${owner} plan=${plan}`);
+  }
+
+  /**
+   * Checks Stripe rather than our row, which can lag behind: if the old
+   * subscription was canceled but its deleted event has not arrived yet, the
+   * new checkout is a legitimate resubscribe and must not be canceled.
+   */
+  private async isStripeSubscriptionLive(
+    stripeSubscriptionId: string,
+  ): Promise<boolean> {
+    try {
+      const current =
+        await this.stripe.subscriptions.retrieve(stripeSubscriptionId);
+      return LIVE_STRIPE_STATUSES.has(current.status);
+    } catch (err) {
+      if (
+        isStripeError(err, 'StripeInvalidRequestError') &&
+        err.code === 'resource_missing'
+      ) {
+        return false;
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * A second checkout completed while the owner already had a live
+   * subscription. Keep the one KrakenKey tracks and cancel the new one right
+   * away so it never renews. The first invoice of the new subscription is
+   * already paid and is not refunded here; the error log carries the ids
+   * needed to refund it from the Stripe dashboard.
+   */
+  private async cancelDuplicateSubscription(
+    owner: string,
+    keptSubscriptionId: string,
+    duplicateSubscriptionId: string,
+    checkoutSessionId: string,
+  ): Promise<void> {
+    // Stripe can deliver the same event twice; a second cancel would fail.
+    if (!(await this.isStripeSubscriptionLive(duplicateSubscriptionId))) {
+      this.logger.warn(
+        `Duplicate subscription already ended: ${owner} kept=${keptSubscriptionId} duplicate=${duplicateSubscriptionId}`,
+      );
+      return;
+    }
+    this.logger.error(
+      `Duplicate subscription from checkout: ${owner} kept=${keptSubscriptionId} duplicate=${duplicateSubscriptionId} session=${checkoutSessionId}; canceling the duplicate, refund its first invoice manually`,
+    );
+    await this.stripe.subscriptions.cancel(duplicateSubscriptionId);
+    this.logger.warn(
+      `Canceled duplicate subscription: ${owner} duplicate=${duplicateSubscriptionId}`,
+    );
   }
 
   private async handleSubscriptionUpdated(

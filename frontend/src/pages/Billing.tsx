@@ -1,5 +1,6 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import { Check, CreditCard, ExternalLink } from 'lucide-react';
+import axios from 'axios';
 import type {
   Subscription,
   SubscriptionPlan,
@@ -228,8 +229,17 @@ export default function Billing() {
         window.location.href = sessionUrl;
         return;
       }
-    } catch {
-      setUpgradeError('Failed to load upgrade details. Please try again.');
+    } catch (err) {
+      // 409 means a paid subscription already exists; the API says what to do.
+      const msg =
+        axios.isAxiosError(err) && err.response?.status === 409
+          ? err.response.data?.message
+          : null;
+      setUpgradeError(
+        typeof msg === 'string'
+          ? msg
+          : 'Failed to load upgrade details. Please try again.',
+      );
     } finally {
       setActionLoading(false);
     }
