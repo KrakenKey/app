@@ -70,6 +70,8 @@ GET /billing/subscription
 
 Returns `null` for users on the free tier (no active subscription).
 
+While a payment has failed, `status` is `past_due`, `pastDueSince` is the time of the first failure and `graceEndsAt` is when the paid limits stop applying unless the payment goes through. Both are `null` otherwise.
+
 ### Manage Subscription (Stripe Portal)
 
 Opens the Stripe Customer Portal where users can update payment methods, view invoices, and cancel.
@@ -160,10 +162,14 @@ If the record already points at a different subscription that Stripe still repor
 4. User reverts to free tier limits
 
 ### Failed Payment
-1. `invoice.payment_failed` webhook fires
-2. Backend marks subscription as `past_due`
-3. Stripe retries payment per its dunning settings
-4. If retries succeed, `customer.subscription.updated` restores `active` status
+1. `invoice.payment_failed` (or `customer.subscription.updated` with status `past_due`, whichever arrives first) fires
+2. Backend marks the subscription `past_due` and records `pastDueSince`, the time of the first failure. Later failures don't move it.
+3. The account owner (the organization owner for an org subscription) gets one "payment failed" email with a link to the billing page and the date the paid limits end. It is a billing notice and ignores email preferences.
+4. Stripe retries the payment per its dunning settings. Meanwhile the plan's limits, renewal window, rate limits and scan retention keep applying for a 14-day grace period from `pastDueSince` (`PAST_DUE_GRACE_DAYS` in `src/billing/entitlement.ts`). The billing page shows a banner with that date and a button to the Stripe portal.
+5. If a retry succeeds, `invoice.paid` or `customer.subscription.updated` restores `active` status and clears `pastDueSince`
+6. The account drops to Free limits when the grace period ends, when Stripe marks the subscription `unpaid`, or when it cancels it (`customer.subscription.deleted`)
+
+Every tier lookup goes through `effectivePlan()` in `src/billing/entitlement.ts` (SQL queries use `entitledSubscriptionSql()`), so active subscriptions and past_due ones inside the grace period resolve to their plan and everything else resolves to Free. Subscriptions that were already `past_due` before `pastDueSince` existed get no grace until the next Stripe event for them records the start.
 
 ## Organization Billing
 
@@ -202,7 +208,8 @@ The error message names the owner, both subscription IDs and the organization, b
 | Status | Description |
 |--------|-------------|
 | `active` | Subscription is current and payment is up to date |
-| `past_due` | Payment failed, Stripe is retrying |
+| `past_due` | Payment failed, Stripe is retrying. Paid limits apply for 14 days from the first failure |
+| `unpaid` | Stripe gave up retrying. Free limits apply |
 | `canceled` | Subscription has been canceled |
 | `incomplete` | Initial payment has not completed |
 | `trialing` | Subscription is in a trial period |

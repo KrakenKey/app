@@ -11,6 +11,7 @@ import { Repository } from 'typeorm';
 import { Organization } from './entities/organization.entity';
 import { User } from '../users/entities/user.entity';
 import { BillingService } from '../billing/billing.service';
+import { hasPlanEntitlement } from '../billing/entitlement';
 import type { OrgRole } from '@krakenkey/shared';
 
 @Injectable()
@@ -135,7 +136,7 @@ export class OrganizationsService {
     if (
       targetSub &&
       targetSub.plan !== 'free' &&
-      targetSub.status === 'active' &&
+      hasPlanEntitlement(targetSub) &&
       !targetSub.cancelAtPeriodEnd
     ) {
       throw new ConflictException(

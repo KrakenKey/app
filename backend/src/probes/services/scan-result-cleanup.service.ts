@@ -5,6 +5,10 @@ import { Repository } from 'typeorm';
 import { ProbeScanResult } from '../entities/probe-scan-result.entity';
 import { PLAN_LIMITS } from '../../billing/constants/plan-limits';
 import type { SubscriptionPlan } from '@krakenkey/shared';
+import {
+  entitledSubscriptionSql,
+  pastDueGraceCutoff,
+} from '../../billing/entitlement';
 
 const BATCH_SIZE = 10_000;
 const DEFAULT_RETENTION_DAYS = 5;
@@ -82,7 +86,9 @@ export class ScanResultCleanupService {
 
     // Delete scan results for users on this tier whose results are past retention.
     // Join through subscription to determine tier. Handles both personal and
-    // org-based subscriptions.
+    // org-based subscriptions. A past_due subscription keeps its plan's
+    // retention during the grace period.
+    const graceCutoff = pastDueGraceCutoff();
     do {
       const result = await this.scanResultRepo
         .createQueryBuilder()
@@ -92,16 +98,17 @@ export class ScanResultCleanupService {
             SELECT psr.id FROM probe_scan_result psr
             INNER JOIN "user" u ON u.id = psr."userId"
             LEFT JOIN subscription s_personal
-              ON s_personal."userId" = u.id AND s_personal.status = 'active'
+              ON s_personal."userId" = u.id
+              AND ${entitledSubscriptionSql('s_personal')}
             LEFT JOIN subscription s_org
               ON s_org."organizationId" = u."organizationId"
-              AND s_org.status = 'active'
+              AND ${entitledSubscriptionSql('s_org')}
               AND u."organizationId" IS NOT NULL
             WHERE psr."scannedAt" < :cutoff
               AND COALESCE(s_org.plan, s_personal.plan, 'free') = :tier
             LIMIT :limit
           )`,
-          { cutoff, tier, limit: BATCH_SIZE },
+          { cutoff, tier, graceCutoff, limit: BATCH_SIZE },
         )
         .execute();
       affected = result.affected ?? 0;
