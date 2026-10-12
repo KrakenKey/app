@@ -40,6 +40,11 @@ export class BillingController {
   @ApiResponse({ status: 201, description: 'Checkout session created' })
   @ApiResponse({ status: 400, description: 'Plan not available' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({
+    status: 409,
+    description:
+      'A paid subscription already exists (use upgrade or the billing portal), or a checkout was just started',
+  })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
   async checkout(
     @Request() req: RequestWithUser,

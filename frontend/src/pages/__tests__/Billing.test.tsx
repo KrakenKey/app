@@ -1,21 +1,25 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { AxiosError, AxiosHeaders } from 'axios';
 import Billing from '../Billing';
 
-const { mockFetchSubscription, authState, healthState } = vi.hoisted(() => ({
-  mockFetchSubscription: vi.fn(),
-  authState: {
-    user: null as {
-      organizationId: string | null;
-      role: 'owner' | 'admin' | 'member' | 'viewer' | null;
-      resourceCounts?: {
-        domains: number;
-        certificates: number;
-        apiKeys: number;
-      };
-    } | null,
-  },
-  healthState: { data: null as unknown },
-}));
+const { mockFetchSubscription, mockCreateCheckout, authState, healthState } =
+  vi.hoisted(() => ({
+    mockFetchSubscription: vi.fn(),
+    mockCreateCheckout: vi.fn(),
+    authState: {
+      user: null as {
+        organizationId: string | null;
+        role: 'owner' | 'admin' | 'member' | 'viewer' | null;
+        resourceCounts?: {
+          domains: number;
+          certificates: number;
+          apiKeys: number;
+        };
+      } | null,
+    },
+    healthState: { data: null as unknown },
+  }));
 
 vi.mock('../../hooks/useAuth', () => ({
   useAuth: () => ({ user: authState.user }),
@@ -27,7 +31,7 @@ vi.mock('../../hooks/useHealth', () => ({
 
 vi.mock('../../services/billingService', () => ({
   fetchSubscription: mockFetchSubscription,
-  createCheckout: vi.fn(),
+  createCheckout: mockCreateCheckout,
   createPortalSession: vi.fn(),
   previewUpgrade: vi.fn(),
   upgradeSubscription: vi.fn(),
@@ -212,6 +216,47 @@ describe('Billing', () => {
       expect(
         screen.queryByRole('button', { name: /upgrade to/i }),
       ).not.toBeInTheDocument();
+    });
+
+    it('shows the API message when checkout is rejected with 409', async () => {
+      mockFetchSubscription.mockResolvedValue(sub('free'));
+      const message =
+        'You already have a paid subscription. Upgrade your plan from the billing page or manage it in the billing portal instead of starting a new checkout.';
+      mockCreateCheckout.mockRejectedValue(
+        new AxiosError('Conflict', 'ERR_BAD_REQUEST', undefined, undefined, {
+          status: 409,
+          statusText: 'Conflict',
+          data: { statusCode: 409, message },
+          headers: {},
+          config: { headers: new AxiosHeaders() },
+        }),
+      );
+      const user = userEvent.setup();
+      render(<Billing />);
+
+      await user.click(
+        await screen.findByRole('button', { name: 'Upgrade to Starter' }),
+      );
+
+      expect(await screen.findByText(message)).toBeInTheDocument();
+      expect(mockCreateCheckout).toHaveBeenCalledWith('starter');
+    });
+
+    it('keeps the generic error for other checkout failures', async () => {
+      mockFetchSubscription.mockResolvedValue(sub('free'));
+      mockCreateCheckout.mockRejectedValue(new Error('network down'));
+      const user = userEvent.setup();
+      render(<Billing />);
+
+      await user.click(
+        await screen.findByRole('button', { name: 'Upgrade to Starter' }),
+      );
+
+      expect(
+        await screen.findByText(
+          'Failed to load upgrade details. Please try again.',
+        ),
+      ).toBeInTheDocument();
     });
 
     it('offers Team to Starter owners through the upgrade preview', async () => {
