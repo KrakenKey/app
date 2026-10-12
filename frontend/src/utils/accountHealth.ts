@@ -274,6 +274,11 @@ export interface HealthInput {
   probes: ProbeOption[];
   connectors: Connector[];
   domains: Domain[];
+  /**
+   * Endpoints whose latest results could not be loaded. Their state is
+   * unknown: they are neither listed as problems nor counted as healthy.
+   */
+  resultsUnavailable?: string[];
   /** The account's plan, for the renewal window. */
   plan?: string | null;
   now?: number;
@@ -391,8 +396,9 @@ export function computeAttention(input: HealthInput): AttentionItem[] {
     }
   }
 
+  const unavailable = new Set(input.resultsUnavailable);
   for (const ep of input.endpoints) {
-    if (!ep.isActive) continue;
+    if (!ep.isActive || unavailable.has(ep.id)) continue;
     const s = summarizeEndpoint(ep, input.latestResults[ep.id] ?? []);
     const base = {
       id: `ep-${ep.id}`,
@@ -651,6 +657,8 @@ export interface FleetCounts {
     expiring: number;
     failing: number;
     inactive: number;
+    /** Active, but the latest results could not be loaded. */
+    unknown: number;
   };
   connectors: { total: number; stale: number; failingTargets: number };
   domains: { total: number; pending: number };
@@ -705,8 +713,14 @@ export function fleetCounts(
     expiring: 0,
     failing: 0,
     inactive: 0,
+    unknown: 0,
   };
+  const unavailable = new Set(input.resultsUnavailable);
   for (const ep of input.endpoints) {
+    if (ep.isActive && unavailable.has(ep.id)) {
+      endpoints.unknown++;
+      continue;
+    }
     const s = summarizeEndpoint(ep, input.latestResults[ep.id] ?? []).state;
     if (s === 'healthy') endpoints.healthy++;
     else if (s === 'expiring') endpoints.expiring++;
@@ -762,6 +776,91 @@ export function countByArea(
     if (area.severity !== 'critical') area.severity = item.severity;
   }
   return out;
+}
+
+/* ── Load state ────────────────────────────────────────────────────────── */
+
+/** The requests behind the account health data. */
+export type HealthSource =
+  | 'certs'
+  | 'endpoints'
+  | 'latestResults'
+  | 'probes'
+  | 'connectors'
+  | 'domains';
+
+export const HEALTH_SOURCES: readonly HealthSource[] = [
+  'certs',
+  'endpoints',
+  'latestResults',
+  'probes',
+  'connectors',
+  'domains',
+];
+
+/**
+ * Where a source (or an area) stands. `partial` means some of it loaded:
+ * the latest results for some endpoints, or endpoints without probes.
+ */
+export type LoadState = 'loading' | 'loaded' | 'partial' | 'failed';
+
+/** Folds the per-source states into one per sidebar area. */
+export function areaLoadStates(
+  s: Record<HealthSource, LoadState>,
+): Record<HealthArea, LoadState> {
+  let endpoints: LoadState;
+  if (s.endpoints === 'loading' || s.endpoints === 'failed') {
+    endpoints = s.endpoints;
+  } else if (s.latestResults === 'loading' || s.probes === 'loading') {
+    endpoints = 'loading';
+  } else if (s.latestResults !== 'loaded' || s.probes !== 'loaded') {
+    endpoints = 'partial';
+  } else {
+    endpoints = 'loaded';
+  }
+  return {
+    certificates: s.certs,
+    endpoints,
+    connectors: s.connectors,
+    domains: s.domains,
+  };
+}
+
+/**
+ * What could not be loaded, in words for "Couldn't load ...": whole areas
+ * first, then the parts of the endpoints area.
+ */
+export function loadFailures(
+  s: Record<HealthSource, LoadState>,
+  resultsUnavailable = 0,
+): string[] {
+  const out: string[] = [];
+  if (s.certs === 'failed') out.push('certificates');
+  if (s.endpoints === 'failed') {
+    out.push('endpoints');
+  } else if (s.endpoints === 'loaded') {
+    if (s.latestResults === 'failed' || s.latestResults === 'partial') {
+      out.push(
+        resultsUnavailable === 1
+          ? 'the latest scan for 1 endpoint'
+          : resultsUnavailable > 1
+            ? `the latest scans for ${resultsUnavailable} endpoints`
+            : 'the latest scans',
+      );
+    }
+    if (s.probes === 'failed') out.push('probes');
+  } else if (s.probes === 'failed') {
+    out.push('probes');
+  }
+  if (s.connectors === 'failed') out.push('connectors');
+  if (s.domains === 'failed') out.push('domains');
+  return out;
+}
+
+/** "a", "a and b", "a, b and c". */
+export function joinWords(words: string[]): string {
+  if (words.length <= 1) return words[0] ?? '';
+  return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
 }
 
 /* ── Greeting ──────────────────────────────────────────────────────────── */

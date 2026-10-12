@@ -42,11 +42,15 @@ import {
   estimatePanelHeight,
   fleetCounts,
   greetingName,
+  joinWords,
+  loadFailures,
   renewalSchedule,
   type AttentionItem,
   type AttentionKind,
   type FleetCounts,
+  type HealthArea,
   type HealthSeverity,
+  type LoadState,
   type OverviewPanel,
   type RenewalSchedule,
   type ScheduleRow,
@@ -168,6 +172,67 @@ function PanelEmpty({
   );
 }
 
+/** A panel whose data is still on its way. */
+function PanelLoading() {
+  return (
+    <div className="space-y-3 px-5 py-5" aria-busy="true">
+      <span className="sr-only">Loading</span>
+      {[0, 1, 2].map((i) => (
+        <div
+          key={i}
+          className="h-4 animate-pulse rounded bg-white/[0.05]"
+          style={{ width: `${90 - i * 20}%` }}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** Retry for health data that failed to load; spins while it reloads. */
+function RetryButton({
+  onRetry,
+  loading,
+}: {
+  onRetry: () => void;
+  loading: boolean;
+}) {
+  return (
+    <Button
+      size="sm"
+      variant="secondary"
+      disabled={loading}
+      onClick={onRetry}
+      icon={
+        <RotateCcw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
+      }
+    >
+      Retry
+    </Button>
+  );
+}
+
+/** A panel whose data could not be loaded: say so, and offer a retry. */
+function PanelFailed({
+  what,
+  onRetry,
+  loading,
+}: {
+  what: string;
+  onRetry: () => void;
+  loading: boolean;
+}) {
+  return (
+    <PanelEmpty
+      icon={AlertTriangle}
+      title={`Couldn't load ${what}`}
+      action={<RetryButton onRetry={onRetry} loading={loading} />}
+    >
+      The request failed or took too long. The rest of the page shows what did
+      load.
+    </PanelEmpty>
+  );
+}
+
 /* ── KPI strip ──────────────────────────────────────────────────────────── */
 
 type Tone = 'critical' | 'warning' | null;
@@ -179,13 +244,20 @@ interface Kpi {
   sub: ReactNode;
   tone: Tone;
   to: string;
+  /** Whether the tile's data loaded; a failed tile shows no number. */
+  state: LoadState;
 }
 
-function buildKpis(f: FleetCounts, totals: { domains?: number }): Kpi[] {
+function buildKpis(
+  f: FleetCounts,
+  totals: { domains?: number },
+  areas: Record<HealthArea, LoadState>,
+): Kpi[] {
   const next = f.certs.expiring[0];
   const c = f.certs;
   const epProblems = f.endpoints.failing;
-  const epActive = f.endpoints.total - f.endpoints.inactive;
+  const { unknown } = f.endpoints;
+  const epActive = f.endpoints.total - f.endpoints.inactive - unknown;
   const { stale, failingTargets } = f.connectors;
   return [
     {
@@ -209,6 +281,7 @@ function buildKpis(f: FleetCounts, totals: { domains?: number }): Kpi[] {
           : 'None yet',
       tone: null,
       to: '/dashboard/certificates',
+      state: areas.certificates,
     },
     {
       label: 'Expiring in 30 days',
@@ -224,6 +297,7 @@ function buildKpis(f: FleetCounts, totals: { domains?: number }): Kpi[] {
       ),
       tone: !next ? null : next.days <= 7 ? 'critical' : 'warning',
       to: '/dashboard/certificates',
+      state: areas.certificates,
     },
     {
       label: 'Failed',
@@ -232,16 +306,23 @@ function buildKpis(f: FleetCounts, totals: { domains?: number }): Kpi[] {
       sub: f.certs.failed ? 'Issuance needs a fix' : 'No failed issuance',
       tone: f.certs.failed ? 'critical' : null,
       to: '/dashboard/certificates',
+      state: areas.certificates,
     },
     {
       label: 'Endpoints',
       icon: Activity,
       value: f.endpoints.total,
-      sub: epProblems
-        ? `${epProblems} failing, ${epActive - epProblems} ok`
-        : `${epActive} monitored`,
+      sub: [
+        epProblems
+          ? `${epProblems} failing, ${epActive - epProblems} ok`
+          : (epActive > 0 || !unknown) && `${epActive} monitored`,
+        unknown && `${unknown} couldn't load`,
+      ]
+        .filter(Boolean)
+        .join(', '),
       tone: epProblems ? 'critical' : f.endpoints.expiring ? 'warning' : null,
       to: '/dashboard/endpoints',
+      state: areas.endpoints,
     },
     {
       label: 'Connectors',
@@ -256,6 +337,7 @@ function buildKpis(f: FleetCounts, totals: { domains?: number }): Kpi[] {
           .join(', ') || (f.connectors.total ? 'All checking in' : 'None yet'),
       tone: failingTargets ? 'critical' : stale ? 'warning' : null,
       to: '/dashboard/connectors',
+      state: areas.connectors,
     },
     {
       label: 'Domains',
@@ -266,6 +348,7 @@ function buildKpis(f: FleetCounts, totals: { domains?: number }): Kpi[] {
         : 'All verified',
       tone: f.domains.pending ? 'warning' : null,
       to: '/dashboard/domains',
+      state: areas.domains,
     },
   ];
 }
@@ -274,42 +357,59 @@ function KpiStrip({ kpis }: { kpis: Kpi[] }) {
   return (
     <Card flush className="overflow-hidden">
       <ul className="grid grid-cols-2 gap-px bg-border-subtle sm:grid-cols-3 xl:grid-cols-6">
-        {kpis.map(({ label, icon: Icon, value, sub, tone, to }) => (
-          <li key={label} className="min-w-0 bg-surface">
-            <Link
-              to={to}
-              className="group relative block h-full px-4 py-3.5 transition-colors hover:bg-surface-hover"
-            >
-              {tone && (
+        {kpis.map(({ label, icon: Icon, value, sub, tone: t, to, state }) => {
+          const failed = state === 'failed';
+          const pending = state === 'loading';
+          const tone = failed || pending ? null : t;
+          return (
+            <li key={label} className="min-w-0 bg-surface">
+              <Link
+                to={to}
+                className="group relative block h-full px-4 py-3.5 transition-colors hover:bg-surface-hover"
+              >
+                {tone && (
+                  <span
+                    aria-hidden="true"
+                    className={`absolute inset-x-4 top-0 h-0.5 rounded-b-full xl:inset-x-0 xl:rounded-none ${tone === 'critical' ? 'bg-red-400' : 'bg-amber-400'}`}
+                  />
+                )}
+                <span className="flex items-center gap-1.5 text-[13px] text-text-muted">
+                  <Icon className="h-3.5 w-3.5 shrink-0 text-text-faint" />
+                  <span className="truncate">{label}</span>
+                </span>
+                {pending ? (
+                  <span
+                    aria-busy="true"
+                    className="mt-1.5 flex h-8 items-center"
+                  >
+                    <span className="h-6 w-10 animate-pulse rounded bg-white/[0.06]" />
+                    <span className="sr-only">Loading</span>
+                  </span>
+                ) : (
+                  <span
+                    className={`mt-1.5 block text-[26px] leading-8 font-semibold tracking-tight tnum ${
+                      failed
+                        ? 'text-text-faint'
+                        : tone === 'critical'
+                          ? 'text-red-300'
+                          : tone === 'warning'
+                            ? 'text-amber-300'
+                            : 'text-text'
+                    }`}
+                  >
+                    {failed ? '?' : value}
+                  </span>
+                )}
                 <span
-                  aria-hidden="true"
-                  className={`absolute inset-x-4 top-0 h-0.5 rounded-b-full xl:inset-x-0 xl:rounded-none ${tone === 'critical' ? 'bg-red-400' : 'bg-amber-400'}`}
-                />
-              )}
-              <span className="flex items-center gap-1.5 text-[13px] text-text-muted">
-                <Icon className="h-3.5 w-3.5 shrink-0 text-text-faint" />
-                <span className="truncate">{label}</span>
-              </span>
-              <span
-                className={`mt-1.5 block text-[26px] leading-8 font-semibold tracking-tight tnum ${
-                  tone === 'critical'
-                    ? 'text-red-300'
-                    : tone === 'warning'
-                      ? 'text-amber-300'
-                      : 'text-text'
-                }`}
-              >
-                {value}
-              </span>
-              <span
-                className="mt-1 line-clamp-2 text-xs text-text-muted"
-                title={typeof sub === 'string' ? sub : undefined}
-              >
-                {sub}
-              </span>
-            </Link>
-          </li>
-        ))}
+                  className="mt-1 line-clamp-2 text-xs text-text-muted"
+                  title={typeof sub === 'string' ? sub : undefined}
+                >
+                  {failed ? "Couldn't load" : pending ? 'Loading' : sub}
+                </span>
+              </Link>
+            </li>
+          );
+        })}
       </ul>
     </Card>
   );
@@ -414,11 +514,17 @@ function AttentionPanel({
   loading,
   checkedAt,
   onRefresh,
+  failures,
+  pending,
 }: {
   items: AttentionItem[];
   loading: boolean;
   checkedAt: Date | null;
   onRefresh: () => Promise<void>;
+  /** What could not be loaded ("connectors", "probes"). */
+  failures: string[];
+  /** Whether some areas are still loading. */
+  pending: boolean;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -485,7 +591,48 @@ function AttentionPanel({
           </>
         }
       />
-      {items.length === 0 ? (
+      {items.length > 0 && failures.length > 0 && (
+        <div
+          role="alert"
+          className="flex items-center gap-3 border-b border-amber-400/15 bg-amber-400/[0.05] px-5 py-3"
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
+          <p className="min-w-0 flex-1 text-[13px] text-amber-100">
+            Couldn't load {joinWords(failures)}, so this list may be incomplete.
+          </p>
+          <RetryButton onRetry={() => void onRefresh()} loading={loading} />
+        </div>
+      )}
+      {items.length > 0 && pending && failures.length === 0 && (
+        <p className="flex items-center gap-2 border-b border-border-subtle px-5 py-2.5 text-[13px] text-text-muted">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Still checking the rest of your account
+        </p>
+      )}
+      {items.length === 0 && failures.length > 0 ? (
+        <div role="alert">
+          <PanelEmpty
+            icon={AlertTriangle}
+            title="Couldn't check everything"
+            action={
+              <RetryButton onRetry={() => void onRefresh()} loading={loading} />
+            }
+          >
+            Couldn't load {joinWords(failures)}.
+            {pending
+              ? ' Still checking the rest.'
+              : ' Nothing in what did load needs you right now.'}
+          </PanelEmpty>
+        </div>
+      ) : items.length === 0 && pending ? (
+        <div
+          className="flex flex-col items-center gap-2 px-5 py-12 text-center"
+          aria-busy="true"
+        >
+          <Loader2 className="h-5 w-5 animate-spin text-text-muted" />
+          <p className="text-[13px] text-text-muted">Checking your account</p>
+        </div>
+      ) : items.length === 0 ? (
         <div className="flex flex-col items-center gap-2 px-5 py-12 text-center">
           <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-400/10 text-emerald-300 ring-1 ring-inset ring-emerald-400/20">
             <ShieldCheck className="h-5 w-5" />
@@ -602,20 +749,42 @@ function RenewCell({ r }: { r: ScheduleRow }) {
 const SCHEDULE_COLS =
   'grid grid-cols-[minmax(0,1fr)_4.25rem_4.25rem] items-center gap-x-3 sm:grid-cols-[minmax(0,1fr)_5rem_5rem] sm:gap-x-4';
 
-function RenewalSchedulePanel({ schedule }: { schedule: RenewalSchedule }) {
+/** How a panel's data stands, and how to reload it. */
+interface PanelLoad {
+  state: LoadState;
+  loading: boolean;
+  onRetry: () => void;
+}
+
+function RenewalSchedulePanel({
+  schedule,
+  load,
+}: {
+  schedule: RenewalSchedule;
+  load: PanelLoad;
+}) {
   const navigate = useNavigate();
   const { rows, total } = schedule;
   const more = total - rows.length;
+  const ready = load.state !== 'loading' && load.state !== 'failed';
   return (
     <Card flush>
       <PanelHeader
         title="Renewal schedule"
-        count={total}
+        count={ready ? total : undefined}
         actions={
           <PanelLink to="/dashboard/certificates">Certificates</PanelLink>
         }
       />
-      {rows.length === 0 ? (
+      {load.state === 'loading' ? (
+        <PanelLoading />
+      ) : load.state === 'failed' ? (
+        <PanelFailed
+          what="certificates"
+          onRetry={load.onRetry}
+          loading={load.loading}
+        />
+      ) : rows.length === 0 ? (
         <PanelEmpty
           icon={CalendarClock}
           title="Nothing to renew yet"
@@ -742,19 +911,34 @@ function RenewalSchedulePanel({ schedule }: { schedule: RenewalSchedule }) {
 
 /* ── Connectors ────────────────────────────────────────────────────────── */
 
-function ConnectorsPanel({ connectors }: { connectors: Connector[] }) {
+function ConnectorsPanel({
+  connectors,
+  load,
+}: {
+  connectors: Connector[];
+  load: PanelLoad;
+}) {
   const navigate = useNavigate();
   const live = connectors.filter((c) => !c.revokedAt);
+  const ready = load.state !== 'loading' && load.state !== 'failed';
   return (
     <Card flush>
       <PanelHeader
         title="Connectors"
-        count={live.length}
+        count={ready ? live.length : undefined}
         actions={
           <PanelLink to="/dashboard/connectors">All connectors</PanelLink>
         }
       />
-      {live.length === 0 ? (
+      {load.state === 'loading' ? (
+        <PanelLoading />
+      ) : load.state === 'failed' ? (
+        <PanelFailed
+          what="connectors"
+          onRetry={load.onRetry}
+          loading={load.loading}
+        />
+      ) : live.length === 0 ? (
         <PanelEmpty
           icon={Plug}
           title="Run a connector to renew and deploy with your own keys"
@@ -860,9 +1044,13 @@ function ConnectorsPanel({ connectors }: { connectors: Connector[] }) {
 function EndpointsPanel({
   counts,
   probes,
+  probesFailed,
+  load,
 }: {
   counts: FleetCounts['endpoints'];
   probes: ProbeOption[];
+  probesFailed: boolean;
+  load: PanelLoad;
 }) {
   const navigate = useNavigate();
   const segments = [
@@ -870,16 +1058,35 @@ function EndpointsPanel({
     { label: 'expiring', value: counts.expiring, color: 'bg-amber-400' },
     { label: 'failing', value: counts.failing, color: 'bg-red-400' },
     { label: 'inactive', value: counts.inactive, color: 'bg-slate-600' },
+    // Only when some latest results failed to load.
+    ...(counts.unknown
+      ? [
+          {
+            label: "couldn't load",
+            value: counts.unknown,
+            color: 'bg-white/[0.12]',
+          },
+        ]
+      : []),
   ];
   const total = counts.total || 1;
+  const ready = load.state !== 'loading' && load.state !== 'failed';
   return (
     <Card flush>
       <PanelHeader
         title="Endpoints"
-        count={counts.total}
+        count={ready ? counts.total : undefined}
         actions={<PanelLink to="/dashboard/endpoints">All endpoints</PanelLink>}
       />
-      {counts.total === 0 ? (
+      {load.state === 'loading' ? (
+        <PanelLoading />
+      ) : load.state === 'failed' ? (
+        <PanelFailed
+          what="endpoints"
+          onRetry={load.onRetry}
+          loading={load.loading}
+        />
+      ) : counts.total === 0 ? (
         <PanelEmpty
           icon={Activity}
           title="Monitor your first endpoint"
@@ -925,7 +1132,18 @@ function EndpointsPanel({
           </ul>
         </div>
       )}
-      {probes.length > 0 && (
+      {ready && probesFailed && (
+        <section aria-label="Probes">
+          <h3 className="border-t border-border-subtle px-5 pt-3 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-faint">
+            Probe check-ins
+          </h3>
+          <p className="flex items-center gap-2 px-5 pt-1 pb-3.5 text-[13px] text-text-muted">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-400" />
+            Couldn't load your probes.
+          </p>
+        </section>
+      )}
+      {ready && probes.length > 0 && (
         <section aria-label="Probes">
           <h3 className="border-t border-border-subtle px-5 pt-3 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-faint">
             Probe check-ins
@@ -1012,7 +1230,8 @@ const ONBOARDING_STEPS = [
 export default function Overview() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const { data, items, loading, checkedAt, refresh } = useHealth();
+  const { data, status, areas, items, loading, checkedAt, refresh } =
+    useHealth();
   const counts =
     (user as { resourceCounts?: ResourceCounts } | null)?.resourceCounts ??
     null;
@@ -1024,11 +1243,15 @@ export default function Overview() {
   const kpis = useMemo(
     () =>
       fleet
-        ? buildKpis(fleet, {
-            domains: counts?.domains,
-          })
+        ? buildKpis(
+            fleet,
+            {
+              domains: counts?.domains,
+            },
+            areas,
+          )
         : null,
-    [fleet, counts],
+    [fleet, counts, areas],
   );
   const schedule = useMemo(
     () =>
@@ -1099,9 +1322,32 @@ export default function Overview() {
     }
   }, []);
 
+  const failures = useMemo(
+    () => loadFailures(status, data?.resultsUnavailable.length),
+    [status, data],
+  );
+  const pending = Object.values(areas).includes('loading');
+  const retry = useCallback(() => void refresh(), [refresh]);
+  const panelLoad = (area: HealthArea): PanelLoad => ({
+    state: areas[area],
+    loading,
+    onRetry: retry,
+  });
+
+  // Before anything has answered there is nothing to place yet.
+  const started = Object.values(status).some((s) => s !== 'loading');
   const isNewAccount = counts
     ? counts.domains === 0 && counts.certificates === 0
-    : !!data && data.domains.length === 0 && data.certs.length === 0;
+    : !!data &&
+      status.domains === 'loaded' &&
+      status.certs === 'loaded' &&
+      data.domains.length === 0 &&
+      data.certs.length === 0;
+  // Without the profile counts, wait for certificates and domains before
+  // choosing between the onboarding steps and the dashboard.
+  const deciding =
+    !counts &&
+    (areas.certificates === 'loading' || areas.domains === 'loading');
 
   return (
     <div>
@@ -1175,7 +1421,7 @@ export default function Overview() {
         </div>
       )}
 
-      {!data || !fleet || !kpis ? (
+      {!data || !fleet || !kpis || !started || deciding ? (
         <div className="space-y-6" aria-busy="true">
           <div className="h-[104px] rounded-xl border border-border bg-surface/60 animate-pulse" />
           <div className="grid gap-6 xl:grid-cols-12">
@@ -1252,15 +1498,25 @@ export default function Overview() {
                         loading={loading}
                         checkedAt={checkedAt}
                         onRefresh={() => refresh()}
+                        failures={failures}
+                        pending={pending}
                       />
                     ) : panel === 'schedule' ? (
-                      <RenewalSchedulePanel schedule={schedule} />
+                      <RenewalSchedulePanel
+                        schedule={schedule}
+                        load={panelLoad('certificates')}
+                      />
                     ) : panel === 'connectors' ? (
-                      <ConnectorsPanel connectors={data.connectors} />
+                      <ConnectorsPanel
+                        connectors={data.connectors}
+                        load={panelLoad('connectors')}
+                      />
                     ) : (
                       <EndpointsPanel
                         counts={fleet.endpoints}
                         probes={data.probes}
+                        probesFailed={status.probes === 'failed'}
+                        load={panelLoad('endpoints')}
                       />
                     )}
                   </div>
