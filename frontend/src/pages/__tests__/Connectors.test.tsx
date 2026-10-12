@@ -77,7 +77,8 @@ describe('Connectors', () => {
 
     expect(screen.getByText('Your Connectors (4 of 50)')).toBeInTheDocument();
     expect(table.getByText('Enrollment token expired')).toBeInTheDocument();
-    expect(table.getByText('Active')).toBeInTheDocument();
+    // Checked in recently, but a target is failing: health, not recency.
+    expect(table.getByText('Targets failing')).toBeInTheDocument();
     expect(table.getByText('Waiting to enroll')).toBeInTheDocument();
     expect(table.getByText('Stale')).toBeInTheDocument();
     expect(table.getByText('Revoked')).toBeInTheDocument();

@@ -1,7 +1,11 @@
 import type { ConnectorDeployment } from '@krakenkey/shared';
 import {
   configDrift,
+  connectorHealth,
   connectorStatus,
+  failingTargets,
+  CONNECTOR_HEALTH_DOT,
+  CONNECTOR_HEALTH_VARIANT,
   formatCheck,
   formatInterval,
   settingPairs,
@@ -225,5 +229,81 @@ describe('configDrift', () => {
       notAllowed: [],
       missing: [],
     });
+  });
+});
+
+describe('connectorHealth', () => {
+  const enrolled = {
+    revokedAt: null,
+    enrolledAt: hoursAgo(48),
+    lastSeenAt: hoursAgo(1),
+    enrollmentTokenExpiresAt: null,
+  };
+  const summary = (failing: number) => ({
+    deploymentSummary: { certificates: 2, targets: 2, failing },
+  });
+
+  it('is failing when a target failed, even when it checks in on time', () => {
+    expect(connectorHealth({ ...enrolled, ...summary(1) }, NOW)).toBe(
+      'failing',
+    );
+    // Failing wins over stale: both need someone, failing more urgently.
+    expect(
+      connectorHealth(
+        { ...enrolled, lastSeenAt: hoursAgo(30), ...summary(1) },
+        NOW,
+      ),
+    ).toBe('failing');
+  });
+
+  it('is stale or healthy by check-in when nothing fails', () => {
+    expect(
+      connectorHealth({ ...enrolled, lastSeenAt: hoursAgo(30) }, NOW),
+    ).toBe('stale');
+    expect(connectorHealth({ ...enrolled, ...summary(0) }, NOW)).toBe(
+      'healthy',
+    );
+  });
+
+  it('keeps the lifecycle status before enrollment and after revocation', () => {
+    const waiting = {
+      ...enrolled,
+      enrolledAt: null,
+      lastSeenAt: null,
+      enrollmentTokenExpiresAt: hoursAgo(-5),
+    };
+    expect(connectorHealth(waiting, NOW)).toBe('waiting');
+    expect(
+      connectorHealth(
+        { ...waiting, enrollmentTokenExpiresAt: hoursAgo(1) },
+        NOW,
+      ),
+    ).toBe('expired');
+    expect(
+      connectorHealth(
+        { ...enrolled, revokedAt: hoursAgo(1), ...summary(2) },
+        NOW,
+      ),
+    ).toBe('revoked');
+  });
+
+  it('counts failing targets from the detail endpoint too', () => {
+    const deployments = [
+      { state: 'verified' },
+      { state: 'rolled_back' },
+      { state: 'failed' },
+    ] as ConnectorDeployment[];
+    expect(failingTargets({ ...enrolled, deployments })).toBe(2);
+    expect(connectorHealth({ ...enrolled, deployments }, NOW)).toBe('failing');
+  });
+
+  it('maps health to danger, warning, success and neutral', () => {
+    expect(CONNECTOR_HEALTH_VARIANT.failing).toBe('danger');
+    expect(CONNECTOR_HEALTH_VARIANT.stale).toBe('warning');
+    expect(CONNECTOR_HEALTH_VARIANT.waiting).toBe('neutral');
+    expect(CONNECTOR_HEALTH_DOT.failing).toBe('bg-red-400');
+    expect(CONNECTOR_HEALTH_DOT.stale).toBe('bg-amber-400');
+    expect(CONNECTOR_HEALTH_DOT.healthy).toBe('bg-emerald-400');
+    expect(CONNECTOR_HEALTH_DOT.waiting).toBe('bg-slate-400');
   });
 });

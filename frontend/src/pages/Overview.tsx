@@ -22,6 +22,7 @@ import {
   ShieldX,
   Loader2,
   ShieldCheck,
+  CalendarClock,
 } from 'lucide-react';
 import { API_ROUTES } from '@krakenkey/shared';
 import type { Connector } from '@krakenkey/shared';
@@ -37,16 +38,27 @@ import type { ProbeOption } from '../services/endpointService';
 import { toast } from '../utils/toast';
 import {
   SEVERITY_ORDER,
-  expiryTimeline,
+  balancePanels,
+  estimatePanelHeight,
   fleetCounts,
-  renewalWindowDays,
+  greetingName,
+  renewalSchedule,
   type AttentionItem,
   type AttentionKind,
   type FleetCounts,
   type HealthSeverity,
-  type TimelineRow,
+  type OverviewPanel,
+  type RenewalSchedule,
+  type ScheduleRow,
 } from '../utils/accountHealth';
-import { connectorStatus, formatRelative } from '../utils/connectors';
+import {
+  CONNECTOR_HEALTH_DOT,
+  CONNECTOR_HEALTH_LABEL,
+  CONNECTOR_DOCS_URL,
+  connectorHealth,
+  formatRelative,
+} from '../utils/connectors';
+import { fullDateTime } from '../utils/dates';
 
 type Icon = ComponentType<{ className?: string }>;
 
@@ -130,6 +142,32 @@ function PanelLink({ to, children }: { to: string; children: ReactNode }) {
   );
 }
 
+/** A panel with nothing in it yet: what it is for, and how to start. */
+function PanelEmpty({
+  icon: Icon,
+  title,
+  children,
+  action,
+}: {
+  icon: Icon;
+  title: string;
+  children: ReactNode;
+  action: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col items-center px-6 py-8 text-center">
+      <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-bg/60 text-text-muted">
+        <Icon className="h-5 w-5" />
+      </span>
+      <p className="mt-3 text-sm font-medium text-text">{title}</p>
+      <p className="mt-1 max-w-sm text-[13px] text-text-muted">{children}</p>
+      <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+        {action}
+      </div>
+    </div>
+  );
+}
+
 /* ── KPI strip ──────────────────────────────────────────────────────────── */
 
 type Tone = 'critical' | 'warning' | null;
@@ -143,11 +181,9 @@ interface Kpi {
   to: string;
 }
 
-function buildKpis(
-  f: FleetCounts,
-  totals: { certificates?: number; domains?: number },
-): Kpi[] {
+function buildKpis(f: FleetCounts, totals: { domains?: number }): Kpi[] {
   const next = f.certs.expiring[0];
+  const c = f.certs;
   const epProblems = f.endpoints.failing;
   const epActive = f.endpoints.total - f.endpoints.inactive;
   const { stale, failingTargets } = f.connectors;
@@ -155,8 +191,22 @@ function buildKpis(
     {
       label: 'Certificates',
       icon: Shield,
-      value: totals.certificates ?? f.certs.total,
-      sub: `${f.certs.issued} issued${f.certs.renewing ? `, ${f.certs.renewing} renewing` : ''}`,
+      // Live certificates only; revoked ones are history, not inventory.
+      value: c.live,
+      sub:
+        c.live || c.revoked
+          ? [
+              `${c.issued} issued`,
+              // Renewing or on the way to issuance.
+              c.renewing + c.inProgress &&
+                `${c.renewing + c.inProgress} in progress`,
+              c.revoked && `${c.revoked} revoked`,
+            ]
+              .filter(Boolean)
+              // Keep each count with its word when the line wraps.
+              .map((part) => String(part).replace(' ', '\u00a0'))
+              .join(', ')
+          : 'None yet',
       tone: null,
       to: '/dashboard/certificates',
     },
@@ -251,7 +301,10 @@ function KpiStrip({ kpis }: { kpis: Kpi[] }) {
               >
                 {value}
               </span>
-              <span className="mt-1 block truncate text-xs text-text-muted">
+              <span
+                className="mt-1 line-clamp-2 text-xs text-text-muted"
+                title={typeof sub === 'string' ? sub : undefined}
+              >
                 {sub}
               </span>
             </Link>
@@ -292,6 +345,11 @@ function AttentionRow({
           >
             {item.title}
           </Link>
+          {item.ref && (
+            <span className="shrink-0 font-mono text-[11px] text-text-faint">
+              {item.ref}
+            </span>
+          )}
           <span className="hidden shrink-0 text-[11px] text-text-faint sm:inline">
             {item.kind}
           </span>
@@ -470,179 +528,223 @@ function AttentionPanel({
   );
 }
 
-/* ── Expiry timeline ───────────────────────────────────────────────────── */
+/* ── Renewal schedule ──────────────────────────────────────────────────── */
 
-const HORIZON = 90;
-const TICKS = [0, 30, 60, 90];
-
-/** "Nov 10" for a day offset from today. */
-function dateAt(days: number) {
-  return new Date(Date.now() + days * 86_400_000).toLocaleDateString('en-US', {
+/** "Dec 8" */
+function dayLabel(iso: string) {
+  return new Date(iso).toLocaleDateString(undefined, {
     month: 'short',
     day: 'numeric',
   });
 }
 
-function pct(days: number) {
-  return `${(Math.max(0, Math.min(days, HORIZON)) / HORIZON) * 100}%`;
+const SEVERITY_TEXT = {
+  critical: 'text-red-300',
+  warning: 'text-amber-300',
+} as const;
+
+/** What happens to the certificate next, in a few words. */
+function scheduleNote(r: ScheduleRow): string {
+  switch (r.state) {
+    case 'scheduled':
+      return 'Renews automatically';
+    case 'connector':
+      return r.connectorName
+        ? `Renewed by ${r.connectorName}`
+        : 'Renewed by a connector';
+    case 'manual':
+      return 'Auto-renew is off';
+    case 'overdue':
+      return r.days < 0
+        ? 'Expired'
+        : r.connectorName
+          ? `${r.connectorName} has not renewed it`
+          : 'Renewal has not started';
+    case 'replace':
+      return 'The CA asked for early replacement';
+    case 'renewing':
+      return 'Renewal in progress';
+  }
 }
 
-function expiryTone(days: number) {
-  if (days <= 7) return { bar: 'bg-red-400', text: 'text-red-300' };
-  if (days <= 30) return { bar: 'bg-amber-400', text: 'text-amber-300' };
-  return { bar: 'bg-slate-500', text: 'text-text-muted' };
+/** The "Renews" cell: a date when one is scheduled, otherwise the state. */
+function RenewCell({ r }: { r: ScheduleRow }) {
+  const tone = r.severity ? SEVERITY_TEXT[r.severity] : 'text-text-secondary';
+  if (r.state === 'renewing') {
+    return <span className="text-xs font-medium text-violet-300">Now</span>;
+  }
+  if (r.state === 'manual' || !r.renewAt || r.renewInDays == null) {
+    return <span className={`text-xs font-medium ${tone}`}>Off</span>;
+  }
+  return (
+    <span
+      className="flex flex-col leading-tight"
+      title={fullDateTime(r.renewAt)}
+    >
+      <span className={`text-xs font-medium tnum ${tone}`}>
+        {r.state === 'overdue'
+          ? 'Overdue'
+          : r.renewInDays < 0
+            ? 'Due'
+            : dayLabel(r.renewAt)}
+      </span>
+      <span className="text-[11px] text-text-faint tnum">
+        {r.renewInDays < 0
+          ? `since ${dayLabel(r.renewAt)}`
+          : r.renewInDays === 0
+            ? 'today'
+            : `in ${r.renewInDays}d`}
+      </span>
+    </span>
+  );
 }
 
-/*
- * Name | bar | days on wider screens. On phones the name and days share a
- * line and the bar gets the full width below them.
- */
-const TIMELINE_COLS =
-  'grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,9rem)_1fr_2rem]';
-const TIMELINE_BAR = 'order-last col-span-2 sm:order-none sm:col-span-1';
+const SCHEDULE_COLS =
+  'grid grid-cols-[minmax(0,1fr)_4.25rem_4.25rem] items-center gap-x-3 sm:grid-cols-[minmax(0,1fr)_5rem_5rem] sm:gap-x-4';
 
-function ExpiryTimeline({
-  rows,
-  windowDays,
-}: {
-  rows: TimelineRow[];
-  windowDays: number;
-}) {
+function RenewalSchedulePanel({ schedule }: { schedule: RenewalSchedule }) {
+  const navigate = useNavigate();
+  const { rows, total } = schedule;
+  const more = total - rows.length;
   return (
     <Card flush>
       <PanelHeader
-        title="Expiring in the next 90 days"
-        count={rows.length}
+        title="Renewal schedule"
+        count={total}
         actions={
           <PanelLink to="/dashboard/certificates">Certificates</PanelLink>
         }
       />
-      <div className="px-5 pt-3 pb-4">
-        {rows.length === 0 ? (
-          <p className="py-6 text-center text-[13px] text-text-muted">
-            Nothing expires in the next 90 days.
-          </p>
-        ) : (
-          <>
-            <div className={`${TIMELINE_COLS} pb-2`} aria-hidden="true">
-              <span className="hidden sm:block" />
-              <div className={`relative h-8 ${TIMELINE_BAR}`}>
-                {TICKS.map((t) => (
-                  <span
-                    key={t}
-                    className={`absolute bottom-0 flex flex-col whitespace-nowrap text-[11px] leading-tight text-text-faint ${
-                      t === 0
-                        ? 'items-start'
-                        : t === HORIZON
-                          ? 'items-end -translate-x-full'
-                          : 'items-center -translate-x-1/2'
-                    }`}
-                    style={{ left: pct(t) }}
-                  >
-                    <span className="font-medium text-text-muted">
-                      {t === 0 ? 'Today' : `${t}d`}
-                    </span>
-                    <span>{dateAt(t)}</span>
-                  </span>
-                ))}
-              </div>
-              <span className="hidden sm:block" />
-            </div>
-            <ul className="space-y-2.5 sm:space-y-0">
-              {rows.map((r) => {
-                const tone = expiryTone(r.days);
-                const label = `${r.name} expires in ${r.days} days${
-                  r.renewInDays != null
-                    ? `, auto-renews in ${r.renewInDays} days`
-                    : ''
-                }${r.renewing ? ', renewal in progress' : ''}`;
-                return (
-                  <li key={r.id} className={TIMELINE_COLS}>
-                    <Link
-                      to="/dashboard/certificates"
-                      className="truncate text-[13px] text-text-secondary transition-colors hover:text-cyan-300"
-                      title={r.name}
-                    >
-                      {r.name}
-                    </Link>
-                    <div
-                      className={`relative h-5 sm:h-[26px] ${TIMELINE_BAR}`}
-                      role="img"
-                      aria-label={label}
-                    >
-                      <div
-                        className="absolute inset-y-0 left-0 bg-amber-400/[0.07]"
-                        style={{ width: pct(windowDays) }}
+      {rows.length === 0 ? (
+        <PanelEmpty
+          icon={CalendarClock}
+          title="Nothing to renew yet"
+          action={
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={<Plus className="h-3.5 w-3.5" />}
+              onClick={() => navigate('/dashboard/certificates?request=1')}
+            >
+              Request certificate
+            </Button>
+          }
+        >
+          Issued certificates show up here with the day they renew and the day
+          they expire.
+        </PanelEmpty>
+      ) : (
+        <>
+          <div
+            className={`${SCHEDULE_COLS} px-5 pt-2.5 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-faint`}
+            aria-hidden="true"
+          >
+            <span>Certificate</span>
+            <span>Renews</span>
+            <span>Expires</span>
+          </div>
+          <ul className="divide-y divide-border-subtle border-t border-border-subtle">
+            {rows.map((r) => {
+              const tone = r.severity ? SEVERITY_TEXT[r.severity] : null;
+              const label = [
+                `${r.name} #${r.id}`,
+                scheduleNote(r),
+                r.renewAt &&
+                  r.state !== 'manual' &&
+                  r.state !== 'renewing' &&
+                  `renews ${dayLabel(r.renewAt)}`,
+                `expires ${dayLabel(r.expiresAt)}`,
+              ]
+                .filter(Boolean)
+                .join(', ');
+              return (
+                <li
+                  key={r.id}
+                  className={`${SCHEDULE_COLS} px-5 py-2.5`}
+                  aria-label={label}
+                >
+                  <div className="min-w-0">
+                    <p className="flex min-w-0 items-center gap-1.5">
+                      <span
+                        aria-hidden="true"
+                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                          r.severity === 'critical'
+                            ? 'bg-red-400'
+                            : r.severity === 'warning'
+                              ? 'bg-amber-400'
+                              : r.state === 'renewing'
+                                ? 'bg-violet-400'
+                                : 'bg-slate-600'
+                        }`}
                       />
-                      {TICKS.slice(1, -1).map((t) => (
-                        <div
-                          key={t}
-                          className="absolute inset-y-0 w-px bg-border-subtle"
-                          style={{ left: pct(t) }}
-                        />
-                      ))}
-                      <div className="absolute inset-x-0 top-1/2 h-px bg-border-subtle" />
-                      <div
-                        className={`absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full ${tone.bar}`}
-                        style={{ width: pct(r.days) }}
-                      />
-                      <div
-                        className={`absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-surface ${tone.bar}`}
-                        style={{ left: pct(r.days) }}
-                      />
-                      {r.renewInDays != null && (
-                        <div
-                          title={`Auto-renews around ${dateAt(r.renewInDays)}`}
-                          className="absolute top-1/2 h-3 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-violet-300"
-                          style={{ left: pct(r.renewInDays) }}
-                        />
+                      <Link
+                        to="/dashboard/certificates"
+                        className="min-w-0 truncate text-[13px] text-text-secondary transition-colors hover:text-cyan-300"
+                        title={r.name}
+                      >
+                        {r.name}
+                      </Link>
+                      {r.extraNames > 0 && (
+                        <span
+                          className="shrink-0 rounded bg-white/[0.06] px-1 text-[10px] text-text-muted tnum"
+                          title={`Covers ${r.extraNames} more name${r.extraNames === 1 ? '' : 's'}`}
+                        >
+                          +{r.extraNames}
+                        </span>
                       )}
-                    </div>
-                    <span
-                      className={`text-right text-xs font-medium tnum ${tone.text}`}
+                      <span className="shrink-0 font-mono text-[11px] text-text-faint">
+                        #{r.id}
+                      </span>
+                    </p>
+                    <p
+                      className={`truncate pl-3 text-xs ${tone ?? (r.state === 'renewing' ? 'text-violet-300' : 'text-text-muted')}`}
                     >
-                      {r.days}d
+                      {r.state === 'connector' && (
+                        <Plug className="mr-1 inline h-3 w-3 -translate-y-px text-text-faint" />
+                      )}
+                      {scheduleNote(r)}
+                    </p>
+                  </div>
+                  <RenewCell r={r} />
+                  <span
+                    className="flex flex-col leading-tight"
+                    title={fullDateTime(r.expiresAt)}
+                  >
+                    <span
+                      className={`text-xs font-medium tnum ${tone ?? 'text-text-secondary'}`}
+                    >
+                      {dayLabel(r.expiresAt)}
                     </span>
-                  </li>
-                );
-              })}
-            </ul>
-          </>
-        )}
-        <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border-subtle pt-3 text-xs text-text-muted">
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-1.5 w-3 rounded-full bg-red-400" />7 days or less
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-1.5 w-3 rounded-full bg-amber-400" />
-            30 days or less
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-3 w-3 rounded-sm bg-amber-400/20" />
-            Renewal window
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-3 w-0.5 rounded-full bg-violet-300" />
-            Scheduled auto-renewal
-          </span>
-        </div>
-      </div>
+                    <span className="text-[11px] text-text-faint tnum">
+                      {r.days < 0 ? `${-r.days}d ago` : `${r.days}d`}
+                    </span>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+          {more > 0 && (
+            <div className="border-t border-border-subtle px-5 py-2.5 text-xs text-text-muted">
+              <Link
+                to="/dashboard/certificates"
+                className="group inline-flex items-center gap-1 transition-colors hover:text-cyan-300"
+              >
+                {more} more in Certificates
+                <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
+              </Link>
+            </div>
+          )}
+        </>
+      )}
     </Card>
   );
 }
 
 /* ── Connectors ────────────────────────────────────────────────────────── */
 
-const CONNECTOR_DOT = {
-  active: 'bg-emerald-400',
-  stale: 'bg-amber-400',
-  waiting: 'bg-violet-400',
-  expired: 'bg-amber-400',
-  revoked: 'bg-red-400',
-} as const;
-
 function ConnectorsPanel({ connectors }: { connectors: Connector[] }) {
-  const live = connectors.filter((c) => connectorStatus(c) !== 'revoked');
+  const navigate = useNavigate();
+  const live = connectors.filter((c) => !c.revokedAt);
   return (
     <Card flush>
       <PanelHeader
@@ -653,14 +755,37 @@ function ConnectorsPanel({ connectors }: { connectors: Connector[] }) {
         }
       />
       {live.length === 0 ? (
-        <p className="px-5 py-6 text-center text-[13px] text-text-muted">
-          No connectors yet. A connector renews and deploys certificates with
-          keys that stay on your servers.
-        </p>
+        <PanelEmpty
+          icon={Plug}
+          title="Run a connector to renew and deploy with your own keys"
+          action={
+            <>
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<Plus className="h-3.5 w-3.5" />}
+                onClick={() => navigate('/dashboard/connectors')}
+              >
+                Set up a connector
+              </Button>
+              <a
+                href={CONNECTOR_DOCS_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-8 items-center px-2 text-xs text-text-muted transition-colors hover:text-cyan-300"
+              >
+                How it works
+              </a>
+            </>
+          }
+        >
+          A connector runs on your servers, makes a new key and CSR for each
+          renewal, and installs the certificate where it is used.
+        </PanelEmpty>
       ) : (
         <ul className="divide-y divide-border-subtle">
           {live.map((c) => {
-            const status = connectorStatus(c);
+            const health = connectorHealth(c);
             const s = c.deploymentSummary;
             return (
               <li key={c.id}>
@@ -669,7 +794,10 @@ function ConnectorsPanel({ connectors }: { connectors: Connector[] }) {
                   className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-white/[0.025]"
                 >
                   <span
-                    className={`h-2 w-2 shrink-0 rounded-full ${CONNECTOR_DOT[status]}`}
+                    role="img"
+                    aria-label={CONNECTOR_HEALTH_LABEL[health]}
+                    title={CONNECTOR_HEALTH_LABEL[health]}
+                    className={`h-2 w-2 shrink-0 rounded-full ${CONNECTOR_HEALTH_DOT[health]}`}
                   />
                   <span className="min-w-0 flex-1">
                     <span className="flex min-w-0 items-baseline gap-2">
@@ -694,7 +822,7 @@ function ConnectorsPanel({ connectors }: { connectors: Connector[] }) {
                             ', all deployed'
                           )}
                         </>
-                      ) : status === 'waiting' || status === 'expired' ? (
+                      ) : health === 'waiting' || health === 'expired' ? (
                         'Not enrolled yet'
                       ) : (
                         'No deployments reported'
@@ -703,11 +831,11 @@ function ConnectorsPanel({ connectors }: { connectors: Connector[] }) {
                   </span>
                   <span className="shrink-0 text-right">
                     <span
-                      className={`block text-xs ${status === 'stale' ? 'text-amber-300' : 'text-text-secondary'}`}
+                      className={`block text-xs ${health === 'stale' ? 'text-amber-300' : 'text-text-secondary'}`}
                     >
                       {c.lastSeenAt
                         ? formatRelative(c.lastSeenAt)
-                        : status === 'waiting'
+                        : health === 'waiting'
                           ? 'Waiting'
                           : 'Never'}
                     </span>
@@ -736,6 +864,7 @@ function EndpointsPanel({
   counts: FleetCounts['endpoints'];
   probes: ProbeOption[];
 }) {
+  const navigate = useNavigate();
   const segments = [
     { label: 'healthy', value: counts.healthy, color: 'bg-slate-400' },
     { label: 'expiring', value: counts.expiring, color: 'bg-amber-400' },
@@ -750,32 +879,52 @@ function EndpointsPanel({
         count={counts.total}
         actions={<PanelLink to="/dashboard/endpoints">All endpoints</PanelLink>}
       />
-      <div className="px-5 py-4">
-        <div
-          className="flex h-1.5 gap-0.5 overflow-hidden rounded-full bg-white/[0.04]"
-          role="img"
-          aria-label={segments.map((s) => `${s.value} ${s.label}`).join(', ')}
+      {counts.total === 0 ? (
+        <PanelEmpty
+          icon={Activity}
+          title="Monitor your first endpoint"
+          action={
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={<Plus className="h-3.5 w-3.5" />}
+              onClick={() => navigate('/dashboard/endpoints?add=1')}
+            >
+              Add endpoint
+            </Button>
+          }
         >
-          {segments
-            .filter((s) => s.value > 0)
-            .map((s) => (
-              <span
-                key={s.label}
-                className={s.color}
-                style={{ width: `${(s.value / total) * 100}%` }}
-              />
+          Check expiry, chain trust and reachability on any TLS host, including
+          ones that serve certificates from another CA.
+        </PanelEmpty>
+      ) : (
+        <div className="px-5 py-4">
+          <div
+            className="flex h-1.5 gap-0.5 overflow-hidden rounded-full bg-white/[0.04]"
+            role="img"
+            aria-label={segments.map((s) => `${s.value} ${s.label}`).join(', ')}
+          >
+            {segments
+              .filter((s) => s.value > 0)
+              .map((s) => (
+                <span
+                  key={s.label}
+                  className={s.color}
+                  style={{ width: `${(s.value / total) * 100}%` }}
+                />
+              ))}
+          </div>
+          <ul className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-muted">
+            {segments.map((s) => (
+              <li key={s.label} className="inline-flex items-center gap-1.5">
+                <span className={`h-1.5 w-1.5 rounded-full ${s.color}`} />
+                <span className="text-text-secondary tnum">{s.value}</span>
+                {s.label}
+              </li>
             ))}
+          </ul>
         </div>
-        <ul className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-muted">
-          {segments.map((s) => (
-            <li key={s.label} className="inline-flex items-center gap-1.5">
-              <span className={`h-1.5 w-1.5 rounded-full ${s.color}`} />
-              <span className="text-text-secondary tnum">{s.value}</span>
-              {s.label}
-            </li>
-          ))}
-        </ul>
-      </div>
+      )}
       {probes.length > 0 && (
         <section aria-label="Probes">
           <h3 className="border-t border-border-subtle px-5 pt-3 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-faint">
@@ -818,6 +967,14 @@ function EndpointsPanel({
 }
 
 /* ── Page ───────────────────────────────────────────────────────────────── */
+
+/** Single-column order, below the two-column breakpoint. */
+const PANEL_ORDER: Record<OverviewPanel, string> = {
+  attention: 'order-1',
+  schedule: 'order-2',
+  connectors: 'order-3',
+  endpoints: 'order-4',
+};
 
 interface ResourceCounts {
   domains: number;
@@ -868,16 +1025,38 @@ export default function Overview() {
     () =>
       fleet
         ? buildKpis(fleet, {
-            certificates: counts?.certificates,
             domains: counts?.domains,
           })
         : null,
     [fleet, counts],
   );
-  const timeline = useMemo(
-    () => (data ? expiryTimeline(data.certs, HORIZON) : []),
-    [data],
+  const schedule = useMemo(
+    () =>
+      data
+        ? renewalSchedule(data.certs, { plan, connectors: data.connectors })
+        : { rows: [], total: 0 },
+    [data, plan],
   );
+  const layout = useMemo(() => {
+    if (!data || !fleet) return null;
+    return balancePanels({
+      attention: estimatePanelHeight('attention', {
+        rows: items.length,
+        groups: new Set(items.map((i) => i.severity)).size,
+      }),
+      schedule: estimatePanelHeight('schedule', {
+        rows: schedule.rows.length,
+        extra: schedule.total - schedule.rows.length,
+      }),
+      connectors: estimatePanelHeight('connectors', {
+        rows: data.connectors.filter((c) => !c.revokedAt).length,
+      }),
+      endpoints: estimatePanelHeight('endpoints', {
+        rows: fleet.endpoints.total,
+        extra: data.probes.length,
+      }),
+    });
+  }, [data, fleet, items, schedule]);
 
   // Free-tier auto-renewal confirmation banner
   const autoRenewalConfirmedAt = (
@@ -927,7 +1106,7 @@ export default function Overview() {
   return (
     <div>
       <PageHeader
-        title={`Welcome back, ${user?.displayName || user?.username || 'user'}`}
+        title={`Welcome back, ${greetingName(user)}`}
         description="Account health across your certificates, endpoints and connectors."
         actions={
           <>
@@ -1050,23 +1229,44 @@ export default function Overview() {
         <div className="space-y-6">
           <KpiStrip kpis={kpis} />
 
-          <div className="grid items-start gap-6 xl:grid-cols-12">
-            <div className="min-w-0 xl:col-span-7">
-              <AttentionPanel
-                items={items}
-                loading={loading}
-                checkedAt={checkedAt}
-                onRefresh={() => refresh()}
-              />
-            </div>
-            <div className="min-w-0 space-y-6 xl:col-span-5">
-              <ExpiryTimeline
-                rows={timeline}
-                windowDays={renewalWindowDays(plan)}
-              />
-              <ConnectorsPanel connectors={data.connectors} />
-              <EndpointsPanel counts={fleet.endpoints} probes={data.probes} />
-            </div>
+          {/*
+            One column on smaller screens, in a fixed order. On wide screens,
+            two columns balanced by content (see balancePanels): the column
+            wrappers are display: contents below xl, so the order classes
+            apply to the panels themselves.
+          */}
+          <div className="flex flex-col gap-6 xl:grid xl:grid-cols-12 xl:items-start">
+            {(['left', 'right'] as const).map((side) => (
+              <div
+                key={side}
+                className={`contents xl:flex xl:min-w-0 xl:flex-col xl:gap-6 ${side === 'left' ? 'xl:col-span-7' : 'xl:col-span-5'}`}
+              >
+                {layout?.[side].map((panel) => (
+                  <div
+                    key={panel}
+                    className={`min-w-0 ${PANEL_ORDER[panel]} xl:order-none`}
+                  >
+                    {panel === 'attention' ? (
+                      <AttentionPanel
+                        items={items}
+                        loading={loading}
+                        checkedAt={checkedAt}
+                        onRefresh={() => refresh()}
+                      />
+                    ) : panel === 'schedule' ? (
+                      <RenewalSchedulePanel schedule={schedule} />
+                    ) : panel === 'connectors' ? (
+                      <ConnectorsPanel connectors={data.connectors} />
+                    ) : (
+                      <EndpointsPanel
+                        counts={fleet.endpoints}
+                        probes={data.probes}
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+            ))}
           </div>
         </div>
       )}

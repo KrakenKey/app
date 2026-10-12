@@ -7,13 +7,19 @@ import type {
 } from '@krakenkey/shared';
 import { mockCerts } from '../../test/mocks/data';
 import {
+  balancePanels,
+  certRenewal,
   computeAttention,
   countByArea,
-  expiryTimeline,
+  estimatePanelHeight,
   fleetCounts,
+  greetingName,
+  renewalSchedule,
   renewalWindowDays,
   summarizeEndpoint,
 } from '../accountHealth';
+import { connectorHealth, type ConnectorHealth } from '../connectors';
+import { shortDate } from '../dates';
 
 const NOW = new Date('2026-10-11T14:30:00Z').getTime();
 const DAY = 86_400_000;
@@ -258,44 +264,6 @@ describe('ordering and actions', () => {
   });
 });
 
-describe('expiryTimeline', () => {
-  it('lists live certificates inside the horizon, soonest first', () => {
-    const rows = expiryTimeline(
-      [
-        cert({ id: 1, expiresAt: inDays(60.5), renewAfter: inDays(30.5) }),
-        cert({ id: 2, expiresAt: inDays(5.5), autoRenew: false }),
-        cert({ id: 3, expiresAt: inDays(120) }),
-        cert({
-          id: 4,
-          status: 'renewing' as TlsCert['status'],
-          expiresAt: inDays(19.5),
-        }),
-        cert({
-          id: 5,
-          status: 'revoked' as TlsCert['status'],
-          expiresAt: inDays(10),
-        }),
-      ],
-      90,
-      NOW,
-    );
-    expect(rows.map((r) => [r.id, r.days, r.renewInDays, r.renewing])).toEqual([
-      [2, 5, null, false],
-      [4, 19, null, true],
-      [1, 60, 30, false],
-    ]);
-  });
-
-  it('marks a scheduled renewal only when it is ahead of expiry', () => {
-    const [row] = expiryTimeline(
-      [cert({ expiresAt: inDays(40.5), renewAfter: inDays(-2) })],
-      90,
-      NOW,
-    );
-    expect(row.renewInDays).toBeNull();
-  });
-});
-
 describe('fleetCounts', () => {
   it('counts certificates, endpoint states, connectors and domains', () => {
     const f = fleetCounts({
@@ -306,6 +274,10 @@ describe('fleetCounts', () => {
         cert({ id: 3, expiresAt: inDays(80) }),
         cert({ id: 4, status: 'failed' as TlsCert['status'] }),
         cert({ id: 5, status: 'renewing' as TlsCert['status'] }),
+        cert({ id: 6, status: 'revoked' as TlsCert['status'] }),
+        cert({ id: 7, status: 'revoked' as TlsCert['status'] }),
+        cert({ id: 8, status: 'awaiting_csr' as TlsCert['status'] }),
+        cert({ id: 9, status: 'pending' as TlsCert['status'] }),
       ],
       endpoints: [
         endpoint({ id: 'a' }),
@@ -338,11 +310,15 @@ describe('fleetCounts', () => {
         { id: 'd2', hostname: 'b.example', isVerified: false } as Domain,
       ],
     });
+    // Live is issued + renewing + on the way; revoked and failed are not.
     expect(f.certs).toMatchObject({
-      total: 5,
+      total: 9,
+      live: 6,
       issued: 3,
       renewing: 1,
+      inProgress: 2,
       failed: 1,
+      revoked: 2,
     });
     expect(f.certs.expiring.map((e) => e.days)).toEqual([4, 12]);
     expect(f.endpoints).toEqual({
@@ -354,5 +330,328 @@ describe('fleetCounts', () => {
     });
     expect(f.connectors).toEqual({ total: 1, stale: 1, failingTargets: 1 });
     expect(f.domains).toEqual({ total: 2, pending: 1 });
+  });
+});
+
+/* The real account the Overview was checked against: 17 revoked, #21 with
+   auto-renew off, #27-#30 managed by a connector with a failing target. */
+const ciCerts = (): TlsCert[] => [
+  ...Array.from({ length: 17 }, (_, i) =>
+    cert({
+      id: 3 + i,
+      status: 'revoked' as TlsCert['status'],
+      expiresAt: inDays(40 - i * 7),
+      renewAfter: inDays(10 - i * 7),
+    }),
+  ),
+  cert({
+    id: 21,
+    autoRenew: false,
+    managedBy: null,
+    expiresAt: inDays(84.3),
+    renewAfter: inDays(54.3),
+  }),
+  ...[27, 28, 29, 30].map((id) =>
+    cert({
+      id,
+      autoRenew: false,
+      managedBy: 'connector',
+      expiresAt: inDays(88.2 + (id - 27) * 0.2),
+      renewAfter: inDays(57.6 + (id - 27) * 0.2),
+    }),
+  ),
+];
+
+const ciConnector = {
+  id: 'c1',
+  name: 'e2e-connector',
+  clientLabel: 'e2e-client',
+  allowedCertIds: [27, 28, 29, 30],
+  enrolledAt: inDays(-2),
+  lastSeenAt: inDays(-20 / 24),
+  revokedAt: null,
+  enrollmentTokenExpiresAt: null,
+  deploymentSummary: { certificates: 2, targets: 2, failing: 1 },
+} as unknown as Connector;
+
+describe('certRenewal', () => {
+  it('warns about auto-renew off at any distance from expiry', () => {
+    const r = certRenewal(
+      cert({ autoRenew: false, expiresAt: inDays(84.3) }),
+      30,
+      NOW,
+    );
+    expect(r).toMatchObject({ state: 'manual', severity: 'warning', days: 84 });
+    expect(r?.renewAt).toBeNull();
+  });
+
+  it('is critical inside the renewal window, or 7 days on Free', () => {
+    const manual = (d: number) =>
+      cert({ autoRenew: false, expiresAt: inDays(d + 0.5) });
+    expect(certRenewal(manual(30), 30, NOW)?.severity).toBe('critical');
+    expect(certRenewal(manual(31), 30, NOW)?.severity).toBe('warning');
+    expect(certRenewal(manual(7), 5, NOW)?.severity).toBe('critical');
+    expect(certRenewal(manual(8), 5, NOW)?.severity).toBe('warning');
+  });
+
+  it('treats connector-managed certificates as automatic', () => {
+    expect(
+      certRenewal(
+        cert({
+          autoRenew: false,
+          managedBy: 'connector',
+          expiresAt: inDays(88),
+          renewAfter: inDays(57),
+        }),
+        30,
+        NOW,
+      ),
+    ).toMatchObject({ state: 'connector', severity: null, managed: true });
+  });
+
+  it('flags an overdue automatic renewal, and an expired certificate', () => {
+    expect(
+      certRenewal(
+        cert({ expiresAt: inDays(12.5), renewAfter: inDays(-18) }),
+        30,
+        NOW,
+      ),
+    ).toMatchObject({ state: 'overdue', severity: 'warning' });
+    expect(
+      certRenewal(
+        cert({ expiresAt: inDays(-1.5), renewAfter: inDays(-31) }),
+        30,
+        NOW,
+      ),
+    ).toMatchObject({ state: 'overdue', severity: 'critical' });
+  });
+
+  it('ignores anything that is not issued or renewing', () => {
+    for (const status of ['revoked', 'revoking', 'failed', 'pending']) {
+      expect(
+        certRenewal(
+          cert({
+            status: status as TlsCert['status'],
+            autoRenew: false,
+            expiresAt: inDays(3),
+          }),
+          30,
+          NOW,
+        ),
+      ).toBeNull();
+    }
+  });
+});
+
+describe('attention for a sparse account', () => {
+  it('flags auto-renew off far from expiry, with a date and the id', () => {
+    const items = computeAttention({
+      ...empty,
+      plan: 'starter',
+      certs: ciCerts(),
+      connectors: [ciConnector],
+    });
+    expect(items.map((i) => `${i.id}:${i.severity}`)).toEqual([
+      'con-c1-failing:critical',
+      'cert-21:warning',
+    ]);
+    expect(items[1]).toMatchObject({
+      title: 'example.com',
+      ref: '#21',
+      summary: `Auto-renew is off; it will expire on ${shortDate(inDays(84.3))}`,
+      action: { kind: 'renew', certId: 21 },
+    });
+  });
+
+  it('never lists revoked certificates', () => {
+    const items = computeAttention({
+      ...empty,
+      certs: [
+        cert({
+          id: 9,
+          status: 'revoked' as TlsCert['status'],
+          autoRenew: false,
+          expiresAt: inDays(2),
+        }),
+      ],
+    });
+    expect(items).toEqual([]);
+  });
+});
+
+describe('renewalSchedule', () => {
+  it('tells rows with the same name apart and names the connector', () => {
+    const { rows, total } = renewalSchedule(ciCerts(), {
+      plan: 'starter',
+      connectors: [ciConnector],
+      now: NOW,
+    });
+    // No revoked rows; the one needing attention first, then by renewal.
+    expect(total).toBe(5);
+    expect(rows.map((r) => [r.id, r.state, r.severity])).toEqual([
+      [21, 'manual', 'warning'],
+      [27, 'connector', null],
+      [28, 'connector', null],
+      [29, 'connector', null],
+      [30, 'connector', null],
+    ]);
+    expect(rows[1]).toMatchObject({
+      name: 'example.com',
+      extraNames: 1,
+      connectorName: 'e2e-connector',
+      renewInDays: 57,
+      days: 88,
+    });
+    expect(rows[0].renewInDays).toBeNull();
+  });
+
+  it('orders critical, warning, renewing, then scheduled by next step', () => {
+    const { rows } = renewalSchedule(
+      [
+        cert({ id: 1, expiresAt: inDays(60.5), renewAfter: inDays(30.5) }),
+        cert({ id: 2, expiresAt: inDays(50.5), renewAfter: inDays(20.5) }),
+        cert({ id: 3, autoRenew: false, expiresAt: inDays(5.5) }),
+        cert({ id: 4, autoRenew: false, expiresAt: inDays(70.5) }),
+        cert({
+          id: 5,
+          status: 'renewing' as TlsCert['status'],
+          expiresAt: inDays(19.5),
+        }),
+        cert({ id: 6, expiresAt: inDays(12.5), renewAfter: inDays(-18) }),
+      ],
+      { now: NOW },
+    );
+    expect(rows.map((r) => [r.id, r.severity ?? r.state])).toEqual([
+      [3, 'critical'],
+      [6, 'warning'],
+      [4, 'warning'],
+      [5, 'renewing'],
+      [2, 'scheduled'],
+      [1, 'scheduled'],
+    ]);
+  });
+
+  it('keeps the most urgent rows and counts the rest', () => {
+    const certs = Array.from({ length: 11 }, (_, i) =>
+      cert({
+        id: i + 1,
+        expiresAt: inDays(40.5 + i),
+        renewAfter: inDays(10.5 + i),
+      }),
+    );
+    const { rows, total } = renewalSchedule(certs, { now: NOW, limit: 8 });
+    expect(total).toBe(11);
+    expect(rows.map((r) => r.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  it('leaves out renewals beyond the horizon unless they need someone', () => {
+    const { rows } = renewalSchedule(
+      [
+        cert({ id: 1, expiresAt: inDays(300), renewAfter: inDays(270) }),
+        cert({ id: 2, autoRenew: false, expiresAt: inDays(300) }),
+      ],
+      { now: NOW, horizon: 90 },
+    );
+    expect(rows.map((r) => r.id)).toEqual([2]);
+  });
+});
+
+describe('connector health and the sidebar agree', () => {
+  const connector = (over: object) =>
+    ({ ...ciConnector, ...over }) as unknown as Connector;
+  const cases: [Connector, ConnectorHealth, string | null][] = [
+    [connector({}), 'failing', 'critical'],
+    [
+      connector({
+        lastSeenAt: inDays(-2),
+        deploymentSummary: { certificates: 1, targets: 1, failing: 0 },
+      }),
+      'stale',
+      'warning',
+    ],
+    [
+      connector({
+        deploymentSummary: { certificates: 1, targets: 1, failing: 0 },
+      }),
+      'healthy',
+      null,
+    ],
+    [
+      connector({
+        enrolledAt: null,
+        lastSeenAt: null,
+        enrollmentTokenExpiresAt: inDays(1),
+        deploymentSummary: undefined,
+      }),
+      'waiting',
+      null,
+    ],
+  ];
+  it.each(cases)('%#: %s', (c, health, badge) => {
+    expect(connectorHealth(c, NOW)).toBe(health);
+    const items = computeAttention({ ...empty, connectors: [c] });
+    expect(countByArea(items).connectors.severity).toBe(badge);
+  });
+});
+
+describe('greetingName', () => {
+  it('prefers the display name', () => {
+    expect(greetingName({ displayName: 'Maya Okafor', username: 'maya' })).toBe(
+      'Maya Okafor',
+    );
+  });
+  it('uses the part before the @ of an address', () => {
+    expect(
+      greetingName({
+        displayName: null,
+        username: 'cert-action@krakenkey.io',
+        email: 'cert-action@krakenkey.io',
+      }),
+    ).toBe('cert-action');
+    expect(greetingName({ username: '', email: 'ops@example.com' })).toBe(
+      'ops',
+    );
+    expect(greetingName({ username: 'maya.okafor' })).toBe('maya.okafor');
+    expect(greetingName(null)).toBe('there');
+  });
+});
+
+describe('balancePanels', () => {
+  const heights = (attentionRows: number, endpoints: number) => ({
+    attention: estimatePanelHeight('attention', {
+      rows: attentionRows,
+      groups: Math.min(attentionRows, 3),
+    }),
+    schedule: estimatePanelHeight('schedule', { rows: 5 }),
+    connectors: estimatePanelHeight('connectors', { rows: 1 }),
+    endpoints: estimatePanelHeight('endpoints', { rows: endpoints }),
+  });
+
+  it('keeps the side panels on the right beside a long attention list', () => {
+    expect(balancePanels(heights(12, 10))).toEqual({
+      left: ['attention'],
+      right: ['schedule', 'connectors', 'endpoints'],
+    });
+  });
+
+  it('moves a panel under a short attention list', () => {
+    const { left, right } = balancePanels(heights(2, 0));
+    expect(left[0]).toBe('attention');
+    expect(left.length).toBeGreaterThan(1);
+    expect(right.length).toBeGreaterThan(0);
+  });
+
+  it('picks the split with the shortest page', () => {
+    expect(
+      balancePanels({
+        attention: 265,
+        schedule: 364,
+        connectors: 111,
+        endpoints: 273,
+      }),
+    ).toEqual({
+      left: ['attention', 'endpoints'],
+      right: ['schedule', 'connectors'],
+    });
   });
 });

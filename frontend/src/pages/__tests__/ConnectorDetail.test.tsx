@@ -78,7 +78,8 @@ describe('ConnectorDetail', () => {
       await screen.findByRole('heading', { name: 'web-01' }),
     ).toBeInTheDocument();
     expect(screen.getByText('Acme Corp')).toBeInTheDocument();
-    expect(screen.getByText('Active')).toBeInTheDocument();
+    // Checked in recently, but a target is failing: health, not recency.
+    expect(screen.getByText('Targets failing')).toBeInTheDocument();
     expect(screen.getByText('linux/amd64')).toBeInTheDocument();
     expect(screen.getByText('certs:read, certs:renew')).toBeInTheDocument();
     // Names come from the certificate and domain lists.
