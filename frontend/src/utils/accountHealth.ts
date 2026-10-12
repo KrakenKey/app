@@ -9,6 +9,7 @@ import type {
 import type { ProbeOption } from '../services/endpointService';
 import { getCertDomains } from './certDomains';
 import { connectorStatus, formatRelative } from './connectors';
+import { shortDate } from './dates';
 
 /**
  * Account health: one list of things that need a person, computed from the
@@ -47,6 +48,11 @@ export interface AttentionItem {
   kind: AttentionKind;
   /** Usually a hostname, connector or probe name. */
   title: string;
+  /**
+   * Tells apart items with the same title, like several certificates for
+   * one hostname: "#27".
+   */
+  ref?: string;
   /** What is wrong, in a few words: "Expires in 5 days, auto-renew is off". */
   summary: string;
   /** Optional context: a failure reason, an error, a client label. */
@@ -166,6 +172,99 @@ export function certName(cert: TlsCert): string {
   return getCertDomains(cert)[0] ?? `Certificate #${cert.id}`;
 }
 
+/* ── Renewal ───────────────────────────────────────────────────────────── */
+
+/**
+ * - scheduled: KrakenKey renews it automatically, renewal not due yet
+ * - connector: a connector renews it, renewal not due yet
+ * - manual: auto-renew is off and no connector manages it
+ * - overdue: renewal is due (or it expired) and has not started
+ * - replace: the CA asked for early replacement (ARI)
+ * - renewing: renewal is running now
+ */
+export type RenewalState =
+  | 'scheduled'
+  | 'connector'
+  | 'manual'
+  | 'overdue'
+  | 'replace'
+  | 'renewing';
+
+export interface CertRenewal {
+  state: RenewalState;
+  /** Whether it needs a person, and how badly. */
+  severity: 'critical' | 'warning' | null;
+  /** Whole days until expiry. */
+  days: number;
+  /** When the automatic renewal is due; null for manual certificates. */
+  renewAt: string | null;
+  managed: boolean;
+}
+
+/**
+ * How a live certificate gets renewed and whether that needs a person. One
+ * rule for the attention list and the renewal schedule, so they agree:
+ *
+ * - Auto-renew off and no connector: a warning at any distance from expiry,
+ *   critical once inside the plan's renewal window (or 7 days).
+ * - Automatic (KrakenKey or a connector): nothing until renewal is due
+ *   (renewAfter has passed, or without one, inside the renewal window), has
+ *   not started, and 30 days or less are left (or it expired); then
+ *   critical within 7 days of expiry, else a warning.
+ * - The CA asked for early replacement: a warning.
+ *
+ * Returns null for anything that is not issued or renewing, or has no
+ * expiry: revoked, failed and in-flight certificates are not renewed.
+ */
+export function certRenewal(
+  cert: TlsCert,
+  windowDays: number,
+  now: number = Date.now(),
+): CertRenewal | null {
+  if (!cert.expiresAt) return null;
+  if (cert.status !== CertStatus.ISSUED && cert.status !== CertStatus.RENEWING)
+    return null;
+  const days = daysUntil(cert.expiresAt, now);
+  const managed = cert.managedBy === 'connector';
+  const automatic = managed || cert.autoRenew;
+  const renewAt = !automatic
+    ? null
+    : (cert.renewAfter ??
+      new Date(
+        new Date(cert.expiresAt).getTime() - windowDays * DAY,
+      ).toISOString());
+  const base = { days, renewAt, managed };
+
+  if (cert.status === CertStatus.RENEWING) {
+    return { ...base, state: 'renewing', severity: null };
+  }
+  if (cert.ariReplacementRequestedAt) {
+    return { ...base, state: 'replace', severity: 'warning' };
+  }
+  if (!automatic) {
+    return {
+      ...base,
+      state: 'manual',
+      severity: days <= Math.max(windowDays, 7) ? 'critical' : 'warning',
+    };
+  }
+  const due = new Date(renewAt!).getTime() <= now;
+  // A renewal that just came due with more than 30 days left is not a
+  // problem yet: KrakenKey or the connector picks it up shortly.
+  if ((!due || days > 30) && days >= 0) {
+    return {
+      ...base,
+      state: managed ? 'connector' : 'scheduled',
+      severity: null,
+    };
+  }
+  return {
+    ...base,
+    state: 'overdue',
+    severity: days <= 7 ? 'critical' : 'warning',
+  };
+}
+
 /* ── The list ──────────────────────────────────────────────────────────── */
 
 export interface HealthInput {
@@ -201,6 +300,7 @@ export function computeAttention(input: HealthInput): AttentionItem[] {
       area: 'certificates' as const,
       kind: 'Certificate' as const,
       title: name,
+      ref: `#${cert.id}`,
       to: certLink,
       linkLabel: 'View',
     };
@@ -257,40 +357,32 @@ export function computeAttention(input: HealthInput): AttentionItem[] {
         });
         break;
       case CertStatus.ISSUED: {
-        if (cert.ariReplacementRequestedAt) {
-          items.push({
-            ...base,
-            severity: 'warning',
-            summary: 'The CA asked for early replacement',
-            dueDays: days ?? undefined,
-            ...(managed
-              ? { to: connectorsLink, linkLabel: 'Connectors' }
-              : { action: { kind: 'renew', certId: cert.id } }),
-          });
-          break;
+        const r = certRenewal(cert, window, now);
+        if (!r || !r.severity) break;
+        const target = managed
+          ? { to: connectorsLink, linkLabel: 'Connectors' }
+          : { action: { kind: 'renew' as const, certId: cert.id } };
+        let summary: string;
+        if (r.state === 'replace') {
+          summary = 'The CA asked for early replacement';
+        } else if (r.state === 'manual') {
+          summary =
+            r.days <= 30
+              ? `${expiresIn(r.days)}, auto-renew is off`
+              : `Auto-renew is off; it will expire on ${shortDate(cert.expiresAt!)}`;
+        } else {
+          summary = `${expiresIn(r.days)}, ${
+            managed
+              ? 'the connector has not renewed it'
+              : 'renewal has not started'
+          }`;
         }
-        if (days == null || days > 30) break;
-        // Renewal is due once renewAfter passes; without it, once the
-        // certificate is inside the plan's renewal window.
-        const due = cert.renewAfter
-          ? new Date(cert.renewAfter).getTime() <= now
-          : days <= window;
-        const automatic = managed || cert.autoRenew;
-        // Scheduled and not yet due: KrakenKey or the connector has it.
-        if (automatic && !due && days >= 0) break;
-        const why = !automatic
-          ? 'auto-renew is off'
-          : managed
-            ? 'the connector has not renewed it'
-            : 'renewal has not started';
         items.push({
           ...base,
-          severity: days <= 7 ? 'critical' : 'warning',
-          summary: `${expiresIn(days)}, ${why}`,
-          dueDays: days,
-          ...(managed
-            ? { to: connectorsLink, linkLabel: 'Connectors' }
-            : { action: { kind: 'renew', certId: cert.id } }),
+          severity: r.severity,
+          summary,
+          dueDays: r.days,
+          ...target,
         });
         break;
       }
@@ -431,61 +523,116 @@ export function computeAttention(input: HealthInput): AttentionItem[] {
   );
 }
 
-/* ── Expiry timeline ───────────────────────────────────────────────────── */
+/* ── Renewal schedule ──────────────────────────────────────────────────── */
 
-export interface TimelineRow {
+export interface ScheduleRow {
   id: number;
+  /** First domain. Several certificates can share it, so show the id too. */
   name: string;
+  /** How many more names the certificate covers. */
+  extraNames: number;
+  /** The connector limited to this certificate, when one manages it. */
+  connectorName: string | null;
+  state: RenewalState;
+  severity: CertRenewal['severity'];
+  expiresAt: string;
   /** Days until expiry. */
   days: number;
-  /** Days until the scheduled automatic renewal, when one is ahead. */
+  renewAt: string | null;
+  /** Days until the automatic renewal; negative when it is overdue. */
   renewInDays: number | null;
-  renewing: boolean;
+}
+
+export interface RenewalSchedule {
+  /** The most urgent rows, at most `limit`. */
+  rows: ScheduleRow[];
+  /** Rows inside the horizon, shown or not. */
+  total: number;
+}
+
+const SEVERITY_RANK = { critical: 0, warning: 1 } as const;
+
+/** Days until the next thing happens to the certificate, for ordering. */
+function nextActionDays(r: ScheduleRow): number {
+  if (r.state === 'renewing') return 0;
+  if (r.state === 'scheduled' || r.state === 'connector')
+    return r.renewInDays ?? r.days;
+  return r.days;
 }
 
 /**
- * Live certificates expiring within `horizon` days, soonest first, with the
- * day their automatic renewal is scheduled (KrakenKey's or the connector's).
+ * When each live certificate renews and expires. With 90-day certificates
+ * everything expires within 90 days, so the useful question is what happens
+ * next: rows that need a person come first (critical, then warning), then
+ * renewals in progress, then scheduled renewals, soonest first. Rows whose
+ * next step is beyond `horizon` days are left out unless they need someone.
+ * Revoked, failed and in-flight certificates never appear.
  */
-export function expiryTimeline(
+export function renewalSchedule(
   certs: TlsCert[],
-  horizon = 90,
-  now: number = Date.now(),
-): TimelineRow[] {
-  return certs
-    .filter(
-      (c) =>
-        c.expiresAt &&
-        (c.status === CertStatus.ISSUED || c.status === CertStatus.RENEWING),
-    )
-    .map((c) => {
-      const days = daysUntil(c.expiresAt!, now);
-      const automatic = c.autoRenew || c.managedBy === 'connector';
-      const renewIn =
-        automatic && c.renewAfter && c.status === CertStatus.ISSUED
-          ? daysUntil(c.renewAfter, now)
-          : null;
-      return {
-        id: c.id,
-        name: certName(c),
-        days,
-        renewInDays:
-          renewIn != null && renewIn >= 0 && renewIn < days ? renewIn : null,
-        renewing: c.status === CertStatus.RENEWING,
-      };
-    })
-    .filter((r) => r.days <= horizon)
-    .sort((a, b) => a.days - b.days);
+  opts: {
+    plan?: string | null;
+    connectors?: Connector[];
+    horizon?: number;
+    limit?: number;
+    now?: number;
+  } = {},
+): RenewalSchedule {
+  const now = opts.now ?? Date.now();
+  const horizon = opts.horizon ?? 90;
+  const limit = opts.limit ?? 8;
+  const window = renewalWindowDays(opts.plan);
+  const live = (opts.connectors ?? []).filter((c) => !c.revokedAt);
+
+  const all: ScheduleRow[] = [];
+  for (const cert of certs) {
+    const r = certRenewal(cert, window, now);
+    if (!r) continue;
+    const names = getCertDomains(cert);
+    const connector = r.managed
+      ? live.find((c) => c.allowedCertIds?.includes(cert.id))
+      : undefined;
+    all.push({
+      id: cert.id,
+      name: names[0] ?? `Certificate #${cert.id}`,
+      extraNames: Math.max(0, names.length - 1),
+      connectorName: connector?.name ?? null,
+      state: r.state,
+      severity: r.severity,
+      expiresAt: cert.expiresAt!,
+      days: r.days,
+      renewAt: r.renewAt,
+      renewInDays: r.renewAt ? daysUntil(r.renewAt, now) : null,
+    });
+  }
+
+  const rank = (r: ScheduleRow) =>
+    r.severity ? SEVERITY_RANK[r.severity] : r.state === 'renewing' ? 2 : 3;
+  const inHorizon = all
+    .filter((r) => r.severity || nextActionDays(r) <= horizon)
+    .sort(
+      (a, b) =>
+        rank(a) - rank(b) ||
+        nextActionDays(a) - nextActionDays(b) ||
+        a.id - b.id,
+    );
+  return { rows: inHorizon.slice(0, limit), total: inHorizon.length };
 }
 
 /* ── Fleet counts (the Overview's KPI strip) ───────────────────────────── */
 
 export interface FleetCounts {
   certs: {
+    /** Every record, revoked and failed included. */
     total: number;
+    /** Issued, renewing, or on the way to issuance. */
+    live: number;
     issued: number;
     renewing: number;
+    /** Pending, issuing, or waiting for a connector's CSR. */
+    inProgress: number;
     failed: number;
+    revoked: number;
     /** Issued and expiring within 30 days, soonest first. */
     expiring: { name: string; days: number }[];
   };
@@ -506,21 +653,41 @@ export function fleetCounts(
   const now = input.now ?? Date.now();
   const certs = {
     total: input.certs.length,
+    live: 0,
     issued: 0,
     renewing: 0,
+    inProgress: 0,
     failed: 0,
+    revoked: 0,
     expiring: [] as { name: string; days: number }[],
   };
   for (const c of input.certs) {
-    if (c.status === CertStatus.ISSUED) {
-      certs.issued++;
-      if (c.expiresAt) {
-        const days = daysUntil(c.expiresAt, now);
-        if (days <= 30) certs.expiring.push({ name: certName(c), days });
-      }
-    } else if (c.status === CertStatus.RENEWING) certs.renewing++;
-    else if (c.status === CertStatus.FAILED) certs.failed++;
+    switch (c.status) {
+      case CertStatus.ISSUED:
+        certs.issued++;
+        if (c.expiresAt) {
+          const days = daysUntil(c.expiresAt, now);
+          if (days <= 30) certs.expiring.push({ name: certName(c), days });
+        }
+        break;
+      case CertStatus.RENEWING:
+        certs.renewing++;
+        break;
+      case CertStatus.PENDING:
+      case CertStatus.ISSUING:
+      case CertStatus.AWAITING_CSR:
+        certs.inProgress++;
+        break;
+      case CertStatus.FAILED:
+        certs.failed++;
+        break;
+      case CertStatus.REVOKING:
+      case CertStatus.REVOKED:
+        certs.revoked++;
+        break;
+    }
   }
+  certs.live = certs.issued + certs.renewing + certs.inProgress;
   certs.expiring.sort((a, b) => a.days - b.days);
 
   const endpoints = {
@@ -582,4 +749,101 @@ export function countByArea(
     if (area.severity !== 'critical') area.severity = item.severity;
   }
   return out;
+}
+
+/* ── Greeting ──────────────────────────────────────────────────────────── */
+
+/**
+ * A short name to greet someone by: the display name, else the username,
+ * else the email; an address is cut to the part before the @.
+ */
+export function greetingName(
+  user: {
+    displayName?: string | null;
+    username?: string | null;
+    email?: string | null;
+  } | null,
+): string {
+  const raw =
+    user?.displayName?.trim() ||
+    user?.username?.trim() ||
+    user?.email?.trim() ||
+    '';
+  if (user?.displayName?.trim()) return raw;
+  const local = raw.includes('@') ? raw.slice(0, raw.indexOf('@')) : raw;
+  return local || 'there';
+}
+
+/* ── Overview layout ───────────────────────────────────────────────────── */
+
+export type OverviewPanel =
+  | 'attention'
+  | 'schedule'
+  | 'connectors'
+  | 'endpoints';
+
+/**
+ * Rough rendered heights in pixels, from row counts. Only used to balance
+ * the two columns, so close is good enough.
+ */
+export function estimatePanelHeight(
+  panel: OverviewPanel,
+  n: { rows: number; groups?: number; extra?: number },
+): number {
+  const header = 50;
+  switch (panel) {
+    case 'attention':
+      return n.rows === 0
+        ? header + 200
+        : header + (n.groups ?? 1) * 40 + n.rows * 64 + 8;
+    case 'schedule':
+      return n.rows === 0
+        ? header + 222
+        : header + 32 + n.rows * 57 + (n.extra ? 40 : 0);
+    case 'connectors':
+      return n.rows === 0 ? header + 240 : header + n.rows * 61;
+    case 'endpoints':
+      return (
+        (n.rows === 0 ? header + 223 : header + 84) +
+        (n.extra ? 36 + n.extra * 42 : 0)
+      );
+  }
+}
+
+const SIDE_PANELS = ['schedule', 'connectors', 'endpoints'] as const;
+
+/**
+ * Splits the Overview's panels over its two columns on wide screens, so a
+ * short attention list does not leave an empty gap beside a tall right
+ * column. The attention list always leads the wide left column; the other
+ * panels keep their order within a column. Of every split, the one with
+ * the shortest page wins (the taller column is as short as it can be);
+ * ties keep more panels on the right, then the renewal schedule first.
+ */
+export function balancePanels(
+  heights: Record<OverviewPanel, number>,
+  gap = 24,
+): { left: OverviewPanel[]; right: OverviewPanel[] } {
+  const column = (panels: OverviewPanel[]) =>
+    panels.reduce((sum, p, i) => sum + heights[p] + (i > 0 ? gap : 0), 0);
+  let best: { left: OverviewPanel[]; right: OverviewPanel[] } | null = null;
+  let bestCost = Infinity;
+  let bestDiff = Infinity;
+  // Masks in order from "everything on the right" (0) up, so a tie keeps
+  // the earlier, more right-heavy split.
+  for (let mask = 0; mask < 1 << SIDE_PANELS.length; mask++) {
+    const left: OverviewPanel[] = ['attention'];
+    const right: OverviewPanel[] = [];
+    SIDE_PANELS.forEach((p, i) => (mask & (1 << i) ? left : right).push(p));
+    const l = column(left);
+    const r = column(right);
+    const cost = Math.max(l, r);
+    const diff = Math.abs(l - r);
+    if (cost < bestCost || (cost === bestCost && diff < bestDiff)) {
+      best = { left, right };
+      bestCost = cost;
+      bestDiff = diff;
+    }
+  }
+  return best!;
 }

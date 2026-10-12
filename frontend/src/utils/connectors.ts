@@ -27,22 +27,6 @@ export type ConnectorStatus =
   | 'stale'
   | 'revoked';
 
-export const CONNECTOR_STATUS_LABEL: Record<ConnectorStatus, string> = {
-  waiting: 'Waiting to enroll',
-  expired: 'Enrollment token expired',
-  active: 'Active',
-  stale: 'Stale',
-  revoked: 'Revoked',
-};
-
-export const CONNECTOR_STATUS_VARIANT: Record<ConnectorStatus, BadgeVariant> = {
-  waiting: 'neutral',
-  expired: 'warning',
-  active: 'ok',
-  stale: 'warning',
-  revoked: 'danger',
-};
-
 const STALE_AFTER_MS = CONNECTOR_STALE_AFTER_HOURS * 60 * 60 * 1000;
 
 export type ConnectorStatusFields = Pick<
@@ -77,6 +61,78 @@ export function connectorStatus(
   }
   const seen = connector.lastSeenAt ?? connector.enrolledAt;
   return now - new Date(seen).getTime() > STALE_AFTER_MS ? 'stale' : 'active';
+}
+
+/**
+ * What a person needs to know about a connector at a glance. Check-in
+ * recency alone is not enough: a connector that checked in a minute ago but
+ * failed to deploy to a target still needs someone.
+ */
+export type ConnectorHealth =
+  | 'failing'
+  | 'stale'
+  | 'healthy'
+  | 'waiting'
+  | 'expired'
+  | 'revoked';
+
+export const CONNECTOR_HEALTH_LABEL: Record<ConnectorHealth, string> = {
+  failing: 'Targets failing',
+  stale: 'Stale',
+  healthy: 'Active',
+  waiting: 'Waiting to enroll',
+  expired: 'Enrollment token expired',
+  revoked: 'Revoked',
+};
+
+/** Failing targets are danger, stale is a warning, healthy is success. */
+export const CONNECTOR_HEALTH_VARIANT: Record<ConnectorHealth, BadgeVariant> = {
+  failing: 'danger',
+  stale: 'warning',
+  healthy: 'ok',
+  waiting: 'neutral',
+  expired: 'warning',
+  revoked: 'danger',
+};
+
+/** Status dot colors, matching the badge variants above. */
+export const CONNECTOR_HEALTH_DOT: Record<ConnectorHealth, string> = {
+  failing: 'bg-red-400',
+  stale: 'bg-amber-400',
+  healthy: 'bg-emerald-400',
+  waiting: 'bg-slate-400',
+  expired: 'bg-amber-400',
+  revoked: 'bg-slate-500',
+};
+
+export type ConnectorHealthFields = ConnectorStatusFields &
+  Partial<Pick<Connector, 'deploymentSummary' | 'deployments'>>;
+
+/**
+ * Targets whose last deployment failed or was rolled back. The list
+ * endpoint sends a summary; the detail endpoint sends the deployments.
+ */
+export function failingTargets(connector: ConnectorHealthFields): number {
+  if (connector.deploymentSummary) return connector.deploymentSummary.failing;
+  return (connector.deployments ?? []).filter((d) => isFailedState(d.state))
+    .length;
+}
+
+/**
+ * Revoked and not-yet-enrolled connectors keep their lifecycle status. An
+ * enrolled connector with a failing target is failing even when it checks
+ * in on time; otherwise it is stale or healthy by its last check-in.
+ */
+export function connectorHealth(
+  connector: ConnectorHealthFields,
+  now: number = Date.now(),
+): ConnectorHealth {
+  const status = connectorStatus(connector, now);
+  if (status === 'revoked' || status === 'waiting' || status === 'expired') {
+    return status;
+  }
+  if (failingTargets(connector) > 0) return 'failing';
+  return status === 'stale' ? 'stale' : 'healthy';
 }
 
 export const RESTRICTION_REQUIRED =

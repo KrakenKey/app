@@ -13,13 +13,14 @@ const stableUser = {
   ...mockUser,
   resourceCounts: { domains: 2, certificates: 1, apiKeys: 1 },
 };
+let currentUser: Record<string, unknown> = stableUser;
 
 vi.mock('../../hooks/useAuth', async () => {
   const actual = await vi.importActual('../../hooks/useAuth');
   return {
     ...actual,
     useAuth: () => ({
-      user: stableUser,
+      user: currentUser,
       logout: vi.fn(),
       isAuthenticated: true,
       isLoading: false,
@@ -42,6 +43,7 @@ function renderOverview() {
 describe('Overview', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    currentUser = stableUser;
     server.use(
       http.get(`${API_URL}/endpoints`, () => HttpResponse.json([])),
       http.get(`${API_URL}/endpoints/probes/mine`, () => HttpResponse.json([])),
@@ -116,23 +118,126 @@ describe('Overview', () => {
     );
     renderOverview();
     expect(await screen.findByText('All clear')).toBeInTheDocument();
-    expect(
-      screen.getByText('Nothing expires in the next 90 days.'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('Nothing to renew yet')).toBeInTheDocument();
   });
 
-  it('draws issued certificates on the expiry timeline', async () => {
-    const soon = new Date(Date.now() + 12.5 * 86_400_000).toISOString();
-    server.use(
-      http.get(`${API_URL}/certs/tls`, () =>
-        HttpResponse.json([{ ...mockCerts[0], expiresAt: soon }]),
-      ),
-    );
+  it('greets by the part before the @ when the username is an address', () => {
+    currentUser = {
+      ...stableUser,
+      username: 'cert-action@krakenkey.io',
+      email: 'cert-action@krakenkey.io',
+      displayName: null,
+    };
+    renderOverview();
+    expect(screen.getByText('Welcome back, cert-action')).toBeInTheDocument();
+  });
+
+  describe('a sparse account', () => {
+    const day = 86_400_000;
+    const at = (d: number) => new Date(Date.now() + d * day).toISOString();
+    const issued = (id: number, over: object) => ({
+      ...mockCerts[0],
+      id,
+      expiresAt: at(88.5),
+      renewAfter: at(57.5),
+      ...over,
+    });
+
+    beforeEach(() => {
+      server.use(
+        http.get(`${API_URL}/certs/tls`, () =>
+          HttpResponse.json([
+            ...[1, 2, 3].map((id) => ({
+              ...mockCerts[0],
+              id,
+              status: 'revoked',
+              revokedAt: at(-30),
+              expiresAt: at(-10),
+            })),
+            issued(21, { autoRenew: false, expiresAt: at(84.5) }),
+            issued(27, { autoRenew: false, managedBy: 'connector' }),
+            issued(28, { autoRenew: false, managedBy: 'connector' }),
+          ]),
+        ),
+        http.get(`${API_URL}/connectors`, () =>
+          HttpResponse.json([
+            {
+              id: 'c1',
+              name: 'e2e-connector',
+              clientLabel: 'e2e-client',
+              allowedCertIds: [27, 28],
+              enrolledAt: at(-2),
+              lastSeenAt: at(-0.8),
+              revokedAt: null,
+              enrollmentTokenExpiresAt: null,
+              version: '0.3.0-dev',
+              deploymentSummary: { certificates: 2, targets: 2, failing: 1 },
+            },
+          ]),
+        ),
+      );
+    });
+
+    it('counts live certificates and mentions revoked ones', async () => {
+      renderOverview();
+      const kpi = await screen.findByRole('link', {
+        name: /^Certificates\s*3\s*3\sissued,\s3\srevoked/,
+      });
+      expect(kpi).toHaveAttribute('href', '/dashboard/certificates');
+    });
+
+    it('shows a renewal schedule that tells certificates apart', async () => {
+      renderOverview();
+      const schedule = (
+        await screen.findByRole('heading', { name: /Renewal schedule/ })
+      ).closest('div')!.parentElement!;
+      const rows = within(schedule).getAllByRole('listitem');
+      expect(rows.map((r) => r.getAttribute('aria-label'))).toEqual([
+        expect.stringMatching(/^example\.com #21, Auto-renew is off, expires/),
+        expect.stringMatching(
+          /^example\.com #27, Renewed by e2e-connector, renews .+, expires/,
+        ),
+        expect.stringMatching(/^example\.com #28, /),
+      ]);
+    });
+
+    it('flags the certificate with auto-renew off, and never revoked ones', async () => {
+      renderOverview();
+      const warning = await screen.findByRole('region', { name: 'Warning' });
+      expect(within(warning).getByText('#21')).toBeInTheDocument();
+      expect(
+        within(warning).getByText(/^Auto-renew is off; it will expire on/),
+      ).toBeInTheDocument();
+      expect(screen.queryByText('#1')).not.toBeInTheDocument();
+    });
+
+    it('colors the connector by health, not check-in time', async () => {
+      renderOverview();
+      expect(
+        await screen.findByRole('img', { name: 'Targets failing' }),
+      ).toHaveClass('bg-red-400');
+    });
+
+    it('offers to add a first endpoint instead of showing zeros', async () => {
+      renderOverview();
+      expect(
+        await screen.findByText('Monitor your first endpoint'),
+      ).toBeInTheDocument();
+      expect(
+        screen.getAllByRole('button', { name: /add endpoint/i }).length,
+      ).toBeGreaterThan(1);
+    });
+  });
+
+  it('explains connectors when there are none', async () => {
     renderOverview();
     expect(
-      await screen.findByRole('img', {
-        name: /^example\.com expires in 12 days/,
-      }),
+      await screen.findByText(
+        'Run a connector to renew and deploy with your own keys',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /set up a connector/i }),
     ).toBeInTheDocument();
   });
 });

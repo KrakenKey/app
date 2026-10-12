@@ -102,7 +102,12 @@ const waitingConnector = {
 /** Mocks every API call the connector pages make. Returns the live list. */
 async function mockApi(page: Page) {
   const state = {
-    list: [activeConnector, waitingConnector] as Record<string, unknown>[],
+    // Copies: tests revoke and edit connectors, and must not see each
+    // other's changes when they share a worker.
+    list: structuredClone([activeConnector, waitingConnector]) as Record<
+      string,
+      unknown
+    >[],
     posted: null as Record<string, unknown> | null,
     revoked: [] as string[],
     patched: null as Record<string, unknown> | null,
@@ -182,7 +187,9 @@ test.describe('Connectors', () => {
     const table = page.getByRole('table');
     await expect(table.getByText('web-01')).toBeVisible();
     await expect(table.getByText('Acme Corp')).toBeVisible();
-    await expect(table.getByText('Active')).toBeVisible();
+    // web-01 checks in on time but has a failing target, so its status
+    // shows its health rather than its check-in recency.
+    await expect(table.getByText('Targets failing')).toBeVisible();
     await expect(table.getByText('Enrollment token expired')).toBeVisible();
     await expect(table.getByText('10 minutes ago')).toBeVisible();
     await expect(table.getByText('1 certificate')).toBeVisible();

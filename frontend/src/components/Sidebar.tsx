@@ -19,7 +19,11 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { useHealth } from '../hooks/useHealth';
-import type { AreaCount, HealthArea } from '../utils/accountHealth';
+import {
+  greetingName,
+  type AreaCount,
+  type HealthArea,
+} from '../utils/accountHealth';
 
 interface NavItem {
   to: string;
@@ -141,7 +145,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
   const { byArea } = useHealth();
   const navigate = useNavigate();
   const plan = (user as { plan?: string } | null)?.plan ?? 'free';
-  const name = user?.displayName || user?.username;
+  const name = user ? greetingName(user) : undefined;
 
   return (
     <>

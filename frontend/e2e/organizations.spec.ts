@@ -357,12 +357,11 @@ test.describe('Organizations — pooled resource counts', () => {
 
     await page.goto('/dashboard');
 
-    // Pooled counts from orgMemberUser: 12 domains, 8 certs, 6 keys
+    // Pooled counts from orgMemberUser: 12 domains. The certificate count
+    // comes from the (pooled) certificate list instead, so revoked records
+    // in resourceCounts are not counted as live certificates.
     await expect(
       page.getByRole('link', { name: /^Domains\s*12/ }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole('link', { name: /^Certificates\s*8/ }),
     ).toBeVisible();
   });
 });

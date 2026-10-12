@@ -1,23 +1,24 @@
 import type { ConnectorDeploymentState } from '@krakenkey/shared';
 import {
-  CONNECTOR_STATUS_LABEL,
-  CONNECTOR_STATUS_VARIANT,
+  CONNECTOR_HEALTH_LABEL,
+  CONNECTOR_HEALTH_VARIANT,
   DEPLOYMENT_STATE_LABEL,
   DEPLOYMENT_STATE_VARIANT,
-  connectorStatus,
-  type ConnectorStatusFields,
+  connectorHealth,
+  type ConnectorHealthFields,
 } from '../../utils/connectors';
 import { Badge } from '../ui/Badge';
 
+/** The connector's health: lifecycle, check-in recency and failing targets. */
 export function ConnectorStatusBadge({
   connector,
 }: {
-  connector: ConnectorStatusFields;
+  connector: ConnectorHealthFields;
 }) {
-  const status = connectorStatus(connector);
+  const health = connectorHealth(connector);
   return (
-    <Badge variant={CONNECTOR_STATUS_VARIANT[status]}>
-      {CONNECTOR_STATUS_LABEL[status]}
+    <Badge variant={CONNECTOR_HEALTH_VARIANT[health]}>
+      {CONNECTOR_HEALTH_LABEL[health]}
     </Badge>
   );
 }
