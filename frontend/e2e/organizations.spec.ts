@@ -154,10 +154,6 @@ test.describe('Organizations — owner managing org', () => {
       .getByRole('dialog', { name: 'Remove member?' })
       .getByRole('button', { name: 'Remove member' })
       .click();
-    await page
-      .getByRole('dialog', { name: 'Remove member?' })
-      .getByRole('button', { name: 'Remove member' })
-      .click();
 
     await expect.poll(() => removeCalled).toBe(true);
   });
