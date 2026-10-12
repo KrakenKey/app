@@ -352,6 +352,90 @@ describe('Notification channels (e2e)', () => {
     expect(repo.rows()[0].lastDeliveryStatus).toBe('ok');
   });
 
+  describe('org roles', () => {
+    const apps: Record<string, INestApplication> = {};
+    const forRole = (role: string) => request(apps[role].getHttpServer());
+
+    beforeAll(async () => {
+      for (const role of ['owner', 'admin', 'member', 'viewer']) {
+        ({ app: apps[role] } = await createTestApp({
+          controllers: [NotificationChannelsController],
+          providers,
+          orgRole: role,
+        }));
+      }
+    });
+    afterAll(() => Promise.all(Object.values(apps).map((a) => a.close())));
+
+    const seedWebhook = () => {
+      const id = randomUUID();
+      repo.seed({
+        id,
+        userId: MOCK_USER.userId,
+        type: 'webhook',
+        name: 'Hook',
+        urlEncrypted: delivery.encrypt(WEBHOOK_URL),
+        secretEncrypted: delivery.encrypt('whsec_old'),
+        events: ['cert.failed'],
+        enabled: true,
+      });
+      return id;
+    };
+
+    it('lets a viewer list channels', async () => {
+      await forRole('viewer').get('/notifications/channels').expect(200);
+    });
+
+    it('refuses every channel change for a viewer', async () => {
+      const id = seedWebhook();
+      await forRole('viewer')
+        .post('/notifications/channels')
+        .send({ type: 'slack', name: 'Ops', url: SLACK_URL })
+        .expect(403);
+      await forRole('viewer')
+        .patch(`/notifications/channels/${id}`)
+        .send({ name: 'Renamed' })
+        .expect(403);
+      await forRole('viewer')
+        .post(`/notifications/channels/${id}/test`)
+        .expect(403);
+      await forRole('viewer')
+        .post(`/notifications/channels/${id}/rotate-secret`)
+        .expect(403);
+      await forRole('viewer')
+        .delete(`/notifications/channels/${id}`)
+        .expect(403);
+
+      expect(repo.rows()).toHaveLength(1);
+      expect(repo.rows()[0].name).toBe('Hook');
+      expect(mockedPost).not.toHaveBeenCalled();
+    });
+
+    it.each(['owner', 'admin', 'member'])(
+      'lets an org %s manage channels',
+      async (role) => {
+        mockedPost.mockResolvedValue({ status: 200 });
+        const created = await forRole(role)
+          .post('/notifications/channels')
+          .send({ type: 'webhook', name: 'Hook', url: WEBHOOK_URL })
+          .expect(201);
+        const id = created.body.id as string;
+        await forRole(role)
+          .patch(`/notifications/channels/${id}`)
+          .send({ name: 'Renamed' })
+          .expect(200);
+        await forRole(role)
+          .post(`/notifications/channels/${id}/test`)
+          .expect(200);
+        await forRole(role)
+          .post(`/notifications/channels/${id}/rotate-secret`)
+          .expect(200);
+        await forRole(role).delete(`/notifications/channels/${id}`).expect(204);
+        expect(repo.rows()).toHaveLength(0);
+      },
+    );
+  });
+
   describe('with an API key limited to specific domains', () => {
     let restrictedApp: INestApplication;
 

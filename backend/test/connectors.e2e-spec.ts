@@ -76,6 +76,7 @@ const CERTS = [
  */
 describe('Connectors (e2e)', () => {
   let dashboard: INestApplication;
+  let viewerDashboard: INestApplication;
   let api: INestApplication;
   let repo: FakeConnectorRepo;
   let deployments: FakeDeploymentRepo;
@@ -151,6 +152,21 @@ describe('Connectors (e2e)', () => {
       providers: shared,
     }));
 
+    ({ app: viewerDashboard } = await createTestApp({
+      controllers: [ConnectorsController],
+      providers: [
+        ...shared,
+        {
+          provide: DataSource,
+          useValue: {
+            getRepository: () => ({
+              findOne: async () => ({ ...owner, role: 'viewer' }),
+            }),
+          },
+        },
+      ],
+    }));
+
     ({ app: api } = await createTestApp({
       controllers: [ConnectorsController, TlsController],
       imports: [PassportModule],
@@ -176,10 +192,12 @@ describe('Connectors (e2e)', () => {
 
   afterAll(async () => {
     await dashboard.close();
+    await viewerDashboard.close();
     await api.close();
   });
 
   const session = () => request(dashboard.getHttpServer());
+  const viewer = () => request(viewerDashboard.getHttpServer());
   const anon = () => request(api.getHttpServer());
 
   const BODY = {
@@ -1165,6 +1183,42 @@ describe('Connectors (e2e)', () => {
       await session().delete(`/connectors/${id}`).expect(204);
       await put(SUMMARY).expect(401);
       await del().expect(401);
+    });
+  });
+
+  describe('org viewer', () => {
+    it('can list and read connectors', async () => {
+      const { connector } = await createConnector();
+      await viewer().get('/connectors').expect(200);
+      await viewer().get(`/connectors/${connector.id}`).expect(200);
+    });
+
+    it('cannot create, change or re-issue tokens', async () => {
+      const before = repo.rows.length;
+      await viewer().post('/connectors').send(BODY).expect(403);
+      expect(repo.rows.length).toBe(before);
+
+      const { connector } = await createConnector();
+      await viewer()
+        .patch(`/connectors/${connector.id}`)
+        .send({ name: 'renamed' })
+        .expect(403);
+      await viewer()
+        .post(`/connectors/${connector.id}/enrollment-token`)
+        .expect(403);
+      const shown = await session()
+        .get(`/connectors/${connector.id}`)
+        .expect(200);
+      expect(shown.body).toMatchObject({ name: 'web-01' });
+    });
+
+    it('can still revoke its own connector', async () => {
+      const { connector } = await createConnector();
+      await viewer().delete(`/connectors/${connector.id}`).expect(204);
+      const shown = await session()
+        .get(`/connectors/${connector.id}`)
+        .expect(200);
+      expect(shown.body.revokedAt).not.toBeNull();
     });
   });
 
