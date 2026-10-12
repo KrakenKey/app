@@ -149,14 +149,17 @@ describe('computeAttention', () => {
     });
     expect(items.map((i) => `${i.id}:${i.severity}`)).toEqual([
       'ep-ep1:critical',
-      'con-c1-failing:critical',
-      'con-c1-stale:warning',
+      'con-c1:critical',
       'dom-d1:warning',
     ]);
     expect(items[0].detail).toContain('internal-ca');
+    // A failing, stale connector is one row with both reasons.
+    expect(items[1].summary).toBe(
+      '1 deployment target failing; last check-in 3 days ago',
+    );
     expect(countByArea(items)).toMatchObject({
       endpoints: { count: 1, severity: 'critical' },
-      connectors: { count: 2, severity: 'critical' },
+      connectors: { count: 1, severity: 'critical' },
       domains: { count: 1, severity: 'warning' },
       certificates: { count: 0, severity: null },
     });
@@ -452,7 +455,7 @@ describe('attention for a sparse account', () => {
       connectors: [ciConnector],
     });
     expect(items.map((i) => `${i.id}:${i.severity}`)).toEqual([
-      'con-c1-failing:critical',
+      'con-c1:critical',
       'cert-21:warning',
     ]);
     expect(items[1]).toMatchObject({
