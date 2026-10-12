@@ -451,51 +451,60 @@ export function computeAttention(input: HealthInput): AttentionItem[] {
     });
   }
 
+  // One row per connector: a connector with a failing target that has also
+  // stopped checking in is one thing to look at, with both reasons.
   for (const c of input.connectors) {
     const status = connectorStatus(c, now);
     if (status === 'revoked') continue;
-    const base = {
-      area: 'connectors' as const,
-      kind: 'Connector' as const,
-      title: c.name,
-      detail: c.clientLabel ?? undefined,
-      to: `/dashboard/connectors/${c.id}`,
-      linkLabel: 'Open',
-    };
+    const reasons: { severity: HealthSeverity; text: string }[] = [];
     const failing = c.deploymentSummary?.failing ?? 0;
     if (failing > 0) {
-      items.push({
-        ...base,
-        id: `con-${c.id}-failing`,
+      reasons.push({
         severity: 'critical',
-        summary: `${failing} deployment target${failing === 1 ? '' : 's'} failing`,
+        text: `${failing} deployment target${failing === 1 ? '' : 's'} failing`,
       });
     }
     if (status === 'stale') {
       const seen = c.lastSeenAt ?? c.enrolledAt;
-      items.push({
-        ...base,
-        id: `con-${c.id}-stale`,
+      reasons.push({
         severity: 'warning',
-        summary: seen
+        text: seen
           ? `Last check-in ${formatRelative(seen, now)}`
           : 'Not seen recently',
       });
     } else if (status === 'expired') {
-      items.push({
-        ...base,
-        id: `con-${c.id}-expired`,
+      reasons.push({
         severity: 'warning',
-        summary: 'Enrollment token expired before it enrolled',
+        text: 'Enrollment token expired before it enrolled',
       });
     } else if (status === 'waiting') {
-      items.push({
-        ...base,
-        id: `con-${c.id}-waiting`,
-        severity: 'notice',
-        summary: 'Waiting to enroll',
-      });
+      reasons.push({ severity: 'notice', text: 'Waiting to enroll' });
     }
+    if (reasons.length === 0) continue;
+    const severity = reasons.reduce<HealthSeverity>(
+      (worst, r) =>
+        SEVERITY_ORDER.indexOf(r.severity) < SEVERITY_ORDER.indexOf(worst)
+          ? r.severity
+          : worst,
+      'notice',
+    );
+    // "1 deployment target failing; last check-in 2 days ago"
+    const summary = reasons
+      .map((r, i) =>
+        i === 0 ? r.text : r.text.charAt(0).toLowerCase() + r.text.slice(1),
+      )
+      .join('; ');
+    items.push({
+      id: `con-${c.id}`,
+      severity,
+      area: 'connectors',
+      kind: 'Connector',
+      title: c.name,
+      summary,
+      detail: c.clientLabel ?? undefined,
+      to: `/dashboard/connectors/${c.id}`,
+      linkLabel: 'Open',
+    });
   }
 
   for (const d of input.domains) {
@@ -732,7 +741,11 @@ export interface AreaCount {
   severity: HealthSeverity | null;
 }
 
-/** Problems (critical and warning) per area, for the sidebar badges. */
+/**
+ * Problems (critical and warning) per area, for the sidebar badges. Each
+ * certificate, endpoint, probe, connector or domain has at most one item, so
+ * the count is the number of things that need attention.
+ */
 export function countByArea(
   items: AttentionItem[],
 ): Record<HealthArea, AreaCount> {
