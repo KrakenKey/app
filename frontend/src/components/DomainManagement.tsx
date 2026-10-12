@@ -11,6 +11,7 @@ import { toast } from '../utils/toast';
 import type { Domain } from '@krakenkey/shared';
 import { copyToClipboard } from '../utils/clipboard';
 import * as domainService from '../services/domainService';
+import { useConfirm } from '../hooks/useConfirm';
 import { Card } from './ui/Card';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
@@ -26,6 +27,7 @@ function acmeCnameTarget(hostname: string): string {
 }
 
 export default function DomainManagement() {
+  const confirm = useConfirm();
   const [domains, setDomains] = useState<Domain[]>([]);
   const [loading, setLoading] = useState(true);
   const [addingDomain, setAddingDomain] = useState(false);
@@ -89,9 +91,18 @@ export default function DomainManagement() {
   };
 
   const handleDeleteDomain = async (domain: Domain) => {
-    if (!confirm(`Are you sure you want to delete ${domain.hostname}?`)) {
-      return;
-    }
+    const ok = await confirm({
+      title: 'Delete domain?',
+      body: (
+        <>
+          <strong className="text-text">{domain.hostname}</strong> is removed
+          from your account. To request certificates for it again, you'll have
+          to add and verify it again.
+        </>
+      ),
+      confirmLabel: 'Delete domain',
+    });
+    if (!ok) return;
 
     try {
       await domainService.deleteDomain(domain.id);

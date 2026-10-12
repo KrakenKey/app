@@ -56,14 +56,16 @@ test.describe('Pending certificates', () => {
       return route.continue();
     });
 
-    page.on('dialog', (dialog) => dialog.accept());
-
     await page.goto('/dashboard/certificates');
     // Destructive actions live in the row's overflow menu
     await page
       .getByRole('button', { name: /More actions for app\.example\.com/ })
       .click();
     await page.getByRole('menuitem', { name: /delete/i }).click();
+    await page
+      .getByRole('dialog', { name: 'Delete certificate?' })
+      .getByRole('button', { name: 'Delete certificate' })
+      .click();
     await expect.poll(() => deleted).toBe(true);
   });
 

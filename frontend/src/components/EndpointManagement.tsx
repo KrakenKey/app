@@ -17,6 +17,7 @@ import { toast } from '../utils/toast';
 import type { Endpoint, ProbeScanResult } from '@krakenkey/shared';
 import type { ProbeOption } from '../services/endpointService';
 import { useActionSet } from '../hooks/useActionSet';
+import { useConfirm } from '../hooks/useConfirm';
 import * as endpointService from '../services/endpointService';
 import { Card } from './ui/Card';
 import { Button } from './ui/Button';
@@ -254,6 +255,7 @@ export default function EndpointManagement() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const deletingIds = useActionSet<string>();
+  const confirm = useConfirm();
   const togglingIds = useActionSet<string>();
   const scanningIds = useActionSet<string>();
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -351,13 +353,19 @@ export default function EndpointManagement() {
   };
 
   const handleDelete = async (ep: Endpoint) => {
-    if (
-      !confirm(
-        `Delete endpoint ${ep.host}:${ep.port}? This will remove all associated scan results.`,
-      )
-    ) {
-      return;
-    }
+    const ok = await confirm({
+      title: 'Delete endpoint?',
+      body: (
+        <>
+          <strong className="text-text">
+            {ep.host}:{ep.port}
+          </strong>{' '}
+          stops being monitored, and all of its scan results are deleted.
+        </>
+      ),
+      confirmLabel: 'Delete endpoint',
+    });
+    if (!ok) return;
 
     try {
       deletingIds.add(ep.id);

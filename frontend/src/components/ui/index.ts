@@ -6,6 +6,7 @@ export { Card, CardHeader } from './Card';
 export { Badge } from './Badge';
 export { Table, TableHeader, TableRow, TableHead, TableCell } from './Table';
 export { Modal } from './Modal';
+export { ConfirmDialog } from './ConfirmDialog';
 export { RowMenu } from './Menu';
 export { EmptyState } from './EmptyState';
 export { PageHeader } from './PageHeader';

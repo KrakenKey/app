@@ -29,6 +29,7 @@ import type {
 } from '@krakenkey/shared';
 import * as channelService from '../services/notificationChannelService';
 import { useActionSet } from '../hooks/useActionSet';
+import { useConfirm } from '../hooks/useConfirm';
 import { copyToClipboard } from '../utils/clipboard';
 import { toast } from '../utils/toast';
 import { Card } from './ui/Card';
@@ -125,6 +126,7 @@ const AlertChannels: React.FC = () => {
     Record<string, TestNotificationChannelResponse>
   >({});
   const busy = useActionSet<string>();
+  const confirm = useConfirm();
 
   const load = useCallback(async () => {
     try {
@@ -272,13 +274,17 @@ const AlertChannels: React.FC = () => {
   };
 
   const handleDelete = async (channel: NotificationChannel) => {
-    if (
-      !confirm(
-        `Delete alert channel "${channel.name}"? It stops receiving alerts right away.`,
-      )
-    ) {
-      return;
-    }
+    const ok = await confirm({
+      title: 'Delete alert channel?',
+      body: (
+        <>
+          <strong className="text-text">{channel.name}</strong> stops receiving
+          alerts right away.
+        </>
+      ),
+      confirmLabel: 'Delete channel',
+    });
+    if (!ok) return;
     busy.add(channel.id);
     try {
       await channelService.deleteNotificationChannel(channel.id);
@@ -293,13 +299,18 @@ const AlertChannels: React.FC = () => {
   };
 
   const handleRotate = async (channel: NotificationChannel) => {
-    if (
-      !confirm(
-        `Rotate the signing secret for "${channel.name}"? The current secret stops working immediately.`,
-      )
-    ) {
-      return;
-    }
+    const ok = await confirm({
+      title: 'Rotate signing secret?',
+      body: (
+        <>
+          The current secret for{' '}
+          <strong className="text-text">{channel.name}</strong> stops working
+          immediately. Update your receiver with the new one.
+        </>
+      ),
+      confirmLabel: 'Rotate secret',
+    });
+    if (!ok) return;
     busy.add(channel.id);
     try {
       const { secret } = await channelService.rotateNotificationChannelSecret(

@@ -154,13 +154,15 @@ test.describe('API key management', () => {
       return route.continue();
     });
 
-    page.on('dialog', (dialog) => dialog.accept());
-
     await page.goto('/dashboard/api-keys');
     await page
       .getByRole('button', { name: /revoke/i })
       .first()
       .click();
+    const dialog = page.getByRole('dialog', { name: 'Revoke API key?' });
+    await expect(dialog).toBeVisible();
+    expect(revokeCalled).toBe(false);
+    await dialog.getByRole('button', { name: 'Revoke key' }).click();
 
     await expect.poll(() => revokeCalled).toBe(true);
     await expect(page.getByText(/^Revoked \d/)).toHaveCount(2);

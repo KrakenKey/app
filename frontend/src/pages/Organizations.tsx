@@ -13,6 +13,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { toast } from '../utils/toast';
 import { useActionSet } from '../hooks/useActionSet';
+import { useConfirm } from '../hooks/useConfirm';
 import * as orgService from '../services/organizationService';
 import type { Organization, OrgMember } from '../services/organizationService';
 import type { OrgRole } from '@krakenkey/shared';
@@ -110,6 +111,7 @@ export default function Organizations() {
 
   // Per-member actions
   const removingIds = useActionSet<string>();
+  const confirm = useConfirm();
   const updatingRoleIds = useActionSet<string>();
 
   const isOwner = user?.role === 'owner';
@@ -181,7 +183,22 @@ export default function Organizations() {
 
   async function handleRemove(memberId: string, memberName: string) {
     if (!org) return;
-    if (!confirm(`Remove ${memberName} from the organization?`)) return;
+    const leaving = memberId === user?.id;
+    const ok = await confirm({
+      title: leaving ? 'Leave organization?' : 'Remove member?',
+      body: leaving ? (
+        <>
+          You lose access to <strong className="text-text">{org.name}</strong>.
+        </>
+      ) : (
+        <>
+          Remove <strong className="text-text">{memberName}</strong> from{' '}
+          <strong className="text-text">{org.name}</strong>?
+        </>
+      ),
+      confirmLabel: leaving ? 'Leave organization' : 'Remove member',
+    });
+    if (!ok) return;
     try {
       removingIds.add(memberId);
       await orgService.removeMember(org.id, memberId);

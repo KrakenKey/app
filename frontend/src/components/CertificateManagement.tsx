@@ -32,6 +32,7 @@ import { copyToClipboard } from '../utils/clipboard';
 import { downloadPem } from '../utils/download';
 import { usePolling } from '../hooks/usePolling';
 import { useActionSet } from '../hooks/useActionSet';
+import { useConfirm } from '../hooks/useConfirm';
 import * as certService from '../services/certificateService';
 import CsrGenerator from './CsrGenerator';
 import { CertificateDeployments } from './connectors/CertificateDeployments';
@@ -73,6 +74,7 @@ export default function CertificateManagement() {
   const [namesError, setNamesError] = useState<string | null>(null);
 
   const pollingIds = useActionSet<number>();
+  const confirm = useConfirm();
   const renewing = useActionSet<number>();
   const retrying = useActionSet<number>();
   const revoking = useActionSet<number>();
@@ -255,13 +257,20 @@ export default function CertificateManagement() {
   };
 
   const handleRevokeCert = async (cert: TlsCert) => {
-    if (
-      !confirm(
-        `Are you sure you want to revoke certificate #${cert.id}? This cannot be undone.`,
-      )
-    ) {
-      return;
-    }
+    const ok = await confirm({
+      title: 'Revoke certificate?',
+      body: (
+        <>
+          <strong className="text-text">
+            {getCertDomains(cert)[0] ?? 'Certificate'}
+          </strong>{' '}
+          (#{cert.id}) is revoked at the CA, and clients that check revocation
+          stop trusting it. This cannot be undone.
+        </>
+      ),
+      confirmLabel: 'Revoke certificate',
+    });
+    if (!ok) return;
 
     try {
       revoking.add(cert.id);
@@ -282,13 +291,19 @@ export default function CertificateManagement() {
   };
 
   const handleDeleteCert = async (cert: TlsCert) => {
-    if (
-      !confirm(
-        `Are you sure you want to delete certificate #${cert.id}? This cannot be undone.`,
-      )
-    ) {
-      return;
-    }
+    const ok = await confirm({
+      title: 'Delete certificate?',
+      body: (
+        <>
+          <strong className="text-text">
+            {getCertDomains(cert)[0] ?? 'Certificate'}
+          </strong>{' '}
+          (#{cert.id}) is removed from your account. This cannot be undone.
+        </>
+      ),
+      confirmLabel: 'Delete certificate',
+    });
+    if (!ok) return;
 
     try {
       deleting.add(cert.id);

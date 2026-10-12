@@ -11,6 +11,7 @@ import {
   workflowSnippet,
 } from '../utils/githubOidc';
 import { useActionSet } from '../hooks/useActionSet';
+import { useConfirm } from '../hooks/useConfirm';
 import { useAccessForm } from '../hooks/useAccessForm';
 import * as githubOidcService from '../services/githubOidcService';
 import {
@@ -32,6 +33,7 @@ export default function GithubOidcTrusts() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const deletingIds = useActionSet<string>();
+  const confirm = useConfirm();
 
   const [name, setName] = useState('');
   const [repository, setRepository] = useState('');
@@ -155,13 +157,19 @@ export default function GithubOidcTrusts() {
   };
 
   const handleDelete = async (trust: GithubOidcTrust) => {
-    if (
-      !confirm(
-        `Delete trust policy "${trust.name}"? Workflows in ${trust.repository} can no longer get keys through it. Keys it already issued last at most 15 minutes.`,
-      )
-    ) {
-      return;
-    }
+    const ok = await confirm({
+      title: 'Delete trust policy?',
+      body: (
+        <>
+          Workflows in <strong className="text-text">{trust.repository}</strong>{' '}
+          can no longer get keys through{' '}
+          <strong className="text-text">{trust.name}</strong>. Keys it already
+          issued last at most 15 minutes.
+        </>
+      ),
+      confirmLabel: 'Delete policy',
+    });
+    if (!ok) return;
 
     try {
       deletingIds.add(trust.id);

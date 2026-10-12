@@ -243,8 +243,6 @@ describe('GithubOidcTrusts', () => {
         return new HttpResponse(null, { status: 204 });
       }),
     );
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-
     render(<GithubOidcTrusts />);
     await screen.findByText('website deploy');
     await userEvent.click(
@@ -252,9 +250,12 @@ describe('GithubOidcTrusts', () => {
         name: 'Delete trust policy website deploy',
       }),
     );
+    expect(deleted).toBeNull();
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Delete policy' }),
+    );
 
     await waitFor(() => expect(deleted).toBe('t1'));
-    expect(confirmSpy).toHaveBeenCalled();
     await waitFor(() =>
       expect(screen.queryByText('website deploy')).toBeNull(),
     );
@@ -269,14 +270,15 @@ describe('GithubOidcTrusts', () => {
         return new HttpResponse(null, { status: 204 });
       }),
     );
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
-
     render(<GithubOidcTrusts />);
     await screen.findByText('website deploy');
     await userEvent.click(
       screen.getByRole('button', {
         name: 'Delete trust policy website deploy',
       }),
+    );
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Cancel' }),
     );
 
     expect(deleted).toBe(false);

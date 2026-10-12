@@ -142,8 +142,6 @@ test.describe('Organizations — owner managing org', () => {
       return route.continue();
     });
 
-    page.on('dialog', (dialog) => dialog.accept());
-
     await page.goto('/dashboard/organizations');
 
     // Remove sits in Bob's row menu
@@ -152,6 +150,10 @@ test.describe('Organizations — owner managing org', () => {
       .getByRole('button', { name: /more actions/i })
       .click();
     await page.getByRole('menuitem', { name: /remove/i }).click();
+    await page
+      .getByRole('dialog', { name: 'Remove member?' })
+      .getByRole('button', { name: 'Remove member' })
+      .click();
 
     await expect.poll(() => removeCalled).toBe(true);
   });
