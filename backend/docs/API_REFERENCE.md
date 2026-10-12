@@ -129,7 +129,17 @@ Redirects to Authentik enrollment flow for new user registration.
 
 Redirects to Authentik OIDC login page.
 
+**Query Parameters**: `source` (optional): `microsoft` skips the login page and goes straight to Microsoft (work, school or personal accounts). A first Microsoft sign-in creates the KrakenKey account. A Microsoft account whose email already belongs to a KrakenKey account is refused; connect it with `GET /auth/connect` instead. Any other value returns `400`.
+
 **Authentication**: None
+
+### GET /auth/connect
+
+Connects an external account to an existing KrakenKey account, so the user can sign in with either. Authentik asks the user to sign in to the existing account first (or uses the SSO session they still have), then sends them to the provider and links the account. The user ends up back in the dashboard.
+
+**Query Parameters**: `source` (required): `microsoft`.
+
+**Authentication**: None (the redirect itself; the user signs in at Authentik)
 
 ### GET /auth/callback
 

@@ -13,6 +13,8 @@ interface AuthContextType {
   isAuthenticated: boolean;
   login: () => void;
   register: () => void;
+  loginWithMicrosoft: () => void;
+  connectMicrosoft: () => void;
   logout: () => Promise<void>;
   handleCallback: (code: string, state: string | null) => Promise<void>;
   deleteAccount: () => Promise<void>;
@@ -102,6 +104,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
    */
   const register = () => {
     window.location.href = `${api.defaults.baseURL}/auth/register`;
+  };
+
+  /**
+   * Signs in (or signs up) with a Microsoft account. Goes straight to
+   * Microsoft instead of the login page, then back through /callback.
+   */
+  const loginWithMicrosoft = () => {
+    window.location.href = `${api.defaults.baseURL}${API_ROUTES.AUTH.LOGIN}?source=microsoft`;
+  };
+
+  /**
+   * Connects a Microsoft account to the signed-in user. Authentik asks for
+   * the current account's sign-in first (unless its session is still active),
+   * then links the Microsoft account and returns to the app.
+   */
+  const connectMicrosoft = () => {
+    window.location.href = `${api.defaults.baseURL}${API_ROUTES.AUTH.CONNECT}?source=microsoft`;
   };
 
   /**
@@ -233,6 +252,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         isAuthenticated: !!user,
         login,
         register,
+        loginWithMicrosoft,
+        connectMicrosoft,
         logout,
         handleCallback,
         deleteAccount,

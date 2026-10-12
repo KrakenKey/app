@@ -1,8 +1,13 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AuthController } from './auth.controller';
-import { ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  ValidationPipe,
+} from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { DeviceAuthService } from './services/device-auth.service';
+import { ConnectQueryDto, LoginQueryDto } from './dto/login-query.dto';
 
 function mockRes(): Record<string, jest.Mock> {
   return {
@@ -23,6 +28,7 @@ describe('AuthController', () => {
   beforeEach(async () => {
     mockAuthService = {
       getLoginRedirect: jest.fn(),
+      getConnectRedirect: jest.fn(),
       getRegisterRedirect: jest.fn(),
       handleCallback: jest.fn(),
       getLogoutUrl: jest.fn(),
@@ -98,9 +104,9 @@ describe('AuthController', () => {
       mockAuthService.getLoginRedirect.mockReturnValue(redirect);
       const res = mockRes();
 
-      controller.login(res as any);
+      controller.login(res as any, {});
 
-      expect(mockAuthService.getLoginRedirect).toHaveBeenCalled();
+      expect(mockAuthService.getLoginRedirect).toHaveBeenCalledWith(undefined);
       expect(res.cookie).toHaveBeenCalledWith(
         'oauth_state',
         'random-state-xyz',
@@ -111,6 +117,90 @@ describe('AuthController', () => {
         }),
       );
       expect(res.redirect).toHaveBeenCalledWith(302, redirect.url);
+    });
+  });
+
+  describe('login with a source', () => {
+    it('passes the source on and sets the state cookie', () => {
+      const redirect = {
+        url: 'https://auth.example.com/if/flow/krakenkey-microsoft-login/?next=x',
+        state: 'state-ms',
+        statusCode: 302,
+      };
+      mockAuthService.getLoginRedirect.mockReturnValue(redirect);
+      const res = mockRes();
+
+      controller.login(res as any, { source: 'microsoft' });
+
+      expect(mockAuthService.getLoginRedirect).toHaveBeenCalledWith(
+        'microsoft',
+      );
+      expect(res.cookie).toHaveBeenCalledWith(
+        'oauth_state',
+        'state-ms',
+        expect.objectContaining({ httpOnly: true, path: '/auth/callback' }),
+      );
+      expect(res.redirect).toHaveBeenCalledWith(302, redirect.url);
+    });
+  });
+
+  describe('source query validation', () => {
+    const validate = (cls: any, value: object) =>
+      new ValidationPipe({ whitelist: true, transform: true }).transform(
+        value,
+        { type: 'query', metatype: cls },
+      );
+
+    it('login accepts no source and source=microsoft', async () => {
+      await expect(validate(LoginQueryDto, {})).resolves.toEqual({});
+      await expect(
+        validate(LoginQueryDto, { source: 'microsoft' }),
+      ).resolves.toEqual({ source: 'microsoft' });
+    });
+
+    it('login rejects an unknown source', async () => {
+      await expect(
+        validate(LoginQueryDto, { source: 'github' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('connect requires a known source', async () => {
+      await expect(validate(ConnectQueryDto, {})).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      await expect(
+        validate(ConnectQueryDto, { source: 'google' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(
+        validate(ConnectQueryDto, { source: 'microsoft' }),
+      ).resolves.toEqual({ source: 'microsoft' });
+    });
+  });
+
+  describe('connect', () => {
+    it('redirects to the connect URL without touching the state cookie', () => {
+      const redirect = {
+        url: 'https://auth.example.com/if/flow/krakenkey-authentication/?next=%2Fsource%2Foauth%2Flogin%2Fmicrosoft%2F',
+        statusCode: 302,
+      };
+      mockAuthService.getConnectRedirect.mockReturnValue(redirect);
+      const res = mockRes();
+
+      controller.connect(res as any, { source: 'microsoft' });
+
+      expect(mockAuthService.getConnectRedirect).toHaveBeenCalledWith(
+        'microsoft',
+      );
+      expect(res.cookie).not.toHaveBeenCalled();
+      expect(res.redirect).toHaveBeenCalledWith(302, redirect.url);
+    });
+
+    it('needs no auth guard', () => {
+      const guards = Reflect.getMetadata(
+        '__guards__',
+        AuthController.prototype.connect,
+      );
+      expect(guards).toBeUndefined();
     });
   });
 

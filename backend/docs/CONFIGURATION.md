@@ -146,6 +146,7 @@ Links in emails point at `https://<KK_APP_DOMAIN>`.
 |----------|----------|---------|-------------|
 | `KK_API_URL` | Yes | — | Full URL to the backend API (e.g. `https://dev-api.krakenkey.io`). Use single-level subdomain for Cloudflare Free tier |
 | `KK_ACME_AUTH_ZONE_DOMAIN` | Yes | — | Auth zone domain for ACME DNS-01 challenge delegation. Displayed in the UI for user instructions |
+| `KK_MICROSOFT_LOGIN_ENABLED` | No | — | `true` shows "Continue with Microsoft" on the sign-in page and "Connect Microsoft" in account settings. Turn it on only after the Authentik Microsoft source (slug `microsoft`) and the `krakenkey-microsoft-login` flow exist |
 | `VITE_ALLOWED_HOST` | No | — | Domain allowed by the Vite dev server for HMR/WebSocket connections |
 
 ---

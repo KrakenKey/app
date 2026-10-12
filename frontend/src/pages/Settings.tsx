@@ -14,6 +14,8 @@ import { Input } from '../components/ui/Input';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Switch } from '../components/ui/Switch';
 import AlertChannels from '../components/AlertChannels';
+import { MicrosoftLogo } from '../components/MicrosoftLogo';
+import { isMicrosoftSignInEnabled } from '../utils/signInSources';
 
 interface NotificationOption {
   type: NotificationType;
@@ -101,7 +103,7 @@ function ProfileRow({
 }
 
 const Settings: React.FC = () => {
-  const { user, deleteAccount, refreshUser } = useAuth();
+  const { user, deleteAccount, refreshUser, connectMicrosoft } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [editingName, setEditingName] = useState(false);
@@ -293,6 +295,28 @@ const Settings: React.FC = () => {
             </ProfileRow>
           </dl>
         </Card>
+
+        {/* Sign-in methods */}
+        {isMicrosoftSignInEnabled() && (
+          <Card flush>
+            <CardHeader title="Sign-in methods" />
+            <div className="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
+              <div className="flex min-w-0 items-start gap-3">
+                <MicrosoftLogo className="mt-0.5 h-5 w-5 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-sm text-text">Microsoft account</p>
+                  <p className="text-xs text-text-muted">
+                    Connect a work, school or personal Microsoft account to sign
+                    in with it. You confirm your current sign-in first.
+                  </p>
+                </div>
+              </div>
+              <Button variant="secondary" size="sm" onClick={connectMicrosoft}>
+                Connect Microsoft
+              </Button>
+            </div>
+          </Card>
+        )}
 
         {/* Email notifications */}
         <Card flush>

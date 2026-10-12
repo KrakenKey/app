@@ -7,7 +7,8 @@ set -e
 cat <<EOF > /usr/share/nginx/html/config.js
 window.__env__ = {
   KK_API_URL: "${KK_API_URL:-}",
-  KK_ACME_AUTH_ZONE_DOMAIN: "${KK_ACME_AUTH_ZONE_DOMAIN:-}"
+  KK_ACME_AUTH_ZONE_DOMAIN: "${KK_ACME_AUTH_ZONE_DOMAIN:-}",
+  KK_MICROSOFT_LOGIN_ENABLED: "${KK_MICROSOFT_LOGIN_ENABLED:-}"
 };
 EOF
 

@@ -3,6 +3,8 @@ import { useAuth } from '../hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
 import { ShieldCheck, Activity, Plug, ArrowUpRight } from 'lucide-react';
 import { Button } from '../components/ui/Button';
+import { MicrosoftLogo } from '../components/MicrosoftLogo';
+import { isMicrosoftSignInEnabled } from '../utils/signInSources';
 
 const POINTS = [
   {
@@ -23,7 +25,8 @@ const POINTS = [
 ];
 
 const Home: React.FC = () => {
-  const { login, register, isAuthenticated } = useAuth();
+  const { login, register, loginWithMicrosoft, isAuthenticated } = useAuth();
+  const microsoftEnabled = isMicrosoftSignInEnabled();
   const navigate = useNavigate();
 
   React.useEffect(() => {
@@ -118,6 +121,28 @@ const Home: React.FC = () => {
                 Sign Up
               </Button>
             </div>
+            {microsoftEnabled && (
+              <>
+                <div className="my-5 flex items-center gap-3 text-xs text-text-muted">
+                  <span className="h-px flex-1 bg-border-subtle" />
+                  or
+                  <span className="h-px flex-1 bg-border-subtle" />
+                </div>
+                <Button
+                  variant="outline"
+                  size="lg"
+                  onClick={loginWithMicrosoft}
+                  icon={<MicrosoftLogo className="h-[18px] w-[18px]" />}
+                  className="w-full"
+                >
+                  Continue with Microsoft
+                </Button>
+                <p className="mt-2.5 text-center text-xs text-text-muted">
+                  Work, school or personal account. Creates your KrakenKey
+                  account if you’re new.
+                </p>
+              </>
+            )}
           </div>
           <a
             href="https://krakenkey.io"
