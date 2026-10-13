@@ -144,7 +144,7 @@ Links in emails point at `https://<KK_APP_DOMAIN>`.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `KK_API_URL` | Yes | — | Full URL to the backend API (e.g. `https://dev-api.krakenkey.io`). Use single-level subdomain for Cloudflare Free tier |
+| `KK_API_URL` | Yes | — | Full URL to the backend API (e.g. `https://api.krakenkey.io`). Read when the container starts: `docker-entrypoint.sh` writes it to `/config.js`. The Vite dev server serves no `/config.js`, so `yarn dev` falls back to `https://api-dev.krakenkey.io` (the devcontainer routes that name to the local API). The Playwright e2e suite serves its own `/config.js` that points at a fake host |
 | `KK_ACME_AUTH_ZONE_DOMAIN` | Yes | — | Auth zone domain for ACME DNS-01 challenge delegation. Displayed in the UI for user instructions |
 | `KK_MICROSOFT_LOGIN_ENABLED` | No | — | `true` shows "Continue with Microsoft" on the sign-in page and "Connect Microsoft" in account settings. Turn it on only after the Authentik Microsoft source (slug `microsoft`) and the `krakenkey-microsoft-login` flow exist |
 | `VITE_ALLOWED_HOST` | No | — | Domain allowed by the Vite dev server for HMR/WebSocket connections |

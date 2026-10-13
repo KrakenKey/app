@@ -18,7 +18,7 @@ test.describe('CSR Generator', () => {
           json: { id: 'cert_new', status: 'pending' },
         });
       }
-      return route.continue();
+      return route.fallback();
     });
 
     await page.route(api('/domains'), (route) =>

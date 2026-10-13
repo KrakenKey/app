@@ -18,7 +18,7 @@ test.describe('Auth Callback', () => {
           },
         });
       }
-      return route.continue();
+      return route.fallback();
     });
 
     // Mock the profile fetch (called after token is saved)
@@ -54,7 +54,7 @@ test.describe('Auth Callback', () => {
           json: { message: 'Invalid code' },
         });
       }
-      return route.continue();
+      return route.fallback();
     });
 
     await page.route('**/auth/profile', (route) =>

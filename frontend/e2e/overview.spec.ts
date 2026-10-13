@@ -1,27 +1,13 @@
-import type { Page } from '@playwright/test';
 import { test, expect, authenticateAs, api } from './fixtures/auth';
 
-/** The Overview's health lists, answered empty so the page renders at once. */
-async function mockHealthLists(page: Page) {
-  for (const path of [
-    '/certs/tls',
-    '/domains',
-    '/endpoints',
-    '/endpoints/probes/mine',
-    '/connectors',
-  ]) {
-    await page.route(api(path), (route) =>
-      route.fulfill({ status: 200, json: [] }),
-    );
-  }
-}
+// The Overview's health lists are answered empty by the shared fixture
+// (e2e/fixtures/network.ts); tests below override the ones they need.
 
 test.describe('Dashboard overview', () => {
   test('shows resource counts', async ({ page }) => {
     await authenticateAs(page, {
       resourceCounts: { domains: 5, certificates: 3, apiKeys: 2 },
     });
-    await mockHealthLists(page);
 
     await page.goto('/dashboard');
 
@@ -36,7 +22,6 @@ test.describe('Dashboard overview', () => {
       plan: 'starter',
       resourceCounts: { domains: 1, certificates: 4, apiKeys: 0 },
     });
-    await mockHealthLists(page);
     const at = (days: number) =>
       new Date(Date.now() + days * 86_400_000).toISOString();
     const cert = (id: number, over: Record<string, unknown>) => ({
@@ -89,7 +74,6 @@ test.describe('Dashboard overview', () => {
     await authenticateAs(page, {
       resourceCounts: { domains: 1, certificates: 1, apiKeys: 0 },
     });
-    await mockHealthLists(page);
 
     await page.goto('/dashboard');
 
@@ -103,7 +87,6 @@ test.describe('Dashboard overview', () => {
 
   test('header actions navigate to the right pages', async ({ page }) => {
     await authenticateAs(page);
-    await mockHealthLists(page);
 
     await page.goto('/dashboard');
     await page.getByRole('button', { name: /add domain/i }).click();
@@ -114,7 +97,6 @@ test.describe('Dashboard overview', () => {
     await authenticateAs(page, {
       resourceCounts: { domains: 1, certificates: 1, apiKeys: 0 },
     });
-    await mockHealthLists(page);
 
     await page.goto('/dashboard');
 

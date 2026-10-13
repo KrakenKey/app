@@ -30,7 +30,7 @@ test.describe('Pending certificates', () => {
       if (route.request().method() === 'GET') {
         return route.fulfill({ status: 200, json: [awaitingCert] });
       }
-      return route.continue();
+      return route.fallback();
     });
   });
 
@@ -53,7 +53,7 @@ test.describe('Pending certificates', () => {
         deleted = true;
         return route.fulfill({ status: 200, json: { id: 41 } });
       }
-      return route.continue();
+      return route.fallback();
     });
 
     await page.goto('/dashboard/certificates');

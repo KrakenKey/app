@@ -8,7 +8,7 @@ test.describe('Domain management', () => {
       if (route.request().method() === 'GET') {
         return route.fulfill({ status: 200, json: mockDomains });
       }
-      return route.continue();
+      return route.fallback();
     });
   });
 
@@ -110,7 +110,7 @@ test.describe('Domain management', () => {
         deleteCalled = true;
         return route.fulfill({ status: 200, json: { affected: 1 } });
       }
-      return route.continue();
+      return route.fallback();
     });
 
     await page.goto('/dashboard/domains');
@@ -136,7 +136,7 @@ test.describe('Domain management', () => {
     let deleteCalled = false;
     await page.route(api('/domains/dom_001'), (route) => {
       if (route.request().method() === 'DELETE') deleteCalled = true;
-      return route.continue();
+      return route.fallback();
     });
 
     await page.goto('/dashboard/domains');
