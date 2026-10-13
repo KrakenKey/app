@@ -124,6 +124,14 @@ async function bootstrap() {
     });
   }
 
+  // Shut down cleanly on SIGTERM (docker stop, and the old container in a
+  // blue/green deploy): stop the cron jobs, let in-flight HTTP requests
+  // finish, close the BullMQ workers once their active jobs are done, then
+  // close Redis and the database. Without this, Node as PID 1 ignores
+  // SIGTERM and is killed after the stop grace period, mid-request or
+  // mid-job; behind an init process it exits at once.
+  app.enableShutdownHooks();
+
   const port = process.env.KK_API_PORT ?? 8080;
   await app.listen(port);
   Logger.log(`API listening on port ${port}`);
