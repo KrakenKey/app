@@ -174,6 +174,7 @@ Authentik ──▶ Redirect to /auth/callback with authorization code
 | `KK_AUTHENTIK_DOMAIN` | Authentik instance domain |
 | `KK_AUTHENTIK_ENROLLMENT_SLUG` | Enrollment flow slug |
 | `KK_AUTHENTIK_ISSUER_URL` | OIDC issuer URL (must match token `iss` claim) |
+| `KK_AUTHENTIK_HEALTH_URL` | Optional. URL the readiness check fetches instead of the issuer's discovery document (e.g. Authentik's `/-/health/ready/` on a private network) |
 | `KK_AUTHENTIK_CLIENT_ID` | OAuth2 client ID |
 | `KK_AUTHENTIK_CLIENT_SECRET` | OAuth2 client secret |
 | `KK_AUTHENTIK_REDIRECT_URI` | Callback URL (e.g. `https://api.example.com/auth/callback`) |

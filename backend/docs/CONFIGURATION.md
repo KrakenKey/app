@@ -92,6 +92,7 @@ Set `KK_DNS_PROVIDER` to select which provider handles DNS-01 ACME challenges. O
 | `KK_AUTHENTIK_DOMAIN` | Yes | — | Authentik instance domain (e.g. `auth-dev.krakenkey.io`). Use single-level subdomain for Cloudflare proxy |
 | `KK_AUTHENTIK_ENROLLMENT_SLUG` | Yes | — | Authentik enrollment flow slug (e.g. `krakenkey`) |
 | `KK_AUTHENTIK_ISSUER_URL` | Yes | — | OIDC issuer URL (e.g. `https://auth-dev.krakenkey.io/application/o/krakenkey/`) |
+| `KK_AUTHENTIK_HEALTH_URL` | No | — | URL the `/health/readiness` Authentik check fetches instead of the issuer's OIDC discovery document, for example `http://authentik-server:9000/-/health/ready/` when the API and Authentik share a private network. Any 2xx response counts as up. Keeps readiness checks off the public hostname; login and token validation still use `KK_AUTHENTIK_ISSUER_URL` |
 | `KK_AUTHENTIK_CLIENT_ID` | Yes | — | OAuth2 client ID from Authentik provider configuration |
 | `KK_AUTHENTIK_CLIENT_SECRET` | Yes | — | OAuth2 client secret from Authentik provider configuration |
 | `KK_AUTHENTIK_REDIRECT_URI` | Yes | — | OAuth2 callback URL pointing to your API (e.g. `https://api-dev.krakenkey.io/auth/callback`) |
