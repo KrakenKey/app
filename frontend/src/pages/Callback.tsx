@@ -3,6 +3,19 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { Loader2 } from 'lucide-react';
 import { PENDING_DEVICE_CODE_KEY } from '../services/deviceAuthService';
+import { PENDING_MARKETPLACE_TOKEN_KEY } from '../services/marketplaceService';
+
+/** Reads and forgets a value stashed in sessionStorage before sign-in. */
+function takePending(key: string): string | null {
+  try {
+    const value = sessionStorage.getItem(key);
+    sessionStorage.removeItem(key);
+    return value;
+  } catch {
+    // storage unavailable
+    return null;
+  }
+}
 
 const Callback: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -24,15 +37,17 @@ const Callback: React.FC = () => {
       console.log('Starting callback processing...');
       handleCallback(code, state)
         .then(() => {
-          let deviceCode: string | null = null;
-          try {
-            deviceCode = sessionStorage.getItem(PENDING_DEVICE_CODE_KEY);
-            sessionStorage.removeItem(PENDING_DEVICE_CODE_KEY);
-          } catch {
-            // storage unavailable: fall through to the dashboard
-          }
+          const deviceCode = takePending(PENDING_DEVICE_CODE_KEY);
+          const marketplaceToken = takePending(PENDING_MARKETPLACE_TOKEN_KEY);
           if (deviceCode) {
             navigate(`/device?code=${encodeURIComponent(deviceCode)}`);
+            return;
+          }
+          if (marketplaceToken) {
+            // Back to the Marketplace landing page to finish the purchase.
+            navigate(
+              `/marketplace?token=${encodeURIComponent(marketplaceToken)}`,
+            );
             return;
           }
           console.log('Callback successful, navigating to dashboard');
