@@ -214,4 +214,25 @@ describe('MarketplaceFulfillmentClient', () => {
     expect(logged).not.toContain('access-xyz');
     expect(logged).not.toContain('purchase-token-abc');
   });
+
+  it('does not start a request when the deadline has passed', async () => {
+    await client.getSubscription('sub-1'); // token cached
+    fetchMock.mockClear();
+    const err = await client
+      .getOperation('sub-1', 'op-1', Date.now() + 100)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MarketplaceApiError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('cuts the request timeout to what is left before the deadline', async () => {
+    const timeout = jest.spyOn(AbortSignal, 'timeout');
+    await client.getSubscription('sub-1'); // token cached
+    timeout.mockClear();
+    await client.getSubscription('sub-1', Date.now() + 1500);
+    const ms = timeout.mock.calls[0][0];
+    expect(ms).toBeLessThanOrEqual(1500);
+    expect(ms).toBeGreaterThan(1000);
+    timeout.mockRestore();
+  });
 });

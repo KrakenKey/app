@@ -107,6 +107,10 @@ describe('MarketplaceService', () => {
   let verifier: any;
   let billing: any;
   let user: any;
+  /** What manager.findOne returns: the owner's row, or the row linked to the purchase. */
+  let rows: { owner: any; linked: any };
+  /** Copies of every Subscription saved, taken when it was saved. */
+  let savedRows: any[];
 
   beforeEach(() => {
     user = {
@@ -116,15 +120,25 @@ describe('MarketplaceService', () => {
       organizationId: null,
       role: null,
     };
+    rows = { owner: null, linked: null };
+    savedRows = [];
     manager = {
-      findOne: jest.fn().mockResolvedValue(null),
-      save: jest.fn(async (_e: unknown, row: unknown) => row),
-      create: jest.fn((_e: unknown, row: unknown) => row),
+      findOne: jest.fn(async (_e: unknown, opts: any) =>
+        opts?.where?.marketplaceSubscriptionId !== undefined
+          ? rows.linked
+          : rows.owner,
+      ),
+      save: jest.fn(async (entity: unknown, row: any) => {
+        if (entity === Subscription) savedRows.push({ ...row });
+        // The claim links the row; later reads by subscription id see it.
+        if (row?.marketplaceSubscriptionId) rows.linked = row;
+        return row;
+      }),
+      create: jest.fn((_e: unknown, row: unknown) => ({ ...(row as object) })),
       insert: jest.fn().mockResolvedValue(undefined),
     };
     subRepo = {
       findOne: jest.fn().mockResolvedValue(null),
-      update: jest.fn().mockResolvedValue({ affected: 1 }),
       manager: {
         transaction: jest.fn(async (cb: (m: unknown) => unknown) =>
           cb(manager),
@@ -134,8 +148,9 @@ describe('MarketplaceService', () => {
     userRepo = { findOne: jest.fn(async () => user) };
     orgRepo = {
       findOne: jest.fn().mockResolvedValue({ id: 'org-1', name: 'Acme' }),
+      exists: jest.fn().mockResolvedValue(true),
     };
-    opRepo = { exists: jest.fn().mockResolvedValue(false) };
+    opRepo = { findOne: jest.fn().mockResolvedValue(null) };
     client = {
       resolve: jest.fn().mockResolvedValue(purchase()),
       activate: jest.fn().mockResolvedValue(undefined),
@@ -168,6 +183,17 @@ describe('MarketplaceService', () => {
     }
   });
 
+  /** Microsoft's current view of the subscription (Get subscription). */
+  const microsoft = (
+    saasSubscriptionStatus: string,
+    overrides: Record<string, unknown> = {},
+  ) =>
+    client.getSubscription.mockResolvedValue({
+      ...purchase().subscription,
+      saasSubscriptionStatus,
+      ...overrides,
+    });
+
   describe('flag', () => {
     it('answers 404 while KK_MARKETPLACE_ENABLED is off', () => {
       const off = new MarketplaceService(
@@ -191,10 +217,8 @@ describe('MarketplaceService', () => {
   });
 
   describe('landing page', () => {
-    const claimed = () =>
-      manager.save.mock.calls.find(
-        ([entity]: [unknown]) => entity === Subscription,
-      )?.[1];
+    const saves = () => savedRows;
+    const claimed = () => saves()[0];
 
     it('describes a new purchase as ready for this account', async () => {
       const res = await service.describe(USER_ID, 'token');
@@ -218,25 +242,35 @@ describe('MarketplaceService', () => {
       ).toBe(true);
     });
 
-    it('claims the purchase first, then activates with Microsoft, then turns it on', async () => {
+    it('claims the purchase, activates it, then applies what Microsoft reports', async () => {
       const order: string[] = [];
-      manager.save.mockImplementation(async (_e: unknown, row: unknown) => {
-        order.push('claim');
+      const snapshots: any[] = [];
+      manager.save.mockImplementation(async (_e: unknown, row: any) => {
+        snapshots.push({ ...row });
+        order.push(
+          row.marketplaceStatus === 'PendingFulfillmentStart'
+            ? 'claim'
+            : 'finish',
+        );
+        rows.linked = row;
         return row;
       });
       client.activate.mockImplementation(async () => {
         order.push('activate');
       });
-      subRepo.update.mockImplementation(async () => {
-        order.push('finish');
-        return { affected: 1 };
+      client.getSubscription.mockImplementation(async () => {
+        order.push('read');
+        return {
+          ...purchase().subscription,
+          saasSubscriptionStatus: 'Subscribed',
+        };
       });
 
       const res = await service.activate(USER_ID, 'token');
 
-      expect(order).toEqual(['claim', 'activate', 'finish']);
+      expect(order).toEqual(['claim', 'activate', 'read', 'finish']);
       // The claim carries no paid limits.
-      expect(claimed()).toMatchObject({
+      expect(snapshots[0]).toMatchObject({
         userId: USER_ID,
         organizationId: null,
         source: 'marketplace',
@@ -249,20 +283,65 @@ describe('MarketplaceService', () => {
         stripeCustomerId: null,
       });
       expect(client.activate).toHaveBeenCalledWith(SUB_ID);
-      expect(subRepo.update).toHaveBeenCalledWith(
-        {
-          marketplaceSubscriptionId: SUB_ID,
-          marketplaceStatus: 'PendingFulfillmentStart',
-        },
-        expect.objectContaining({
-          marketplaceStatus: 'Subscribed',
-          plan: 'team',
-          status: 'active',
-          currentPeriodEnd: new Date('2026-11-13T00:00:00Z'),
-          cancelAtPeriodEnd: false,
-        }),
-      );
+      expect(snapshots[1]).toMatchObject({
+        marketplaceStatus: 'Subscribed',
+        plan: 'team',
+        status: 'active',
+        currentPeriodEnd: new Date('2026-11-13T00:00:00Z'),
+        cancelAtPeriodEnd: false,
+      });
       expect(res).toMatchObject({ state: 'active', saasStatus: 'Subscribed' });
+    });
+
+    it('counts a purchase Microsoft still reports as pending right after Activate as active', async () => {
+      microsoft('PendingFulfillmentStart');
+      await service.activate(USER_ID, 'token');
+      expect(saves()[1]).toMatchObject({
+        status: 'active',
+        plan: 'team',
+        marketplaceStatus: 'Subscribed',
+      });
+    });
+
+    it('applies a suspension that arrived between Resolve and the claim', async () => {
+      // The Suspend webhook found nothing linked and was recorded as ignored.
+      microsoft('Suspended');
+      const res = await service.activate(USER_ID, 'token');
+      expect(saves()[1]).toMatchObject({
+        status: 'past_due',
+        marketplaceStatus: 'Suspended',
+        pastDueSince: expect.any(Date),
+      });
+      expect(res.saasStatus).toBe('Suspended');
+    });
+
+    it('applies a cancellation that arrived between Resolve and the claim', async () => {
+      microsoft('Unsubscribed');
+      const res = await service.activate(USER_ID, 'token');
+      expect(saves()[1]).toMatchObject({
+        status: 'canceled',
+        plan: 'free',
+        marketplaceStatus: 'Unsubscribed',
+      });
+      expect(res.state).toBe('ended');
+    });
+
+    it('applies a plan change that arrived between Resolve and the claim', async () => {
+      microsoft('Subscribed', { planId: 'kk-business' });
+      await service.activate(USER_ID, 'token');
+      expect(saves()[1]).toMatchObject({
+        plan: 'business',
+        marketplacePlanId: 'kk-business',
+      });
+    });
+
+    it('leaves the claim pending when Microsoft cannot be read after Activate', async () => {
+      client.getSubscription.mockRejectedValue(new MarketplaceApiError('x', 0));
+      await expect(service.activate(USER_ID, 'token')).rejects.toThrow(
+        BadGatewayException,
+      );
+      expect(saves()).toHaveLength(1);
+      expect(claimed().status).toBe('incomplete');
     });
 
     it("reuses the user's free row and drops a stale Stripe subscription id", async () => {
@@ -276,7 +355,7 @@ describe('MarketplaceService', () => {
         status: 'canceled',
       };
       billing.getSubscription.mockResolvedValue(row);
-      manager.findOne.mockResolvedValue(row);
+      rows.owner = row;
 
       await service.activate(USER_ID, 'token');
 
@@ -288,14 +367,14 @@ describe('MarketplaceService', () => {
       });
     });
 
-    it("links an organization owner's purchase to the organization", async () => {
+    it("links an organization owner's Team purchase to the organization", async () => {
       user.organizationId = 'org-1';
       user.role = 'owner';
 
       const described = await service.describe(USER_ID, 'token');
-      expect(described.target).toEqual({
-        kind: 'organization',
-        name: 'Acme',
+      expect(described).toMatchObject({
+        state: 'ready',
+        target: { kind: 'organization', name: 'Acme' },
       });
 
       await service.activate(USER_ID, 'token');
@@ -309,18 +388,37 @@ describe('MarketplaceService', () => {
       });
     });
 
+    it('refuses a Starter purchase for an organization', async () => {
+      user.organizationId = 'org-1';
+      user.role = 'owner';
+      client.resolve.mockResolvedValue(purchase({}, 'kk-starter'));
+
+      expect((await service.describe(USER_ID, 'token')).state).toBe(
+        'needs_team',
+      );
+      await expect(service.activate(USER_ID, 'token')).rejects.toThrow(
+        /Team plan or higher/,
+      );
+      expect(client.activate).not.toHaveBeenCalled();
+      expect(manager.save).not.toHaveBeenCalled();
+    });
+
+    it('allows a Starter purchase for a user without an organization', async () => {
+      client.resolve.mockResolvedValue(purchase({}, 'kk-starter'));
+      expect((await service.describe(USER_ID, 'token')).state).toBe('ready');
+    });
+
     it('does not call Microsoft when the claim finds a live subscription', async () => {
-      manager.findOne.mockResolvedValue({
+      rows.owner = {
         id: 'row-1',
         source: 'stripe',
         stripeSubscriptionId: 'sub_live',
         status: 'active',
-      });
+      };
       await expect(service.activate(USER_ID, 'token')).rejects.toThrow(
         ConflictException,
       );
       expect(client.activate).not.toHaveBeenCalled();
-      expect(subRepo.update).not.toHaveBeenCalled();
     });
 
     it('links without calling Activate when Microsoft already activated it', async () => {
@@ -329,7 +427,7 @@ describe('MarketplaceService', () => {
       );
       await service.activate(USER_ID, 'token');
       expect(client.activate).not.toHaveBeenCalled();
-      expect(subRepo.update).toHaveBeenCalled();
+      expect(saves()[1]).toMatchObject({ status: 'active' });
     });
 
     it('treats a second visit for a linked subscription as "manage"', async () => {
@@ -347,6 +445,21 @@ describe('MarketplaceService', () => {
       expect(manager.save).not.toHaveBeenCalled();
     });
 
+    it('finds a linked subscription whatever the letter case of its id', async () => {
+      const row = linkedRow();
+      client.resolve.mockResolvedValue({
+        ...purchase({ saasSubscriptionStatus: 'Subscribed' }),
+        id: SUB_ID.toUpperCase(),
+      });
+      subRepo.findOne.mockResolvedValue(row);
+      billing.getSubscription.mockResolvedValue(row);
+
+      expect((await service.describe(USER_ID, 'token')).state).toBe('active');
+      expect(subRepo.findOne).toHaveBeenCalledWith({
+        where: { marketplaceSubscriptionId: SUB_ID },
+      });
+    });
+
     it('offers activation again when an earlier attempt stopped after the claim', async () => {
       const row = linkedRow({
         marketplaceStatus: 'PendingFulfillmentStart',
@@ -355,12 +468,13 @@ describe('MarketplaceService', () => {
       });
       subRepo.findOne.mockResolvedValue(row);
       billing.getSubscription.mockResolvedValue(row);
-      manager.findOne.mockResolvedValue(row);
+      rows.owner = row;
+      rows.linked = row;
 
       expect((await service.describe(USER_ID, 'token')).state).toBe('ready');
       await service.activate(USER_ID, 'token');
       expect(client.activate).toHaveBeenCalledWith(SUB_ID);
-      expect(subRepo.update).toHaveBeenCalled();
+      expect(row).toMatchObject({ status: 'active', plan: 'team' });
     });
 
     it('refuses a subscription linked to another account', async () => {
@@ -473,8 +587,8 @@ describe('MarketplaceService', () => {
       await expect(service.activate(USER_ID, 'token')).rejects.toThrow(
         BadGatewayException,
       );
+      expect(saves()).toHaveLength(1);
       expect(claimed()).toMatchObject({ status: 'incomplete', plan: 'free' });
-      expect(subRepo.update).not.toHaveBeenCalled();
     });
 
     it('treats a parallel claim of the same purchase as done', async () => {
@@ -482,29 +596,22 @@ describe('MarketplaceService', () => {
         code: '23505',
       } as any);
       manager.save.mockRejectedValueOnce(unique);
-      subRepo.findOne
-        .mockResolvedValueOnce(null) // assess
-        .mockResolvedValueOnce(
-          linkedRow({ marketplaceStatus: 'PendingFulfillmentStart' }),
-        ); // after the unique violation
-      await expect(service.activate(USER_ID, 'token')).resolves.toMatchObject({
-        state: 'active',
+      const pending = linkedRow({
+        marketplaceStatus: 'PendingFulfillmentStart',
       });
-    });
-
-    it('accepts a row a webhook already brought up to date', async () => {
-      subRepo.update.mockResolvedValue({ affected: 0 });
       subRepo.findOne
         .mockResolvedValueOnce(null) // assess
-        .mockResolvedValueOnce(linkedRow()); // after the update
+        .mockResolvedValueOnce(pending); // after the unique violation
+      rows.linked = pending;
       await expect(service.activate(USER_ID, 'token')).resolves.toMatchObject({
         state: 'active',
       });
     });
 
     it('reports a row taken over during activation', async () => {
-      subRepo.update.mockResolvedValue({ affected: 0 });
-      subRepo.findOne.mockResolvedValue(null);
+      // A Stripe checkout replaced the claim before it was finished.
+      manager.save.mockImplementation(async (_e: unknown, row: any) => row);
+      rows.linked = null;
       await expect(service.activate(USER_ID, 'token')).rejects.toThrow(
         ConflictException,
       );
@@ -531,25 +638,17 @@ describe('MarketplaceService', () => {
       somethingNew: 'Microsoft may add fields',
       ...overrides,
     });
-    /** Microsoft's current view of the subscription. */
-    const microsoft = (
-      saasSubscriptionStatus: string,
-      overrides: Record<string, unknown> = {},
-    ) =>
-      client.getSubscription.mockResolvedValue({
-        ...purchase().subscription,
-        saasSubscriptionStatus,
-        ...overrides,
-      });
 
     beforeEach(() => {
-      manager.findOne.mockResolvedValue(linkedRow());
+      rows.linked = linkedRow();
+      microsoft('Suspended');
     });
 
     const savedRow = (): Subscription =>
       manager.save.mock.calls.find(
         ([entity]: [unknown]) => entity === Subscription,
       )?.[1];
+    const recorded = () => manager.insert.mock.calls[0]?.[1];
 
     it('rejects an invalid token before doing anything', async () => {
       verifier.verify.mockRejectedValue(new UnauthorizedException());
@@ -557,7 +656,7 @@ describe('MarketplaceService', () => {
         UnauthorizedException,
       );
       expect(client.getOperation).not.toHaveBeenCalled();
-      expect(opRepo.exists).not.toHaveBeenCalled();
+      expect(opRepo.findOne).not.toHaveBeenCalled();
     });
 
     it('rejects a payload without id, subscriptionId or action', async () => {
@@ -566,11 +665,16 @@ describe('MarketplaceService', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('confirms the operation with Microsoft before acting', async () => {
-      microsoft('Suspended');
+    it('confirms the operation with Microsoft within a deadline', async () => {
+      const before = Date.now();
       await service.handleWebhook(auth, body());
       expect(verifier.verify).toHaveBeenCalledWith(auth);
-      expect(client.getOperation).toHaveBeenCalledWith(SUB_ID, 'op-1');
+      const [subId, opId, deadline] = client.getOperation.mock.calls[0];
+      expect([subId, opId]).toEqual([SUB_ID, 'op-1']);
+      // Calls to Microsoft share an 8-second budget.
+      expect(deadline).toBeGreaterThanOrEqual(before + 8000);
+      expect(deadline).toBeLessThanOrEqual(Date.now() + 8000);
+      expect(client.getSubscription).toHaveBeenCalledWith(SUB_ID, deadline);
     });
 
     it.each([
@@ -588,6 +692,26 @@ describe('MarketplaceService', () => {
         expect(manager.insert).not.toHaveBeenCalled();
       },
     );
+
+    it('matches subscription and operation ids whatever their letter case', async () => {
+      client.getOperation.mockResolvedValue(
+        op({ id: 'OP-1', subscriptionId: SUB_ID.toUpperCase() }),
+      );
+      await expect(
+        service.handleWebhook(
+          auth,
+          body({ id: 'Op-1', subscriptionId: SUB_ID.toUpperCase() }),
+        ),
+      ).resolves.toBe('processed');
+      expect(manager.findOne).toHaveBeenCalledWith(
+        Subscription,
+        expect.objectContaining({
+          where: { marketplaceSubscriptionId: SUB_ID },
+        }),
+      );
+      expect(recorded()).toMatchObject({ id: 'op-1', subscriptionId: SUB_ID });
+      expect(savedRow()).toMatchObject({ status: 'past_due' });
+    });
 
     it('refuses with 400 when a ChangePlan names another plan than the operation', async () => {
       client.getOperation.mockResolvedValue(
@@ -632,33 +756,96 @@ describe('MarketplaceService', () => {
       expect(manager.save).not.toHaveBeenCalled();
     });
 
-    it('acknowledges a redelivered operation without applying it again', async () => {
-      opRepo.exists.mockResolvedValue(true);
-      await expect(service.handleWebhook(auth, body())).resolves.toBe(
-        'duplicate',
-      );
-      expect(client.getOperation).not.toHaveBeenCalled();
-      expect(manager.save).not.toHaveBeenCalled();
-      expect(billing.queueDissolution).not.toHaveBeenCalled();
-    });
+    describe('redelivered operations', () => {
+      const previous = (overrides: Partial<MarketplaceOperation> = {}) => ({
+        id: 'op-1',
+        subscriptionId: SUB_ID,
+        action: 'Suspend',
+        result: 'applied',
+        detail: null,
+        ackStatus: null,
+        dissolveOrganizationId: null,
+        dissolveCancel: null,
+        ...overrides,
+      });
 
-    it('re-queues a lost org dissolution when Microsoft redelivers', async () => {
-      opRepo.exists.mockResolvedValue(true);
-      subRepo.findOne.mockResolvedValue(
-        linkedRow({
-          userId: null,
-          organizationId: 'org-1',
-          plan: 'free',
-          status: 'canceled',
-          marketplaceStatus: 'Unsubscribed',
-        }),
-      );
-      await service.handleWebhook(auth, body({ action: 'Unsubscribe' }));
-      expect(billing.queueDissolution).toHaveBeenCalledWith('org-1', true);
+      it('acknowledges them without applying them again', async () => {
+        opRepo.findOne.mockResolvedValue(previous());
+        await expect(service.handleWebhook(auth, body())).resolves.toBe(
+          'duplicate',
+        );
+        expect(client.getOperation).not.toHaveBeenCalled();
+        expect(manager.save).not.toHaveBeenCalled();
+        expect(billing.queueDissolution).not.toHaveBeenCalled();
+      });
+
+      it('re-queues a dissolution the first delivery recorded', async () => {
+        opRepo.findOne.mockResolvedValue(
+          previous({
+            action: 'Unsubscribe',
+            dissolveOrganizationId: 'org-1',
+            dissolveCancel: true,
+          }),
+        );
+        await service.handleWebhook(auth, body({ action: 'Unsubscribe' }));
+        expect(billing.queueDissolution).toHaveBeenCalledWith('org-1', true);
+      });
+
+      it('does not re-queue once the organization is gone', async () => {
+        orgRepo.exists.mockResolvedValue(false);
+        opRepo.findOne.mockResolvedValue(
+          previous({ dissolveOrganizationId: 'org-1', dissolveCancel: true }),
+        );
+        await service.handleWebhook(auth, body());
+        expect(billing.queueDissolution).not.toHaveBeenCalled();
+      });
+
+      it('never dissolves an organization the first delivery did not', async () => {
+        // An org row still waiting for activation has plan "free".
+        subRepo.findOne.mockResolvedValue(
+          linkedRow({
+            userId: null,
+            organizationId: 'org-1',
+            plan: 'free',
+            status: 'incomplete',
+            marketplaceStatus: 'PendingFulfillmentStart',
+          }),
+        );
+        opRepo.findOne.mockResolvedValue(previous({ action: 'Subscribe' }));
+        await service.handleWebhook(auth, body({ action: 'Subscribe' }));
+        expect(billing.queueDissolution).not.toHaveBeenCalled();
+      });
+
+      it('re-sends the answer while Microsoft still waits for it', async () => {
+        opRepo.findOne.mockResolvedValue(
+          previous({ action: 'ChangeQuantity', ackStatus: 'Success' }),
+        );
+        client.getOperation.mockResolvedValue(
+          op({ action: 'ChangeQuantity', status: 'InProgress' }),
+        );
+        await service.handleWebhook(auth, body({ action: 'ChangeQuantity' }));
+        expect(client.updateOperation).toHaveBeenCalledWith(
+          SUB_ID,
+          'op-1',
+          'Success',
+          expect.any(Number),
+        );
+        expect(manager.save).not.toHaveBeenCalled();
+      });
+
+      it('does not re-send an answer Microsoft already has', async () => {
+        opRepo.findOne.mockResolvedValue(
+          previous({ action: 'ChangePlan', ackStatus: 'Failure' }),
+        );
+        client.getOperation.mockResolvedValue(
+          op({ action: 'ChangePlan', status: 'Failed' }),
+        );
+        await service.handleWebhook(auth, body({ action: 'ChangePlan' }));
+        expect(client.updateOperation).not.toHaveBeenCalled();
+      });
     });
 
     it('treats a concurrent delivery of the same operation as a duplicate', async () => {
-      microsoft('Suspended');
       manager.insert.mockRejectedValue(
         new QueryFailedError('INSERT', [], { code: '23505' } as any),
       );
@@ -668,19 +855,20 @@ describe('MarketplaceService', () => {
     });
 
     it('records each handled operation', async () => {
-      microsoft('Suspended');
       await service.handleWebhook(auth, body());
-      expect(manager.insert).toHaveBeenCalledWith(MarketplaceOperation, {
+      expect(recorded()).toEqual({
         id: 'op-1',
         subscriptionId: SUB_ID,
         action: 'Suspend',
         result: 'applied',
         detail: null,
+        ackStatus: null,
+        dissolveOrganizationId: null,
+        dissolveCancel: null,
       });
     });
 
     it('Suspend keeps the plan and starts the grace period', async () => {
-      microsoft('Suspended');
       await service.handleWebhook(auth, body());
       expect(savedRow()).toMatchObject({
         plan: 'team',
@@ -693,34 +881,59 @@ describe('MarketplaceService', () => {
     });
 
     it('Suspend keeps an earlier pastDueSince', async () => {
-      microsoft('Suspended');
       const since = new Date('2026-10-01T00:00:00Z');
-      manager.findOne.mockResolvedValue(
-        linkedRow({ status: 'past_due', pastDueSince: since }),
-      );
+      rows.linked = linkedRow({ status: 'past_due', pastDueSince: since });
       await service.handleWebhook(auth, body());
       expect(savedRow().pastDueSince).toBe(since);
     });
 
-    it('a Suspend delivered after a Reinstate does not suspend again', async () => {
-      // Microsoft already reinstated it; the late Suspend follows its state.
+    it('asks Microsoft to retry a Suspend while the subscription still reads Subscribed', async () => {
+      // Either the read is stale or a Reinstate came after; a retry settles it.
       microsoft('Subscribed');
-      await service.handleWebhook(auth, body());
+      await expect(service.handleWebhook(auth, body())).rejects.toThrow(
+        ServiceUnavailableException,
+      );
+      expect(manager.insert).not.toHaveBeenCalled();
+      expect(manager.save).not.toHaveBeenCalled();
+    });
+
+    it('asks Microsoft to retry a completed Reinstate while the subscription still reads Suspended', async () => {
+      rows.linked = linkedRow({
+        status: 'past_due',
+        pastDueSince: new Date(),
+        marketplaceStatus: 'Suspended',
+      });
+      client.getOperation.mockResolvedValue(op({ action: 'Reinstate' }));
+      microsoft('Suspended');
+      await expect(
+        service.handleWebhook(auth, body({ action: 'Reinstate' })),
+      ).rejects.toThrow(ServiceUnavailableException);
+      expect(manager.insert).not.toHaveBeenCalled();
+    });
+
+    it('applies a completed Reinstate once the subscription reads Subscribed', async () => {
+      rows.linked = linkedRow({
+        status: 'past_due',
+        pastDueSince: new Date(),
+        marketplaceStatus: 'Suspended',
+      });
+      client.getOperation.mockResolvedValue(op({ action: 'Reinstate' }));
+      microsoft('Subscribed');
+      await service.handleWebhook(auth, body({ action: 'Reinstate' }));
       expect(savedRow()).toMatchObject({
         status: 'active',
         pastDueSince: null,
         marketplaceStatus: 'Subscribed',
       });
+      expect(client.updateOperation).not.toHaveBeenCalled();
     });
 
-    it('Reinstate restores the subscription and accepts the operation', async () => {
-      manager.findOne.mockResolvedValue(
-        linkedRow({
-          status: 'past_due',
-          pastDueSince: new Date(),
-          marketplaceStatus: 'Suspended',
-        }),
-      );
+    it('Reinstate in progress restores the subscription and accepts the operation', async () => {
+      rows.linked = linkedRow({
+        status: 'past_due',
+        pastDueSince: new Date(),
+        marketplaceStatus: 'Suspended',
+      });
       client.getOperation.mockResolvedValue(
         op({ action: 'Reinstate', status: 'InProgress' }),
       );
@@ -737,7 +950,9 @@ describe('MarketplaceService', () => {
         SUB_ID,
         'op-1',
         'Success',
+        expect.any(Number),
       );
+      expect(recorded().ackStatus).toBe('Success');
       expect(client.getSubscription).not.toHaveBeenCalled();
     });
 
@@ -748,7 +963,6 @@ describe('MarketplaceService', () => {
         autoRenew: true,
       });
       await service.handleWebhook(auth, body({ action: 'Renew' }));
-      expect(client.getSubscription).toHaveBeenCalledWith(SUB_ID);
       expect(savedRow().currentPeriodEnd).toEqual(
         new Date('2026-12-13T00:00:00Z'),
       );
@@ -756,14 +970,13 @@ describe('MarketplaceService', () => {
     });
 
     it('Subscribe (auto-activation) marks a linked subscription active', async () => {
-      manager.findOne.mockResolvedValue(
-        linkedRow({
-          status: 'incomplete',
-          plan: 'free',
-          marketplaceStatus: 'PendingFulfillmentStart',
-        }),
-      );
+      rows.linked = linkedRow({
+        status: 'incomplete',
+        plan: 'free',
+        marketplaceStatus: 'PendingFulfillmentStart',
+      });
       client.getOperation.mockResolvedValue(op({ action: 'Subscribe' }));
+      microsoft('Subscribed');
       await service.handleWebhook(auth, body({ action: 'Subscribe' }));
       expect(savedRow()).toMatchObject({
         status: 'active',
@@ -773,19 +986,17 @@ describe('MarketplaceService', () => {
     });
 
     it('Subscribe for a purchase nobody linked yet is recorded and ignored', async () => {
-      manager.findOne.mockResolvedValue(null);
+      rows.linked = null;
       client.getOperation.mockResolvedValue(op({ action: 'Subscribe' }));
+      microsoft('Subscribed');
       await expect(
         service.handleWebhook(auth, body({ action: 'Subscribe' })),
       ).resolves.toBe('processed');
       expect(savedRow()).toBeUndefined();
-      expect(manager.insert).toHaveBeenCalledWith(
-        MarketplaceOperation,
-        expect.objectContaining({
-          result: 'ignored',
-          detail: 'not linked to an account',
-        }),
-      );
+      expect(recorded()).toMatchObject({
+        result: 'ignored',
+        detail: 'not linked to an account',
+      });
     });
 
     it('ChangePlan applies the mapped plan and accepts the operation', async () => {
@@ -808,6 +1019,7 @@ describe('MarketplaceService', () => {
         SUB_ID,
         'op-1',
         'Success',
+        expect.any(Number),
       );
       expect(billing.queueDissolution).not.toHaveBeenCalled();
     });
@@ -825,11 +1037,12 @@ describe('MarketplaceService', () => {
         SUB_ID,
         'op-1',
         'Failure',
+        expect.any(Number),
       );
-      expect(manager.insert).toHaveBeenCalledWith(
-        MarketplaceOperation,
-        expect.objectContaining({ result: 'rejected' }),
-      );
+      expect(recorded()).toMatchObject({
+        result: 'rejected',
+        ackStatus: 'Failure',
+      });
     });
 
     it('a ChangePlan redelivered after it finished follows the current plan', async () => {
@@ -851,9 +1064,7 @@ describe('MarketplaceService', () => {
     });
 
     it('ChangePlan below Team dissolves the organization, like Stripe', async () => {
-      manager.findOne.mockResolvedValue(
-        linkedRow({ userId: null, organizationId: 'org-1' }),
-      );
+      rows.linked = linkedRow({ userId: null, organizationId: 'org-1' });
       client.getOperation.mockResolvedValue(
         op({
           action: 'ChangePlan',
@@ -867,6 +1078,25 @@ describe('MarketplaceService', () => {
       );
       expect(savedRow().plan).toBe('starter');
       expect(billing.queueDissolution).toHaveBeenCalledWith('org-1', false);
+      expect(recorded()).toMatchObject({
+        dissolveOrganizationId: 'org-1',
+        dissolveCancel: false,
+      });
+    });
+
+    it('never dissolves an organization whose purchase is still being activated', async () => {
+      rows.linked = linkedRow({
+        userId: null,
+        organizationId: 'org-1',
+        plan: 'free',
+        status: 'incomplete',
+        marketplaceStatus: 'PendingFulfillmentStart',
+      });
+      client.getOperation.mockResolvedValue(op({ action: 'Unsubscribe' }));
+      microsoft('Unsubscribed');
+      await service.handleWebhook(auth, body({ action: 'Unsubscribe' }));
+      expect(billing.queueDissolution).not.toHaveBeenCalled();
+      expect(recorded().dissolveOrganizationId).toBeNull();
     });
 
     it('ChangeQuantity stores the quantity and accepts the operation', async () => {
@@ -882,6 +1112,7 @@ describe('MarketplaceService', () => {
         SUB_ID,
         'op-1',
         'Success',
+        expect.any(Number),
       );
     });
 
@@ -899,37 +1130,71 @@ describe('MarketplaceService', () => {
       expect(billing.queueDissolution).not.toHaveBeenCalled();
     });
 
+    it('Unsubscribe applies even when the subscription still reads Subscribed', async () => {
+      // A stale read must not leave a canceled subscription on a paid plan.
+      client.getOperation.mockResolvedValue(op({ action: 'Unsubscribe' }));
+      microsoft('Subscribed');
+      await service.handleWebhook(auth, body({ action: 'Unsubscribe' }));
+      expect(savedRow()).toMatchObject({
+        plan: 'free',
+        status: 'canceled',
+        marketplaceStatus: 'Unsubscribed',
+      });
+    });
+
     it('Unsubscribe of an organization subscription dissolves the organization', async () => {
-      manager.findOne.mockResolvedValue(
-        linkedRow({ userId: null, organizationId: 'org-1' }),
-      );
+      rows.linked = linkedRow({ userId: null, organizationId: 'org-1' });
       client.getOperation.mockResolvedValue(op({ action: 'Unsubscribe' }));
       microsoft('Unsubscribed');
       await service.handleWebhook(auth, body({ action: 'Unsubscribe' }));
       expect(billing.queueDissolution).toHaveBeenCalledWith('org-1', true);
     });
 
-    it.each(['Subscribe', 'Reinstate', 'Suspend'])(
+    it.each([
+      ['Subscribe', 'Subscribed'],
+      ['Renew', 'Subscribed'],
+      ['Suspend', 'Suspended'],
+    ])(
       'ignores a late %s once the subscription ended',
-      async (action) => {
-        manager.findOne.mockResolvedValue(
-          linkedRow({
-            plan: 'free',
-            status: 'canceled',
-            marketplaceStatus: 'Unsubscribed',
-          }),
-        );
+      async (action, msStatus) => {
+        rows.linked = linkedRow({
+          plan: 'free',
+          status: 'canceled',
+          marketplaceStatus: 'Unsubscribed',
+        });
         client.getOperation.mockResolvedValue(op({ action }));
-        microsoft('Subscribed');
+        microsoft(msStatus);
         await service.handleWebhook(auth, body({ action }));
         expect(savedRow()).toBeUndefined();
-        expect(manager.insert).toHaveBeenCalledWith(
-          MarketplaceOperation,
-          expect.objectContaining({
-            result: 'ignored',
-            detail: 'subscription already ended',
-          }),
+        expect(recorded()).toMatchObject({
+          result: 'ignored',
+          detail: 'subscription already ended',
+        });
+      },
+    );
+
+    it.each(['ChangePlan', 'ChangeQuantity', 'Reinstate'])(
+      'answers Failure to a %s on a subscription that already ended',
+      async (action) => {
+        rows.linked = linkedRow({
+          plan: 'free',
+          status: 'canceled',
+          marketplaceStatus: 'Unsubscribed',
+        });
+        client.getOperation.mockResolvedValue(
+          op({ action, planId: 'kk-team', status: 'InProgress' }),
         );
+        await service.handleWebhook(auth, body({ action }));
+        expect(client.updateOperation).toHaveBeenCalledWith(
+          SUB_ID,
+          'op-1',
+          'Failure',
+          expect.any(Number),
+        );
+        expect(recorded()).toMatchObject({
+          result: 'ignored',
+          ackStatus: 'Failure',
+        });
       },
     );
 
@@ -950,16 +1215,14 @@ describe('MarketplaceService', () => {
       );
       expect(savedRow()).toBeUndefined();
       expect(client.updateOperation).not.toHaveBeenCalled();
-      expect(manager.insert).toHaveBeenCalledWith(
-        MarketplaceOperation,
-        expect.objectContaining({ result: 'ignored' }),
-      );
+      expect(recorded()).toMatchObject({ result: 'ignored' });
     });
 
     it('does not touch a row a Stripe checkout took over', async () => {
-      manager.findOne.mockResolvedValue(
-        linkedRow({ source: 'stripe', stripeSubscriptionId: 'sub_1' }),
-      );
+      rows.linked = linkedRow({
+        source: 'stripe',
+        stripeSubscriptionId: 'sub_1',
+      });
       client.getOperation.mockResolvedValue(op({ action: 'Unsubscribe' }));
       microsoft('Unsubscribed');
       await service.handleWebhook(auth, body({ action: 'Unsubscribe' }));

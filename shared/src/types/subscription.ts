@@ -87,6 +87,7 @@ export interface MarketplaceTokenRequest {
  * - `linked_elsewhere`: linked to a different KrakenKey account
  * - `conflict`: this account already has a paid subscription (Stripe or another Marketplace one)
  * - `not_owner`: the user is in an organization and isn't its owner
+ * - `needs_team`: the plan is a personal plan (Starter) and the user is in an organization, which needs Team or higher
  * - `unknown_plan`: the purchased plan isn't sold through this installation
  * - `suspended`: Microsoft suspended it (payment problem) and it isn't linked here
  * - `ended`: canceled on Microsoft's side
@@ -97,6 +98,7 @@ export type MarketplaceLandingState =
   | 'linked_elsewhere'
   | 'conflict'
   | 'not_owner'
+  | 'needs_team'
   | 'unknown_plan'
   | 'suspended'
   | 'ended';

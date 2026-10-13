@@ -27,6 +27,7 @@ import {
   ORG_ELIGIBLE_PLANS,
   hasLiveMarketplaceSubscription,
   hasLiveStripeSubscription,
+  isActivatingMarketplacePurchase,
 } from './subscription-source';
 
 const PLAN_ORDER: Record<string, number> = {
@@ -201,10 +202,20 @@ export class BillingService {
     });
 
     // An account that so far only bought through Microsoft Marketplace has
-    // a row but no Stripe customer.
+    // a row but no Stripe customer. Write only that column: saving the whole
+    // row could undo a Marketplace activation that changed it meanwhile.
     if (existing) {
-      existing.stripeCustomerId = customer.id;
-      return this.subscriptionRepository.save(existing);
+      await this.subscriptionRepository.update(
+        { id: existing.id, stripeCustomerId: IsNull() },
+        { stripeCustomerId: customer.id },
+      );
+      const latest = await this.subscriptionRepository.findOne({
+        where: { id: existing.id },
+      });
+      const row = latest ?? existing;
+      // Another request may have set a customer first; keep that one.
+      row.stripeCustomerId ??= customer.id;
+      return row;
     }
 
     const subscription = this.subscriptionRepository.create({
@@ -242,6 +253,11 @@ export class BillingService {
     const existing = await this.getSubscription(userId);
     if (hasLiveMarketplaceSubscription(existing)) {
       throw new ConflictException(BILLED_BY_MICROSOFT_MESSAGE);
+    }
+    if (isActivatingMarketplacePurchase(existing)) {
+      throw new ConflictException(
+        'A Microsoft Marketplace purchase is being activated for this account. Wait a few minutes, then check the billing page.',
+      );
     }
     if (hasLiveStripeSubscription(existing)) {
       throw new ConflictException(

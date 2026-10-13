@@ -55,6 +55,16 @@ export class AddMarketplaceSubscriptions1790000000000 implements MigrationInterf
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
+    // Dropping the columns would silently unlink subscriptions Microsoft
+    // still bills for. Refuse while any exist.
+    const rows = (await queryRunner.query(
+      `SELECT count(*)::int AS n FROM "subscription" WHERE "source" = 'marketplace'`,
+    )) as { n: number }[];
+    if ((rows[0]?.n ?? 0) > 0) {
+      throw new Error(
+        `Refusing to revert AddMarketplaceSubscriptions: ${rows[0].n} subscription(s) have source 'marketplace'. Move or delete them first.`,
+      );
+    }
     await queryRunner.query(`DROP TABLE IF EXISTS "marketplace_operation"`);
     await queryRunner.query(
       `DROP INDEX IF EXISTS "UQ_subscription_marketplaceSubscriptionId"`,

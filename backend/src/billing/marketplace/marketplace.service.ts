@@ -62,9 +62,29 @@ interface WebhookPayload {
 interface Outcome {
   result: MarketplaceOperation['result'];
   detail: string | null;
+  /** The answer to send Microsoft, for operations it waits on. */
+  ack?: 'Success' | 'Failure';
   /** Org to dissolve after the change commits. */
   dissolveOrg?: { id: string; cancel: boolean };
 }
+
+/**
+ * Budget for answering a webhook. Microsoft accepts a plan or quantity
+ * change on its own after 10 seconds without an answer.
+ */
+const WEBHOOK_DEADLINE_MS = 8000;
+
+/**
+ * The status a completed (non-pending) operation leaves the subscription
+ * in. If Microsoft's subscription still shows something else, the read is
+ * stale or a newer change happened; see applyOperation.
+ */
+const IMPLIED_STATUS: Record<string, MarketplaceSaasStatus> = {
+  Subscribe: 'Subscribed',
+  Reinstate: 'Subscribed',
+  Suspend: 'Suspended',
+  Unsubscribe: 'Unsubscribed',
+};
 
 export type WebhookResult = 'processed' | 'duplicate';
 
@@ -99,6 +119,11 @@ function emailMatches(
   const mine = email?.trim().toLowerCase();
   if (!mine) return false;
   return candidates.some((c) => c?.trim().toLowerCase() === mine);
+}
+
+/** Microsoft ids are GUIDs; compare and store them in one case. */
+function mpId(id: string): string {
+  return id.trim().toLowerCase();
 }
 
 function normalizeStatus(status: string | undefined): MarketplaceSaasStatus {
@@ -165,9 +190,9 @@ export class MarketplaceService {
    * ("Manage account" in the Azure portal) is harmless.
    *
    * The purchase is claimed on the account first (no paid limits yet), then
-   * activated, then switched to active. A conflict is caught before
-   * Microsoft starts billing, and webhooks that arrive while activation is
-   * in flight find the claimed row.
+   * activated, then switched to Microsoft's current state of it. A conflict
+   * is caught before Microsoft starts billing, and webhooks that arrive
+   * while activation is in flight find the claimed row.
    */
   async activate(
     userId: string,
@@ -191,7 +216,7 @@ export class MarketplaceService {
 
     await this.claim(owner, purchase);
 
-    if (response.saasStatus === 'PendingFulfillmentStart') {
+    if (response.saasStatus === PENDING) {
       try {
         await this.client.activate(purchase.id);
       } catch (err) {
@@ -206,12 +231,28 @@ export class MarketplaceService {
       }
     }
 
-    await this.finishActivation(purchase, plan);
+    // Read the subscription again: a webhook (a suspension, a cancellation,
+    // a plan change) may have come in since Resolve and been recorded while
+    // nothing was linked yet.
+    let current: SaasSubscription;
+    try {
+      current = await this.client.getSubscription(purchase.id);
+    } catch {
+      // Still pending: the next visit finishes it without activating again.
+      throw new BadGatewayException(
+        "Microsoft accepted the activation but we couldn't confirm it yet. Open this page again in a minute.",
+      );
+    }
+    const saasStatus = await this.finishActivation(purchase.id, current);
     this.logger.log(
-      `Marketplace subscription activated: subscription=${purchase.id} ${owner.organizationId ? `org=${owner.organizationId}` : `user=${owner.userId}`} plan=${plan}`,
+      `Marketplace subscription activated: subscription=${purchase.id} ${owner.organizationId ? `org=${owner.organizationId}` : `user=${owner.userId}`} status=${saasStatus}`,
     );
 
-    return { ...response, state: 'active', saasStatus: 'Subscribed' };
+    return {
+      ...response,
+      state: saasStatus === 'Unsubscribed' ? 'ended' : 'active',
+      saasStatus,
+    };
   }
 
   private async resolveToken(token: string): Promise<ResolvedPurchase> {
@@ -267,7 +308,7 @@ export class MarketplaceService {
       : { userId, organizationId: null };
 
     const linked = await this.subscriptionRepository.findOne({
-      where: { marketplaceSubscriptionId: purchase.id },
+      where: { marketplaceSubscriptionId: mpId(purchase.id) },
     });
     const own = await this.billingService.getSubscription(userId);
 
@@ -320,6 +361,11 @@ export class MarketplaceService {
     if (user.organizationId && user.role !== 'owner') {
       return result('not_owner');
     }
+    // Organizations need Team or higher, as with Stripe; a Starter
+    // subscription on an organization would dissolve it.
+    if (user.organizationId && !ORG_ELIGIBLE_PLANS.has(plan)) {
+      return result('needs_team');
+    }
     if (hasLiveStripeSubscription(own)) {
       return result(
         'conflict',
@@ -345,6 +391,8 @@ export class MarketplaceService {
         return 'Microsoft has suspended this subscription because of a payment problem. Resolve it in the Azure portal, then try again.';
       case 'unknown_plan':
         return 'This plan is not available. Contact support.';
+      case 'needs_team':
+        return 'Organizations need the Team plan or higher. Change the plan in the Azure portal, or sign in with an account that is not in an organization.';
       default:
         return 'This subscription cannot be activated for this account.';
     }
@@ -359,9 +407,10 @@ export class MarketplaceService {
     owner: Assessment['owner'],
     purchase: ResolvedPurchase,
   ): Promise<void> {
+    const id = mpId(purchase.id);
     const fields: Partial<Subscription> = {
       source: 'marketplace',
-      marketplaceSubscriptionId: purchase.id,
+      marketplaceSubscriptionId: id,
       marketplaceOfferId: purchase.offerId,
       marketplacePlanId: purchase.planId,
       marketplaceStatus: PENDING,
@@ -387,8 +436,11 @@ export class MarketplaceService {
           lock: { mode: 'pessimistic_write' },
         });
         if (existing) {
+          const same =
+            !!existing.marketplaceSubscriptionId &&
+            mpId(existing.marketplaceSubscriptionId) === id;
           if (
-            existing.marketplaceSubscriptionId !== purchase.id &&
+            !same &&
             (hasLiveStripeSubscription(existing) ||
               hasLiveMarketplaceSubscription(existing))
           ) {
@@ -396,7 +448,7 @@ export class MarketplaceService {
               'This account already has a paid subscription.',
             );
           }
-          if (existing.marketplaceSubscriptionId === purchase.id) return;
+          if (same) return;
           Object.assign(existing, fields);
           await m.save(Subscription, existing);
           return;
@@ -415,7 +467,7 @@ export class MarketplaceService {
       if (isUniqueViolation(err)) {
         // Claimed by another account in the meantime, or a parallel click.
         const linked = await this.subscriptionRepository.findOne({
-          where: { marketplaceSubscriptionId: purchase.id },
+          where: { marketplaceSubscriptionId: id },
         });
         const mine =
           linked &&
@@ -429,34 +481,43 @@ export class MarketplaceService {
     }
   }
 
-  /** Switches the claimed row to active after Microsoft accepted it. */
+  /**
+   * Applies Microsoft's current state of the subscription to the claimed
+   * row. Right after Activate, Microsoft may still report the purchase as
+   * PendingFulfillmentStart; it was accepted, so that counts as Subscribed.
+   * Returns the status applied.
+   */
   private async finishActivation(
-    purchase: ResolvedPurchase,
-    plan: MarketplacePlan,
-  ): Promise<void> {
-    const saas = purchase.subscription;
-    const result = await this.subscriptionRepository.update(
-      { marketplaceSubscriptionId: purchase.id, marketplaceStatus: PENDING },
-      {
-        marketplaceStatus: 'Subscribed',
-        plan,
-        status: 'active',
-        pastDueSince: null,
-        currentPeriodEnd: termEnd(saas),
-        cancelAtPeriodEnd: saas.autoRenew === false,
+    subscriptionId: string,
+    current: SaasSubscription,
+  ): Promise<MarketplaceSaasStatus> {
+    const reported = normalizeStatus(current.saasSubscriptionStatus);
+    const status: MarketplaceSaasStatus =
+      reported === PENDING ? 'Subscribed' : reported;
+
+    const updated = await this.subscriptionRepository.manager.transaction(
+      async (m) => {
+        const row = await m.findOne(Subscription, {
+          where: { marketplaceSubscriptionId: mpId(subscriptionId) },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!row || row.source !== 'marketplace') return false;
+        if (row.marketplaceStatus !== 'Unsubscribed') {
+          this.syncFromMicrosoft(row, {
+            ...current,
+            saasSubscriptionStatus: status,
+          });
+          await m.save(Subscription, row);
+        }
+        return true;
       },
     );
-    if (result.affected) return;
+    if (updated) return status;
 
-    // A webhook may already have brought the row up to date.
-    const row = await this.subscriptionRepository.findOne({
-      where: { marketplaceSubscriptionId: purchase.id },
-    });
-    if (row?.source === 'marketplace') return;
     // A Stripe checkout replaced the claim between the claim and here, so
     // both may now bill this account.
     this.logger.error(
-      `Marketplace subscription ${purchase.id} was activated but its account row was taken over; check for double billing`,
+      `Marketplace subscription ${subscriptionId} was activated but its account row was taken over; check for double billing`,
     );
     throw new ConflictException(
       'This account changed while the subscription was being activated. Contact support.',
@@ -470,30 +531,34 @@ export class MarketplaceService {
   /**
    * Handles a webhook call: verifies Microsoft's token, confirms the
    * operation with Microsoft, applies it once (by operation id), and
-   * accepts or rejects it where Microsoft waits for that.
+   * accepts or rejects it where Microsoft waits for that. Calls to Microsoft
+   * share an 8-second budget so the answer comes inside Microsoft's
+   * 10-second window.
    */
   async handleWebhook(
     authorization: string | undefined,
     body: unknown,
   ): Promise<WebhookResult> {
+    const deadline = Date.now() + WEBHOOK_DEADLINE_MS;
     await this.verifier.verify(authorization);
     const payload = this.parsePayload(body);
 
-    if (await this.operationRepository.exists({ where: { id: payload.id } })) {
+    const previous = await this.operationRepository.findOne({
+      where: { id: payload.id },
+    });
+    if (previous) {
       this.logger.log(
         `Marketplace operation already handled: op=${payload.id} action=${payload.action}`,
       );
-      // An earlier delivery may have failed after recording the operation
-      // but before the dissolution was queued.
-      await this.queuePendingDissolution(payload.subscriptionId);
+      await this.finishRecordedOperation(payload, previous, deadline);
       return 'duplicate';
     }
 
-    const op = await this.confirmOperation(payload);
+    const op = await this.confirmOperation(payload, deadline);
 
     let outcome: Outcome;
     try {
-      outcome = await this.applyOperation(payload, op);
+      outcome = await this.applyOperation(payload, op, deadline);
     } catch (err) {
       if (err instanceof DuplicateOperation) return 'duplicate';
       throw err;
@@ -503,24 +568,9 @@ export class MarketplaceService {
       `Marketplace ${payload.action}: subscription=${payload.subscriptionId} op=${payload.id} result=${outcome.result}${outcome.detail ? ` (${outcome.detail})` : ''}`,
     );
 
-    if (ACK_ACTIONS.has(payload.action) && op.status === 'InProgress') {
-      const status = outcome.result === 'rejected' ? 'Failure' : 'Success';
-      try {
-        await this.client.updateOperation(
-          payload.subscriptionId,
-          payload.id,
-          status,
-        );
-      } catch (err) {
-        // Microsoft accepts ChangePlan/ChangeQuantity on its own after 10
-        // seconds without an answer, which matches what was applied unless
-        // this was a rejection.
-        this.logger.error(
-          `Could not report ${status} for Marketplace operation ${payload.id}: status=${err instanceof MarketplaceApiError ? err.status : 'unknown'}`,
-        );
-      }
+    if (outcome.ack) {
+      await this.sendAck(payload, outcome.ack, deadline);
     }
-
     if (outcome.dissolveOrg) {
       await this.billingService.queueDissolution(
         outcome.dissolveOrg.id,
@@ -528,6 +578,66 @@ export class MarketplaceService {
       );
     }
     return 'processed';
+  }
+
+  private async sendAck(
+    payload: WebhookPayload,
+    status: 'Success' | 'Failure',
+    deadline: number,
+  ): Promise<void> {
+    try {
+      await this.client.updateOperation(
+        payload.subscriptionId,
+        payload.id,
+        status,
+        deadline,
+      );
+    } catch (err) {
+      // Microsoft accepts ChangePlan/ChangeQuantity on its own after 10
+      // seconds without an answer; a redelivery sends it again.
+      this.logger.error(
+        `Could not report ${status} for Marketplace operation ${payload.id}: status=${err instanceof MarketplaceApiError ? err.status : 'unknown'}`,
+      );
+    }
+  }
+
+  /**
+   * A redelivered operation: re-send the answer while Microsoft still
+   * waits for it, and re-queue the dissolution it triggered, in case the
+   * first delivery failed after recording the operation. queueDissolution
+   * ignores a job that is already queued, and a finished dissolution
+   * deleted the organization.
+   */
+  private async finishRecordedOperation(
+    payload: WebhookPayload,
+    previous: MarketplaceOperation,
+    deadline: number,
+  ): Promise<void> {
+    if (previous.ackStatus) {
+      try {
+        const op = await this.client.getOperation(
+          payload.subscriptionId,
+          payload.id,
+          deadline,
+        );
+        if (op.status === 'InProgress') {
+          await this.sendAck(payload, previous.ackStatus, deadline);
+        }
+      } catch {
+        // Microsoft retries; nothing else to do now.
+      }
+    }
+    if (
+      previous.dissolveOrganizationId &&
+      (await this.orgRepository.exists({
+        where: { id: previous.dissolveOrganizationId },
+      }))
+    ) {
+      await this.billingService.queueDissolution(
+        previous.dissolveOrganizationId,
+        previous.dissolveCancel === true,
+      );
+    }
   }
 
   private parsePayload(body: unknown): WebhookPayload {
@@ -543,7 +653,7 @@ export class MarketplaceService {
       );
     }
     return {
-      id,
+      id: mpId(id),
       subscriptionId,
       action,
       planId: str(b.planId),
@@ -558,10 +668,15 @@ export class MarketplaceService {
    */
   private async confirmOperation(
     payload: WebhookPayload,
+    deadline: number,
   ): Promise<SaasOperation> {
     let op: SaasOperation;
     try {
-      op = await this.client.getOperation(payload.subscriptionId, payload.id);
+      op = await this.client.getOperation(
+        payload.subscriptionId,
+        payload.id,
+        deadline,
+      );
     } catch (err) {
       const status = err instanceof MarketplaceApiError ? err.status : 0;
       if (status === 404) {
@@ -577,8 +692,8 @@ export class MarketplaceService {
     }
 
     const mismatches: string[] = [];
-    if (op.id && op.id !== payload.id) mismatches.push('id');
-    if (op.subscriptionId !== payload.subscriptionId) {
+    if (op.id && mpId(op.id) !== payload.id) mismatches.push('id');
+    if (mpId(op.subscriptionId ?? '') !== mpId(payload.subscriptionId)) {
       mismatches.push('subscriptionId');
     }
     if (op.action !== payload.action) mismatches.push('action');
@@ -604,23 +719,6 @@ export class MarketplaceService {
   }
 
   /**
-   * Re-queues an organization's dissolution if its Marketplace subscription
-   * ended or dropped below Team and the organization still exists.
-   * queueDissolution ignores a job that is already queued.
-   */
-  private async queuePendingDissolution(subscriptionId: string): Promise<void> {
-    const sub = await this.subscriptionRepository.findOne({
-      where: { marketplaceSubscriptionId: subscriptionId },
-    });
-    if (!sub?.organizationId || sub.source !== 'marketplace') return;
-    if (sub.marketplaceStatus === 'Unsubscribed') {
-      await this.billingService.queueDissolution(sub.organizationId, true);
-    } else if (!ORG_ELIGIBLE_PLANS.has(sub.plan)) {
-      await this.billingService.queueDissolution(sub.organizationId, false);
-    }
-  }
-
-  /**
    * Applies the confirmed operation and records it in one transaction. The
    * operation id is the primary key of the record, so a concurrent delivery
    * of the same operation fails here and is treated as a duplicate.
@@ -630,35 +728,69 @@ export class MarketplaceService {
    * to Microsoft's current state of the subscription, so a webhook that
    * arrives late or out of order (Microsoft retries for hours) can't roll
    * back a newer change.
+   *
+   * When that state disagrees with what the completed action implies, the
+   * read is stale or a newer change has happened, and there's no way to
+   * tell which:
+   * - Unsubscribe is final, so its state is applied regardless.
+   * - Anything else answers 503 without recording the operation. Microsoft
+   *   retries; once its read catches up the change is applied, and if a
+   *   newer change caused the difference, the row already reflects it and
+   *   retries stop after Microsoft's retry window. Applying the implied
+   *   state instead could undo that newer change (a late Reinstate
+   *   reactivating a subscription suspended since).
    */
   private async applyOperation(
     payload: WebhookPayload,
     op: SaasOperation,
+    deadline: number,
   ): Promise<Outcome> {
     const awaitsAnswer =
       ACK_ACTIONS.has(op.action) && op.status === 'InProgress';
     let saas: SaasSubscription | undefined;
     if (!awaitsAnswer && !FINAL_FAILED_STATUSES.has(op.status)) {
       try {
-        saas = await this.client.getSubscription(op.subscriptionId);
+        saas = await this.client.getSubscription(op.subscriptionId, deadline);
       } catch {
         // Microsoft retries the webhook; nothing is recorded.
         throw new ServiceUnavailableException(
           'Could not read the subscription from Microsoft',
         );
       }
+      const implied = IMPLIED_STATUS[op.action];
+      const reported = normalizeStatus(saas.saasSubscriptionStatus);
+      if (implied && reported !== implied) {
+        if (op.action === 'Unsubscribe') {
+          saas = { ...saas, saasSubscriptionStatus: 'Unsubscribed' };
+        } else {
+          this.logger.warn(
+            `Marketplace ${op.action} op=${payload.id}: subscription still reports ${reported || '(none)'}; asking Microsoft to retry`,
+          );
+          throw new ServiceUnavailableException(
+            'The subscription does not reflect this operation yet',
+          );
+        }
+      }
     }
 
     try {
       return await this.subscriptionRepository.manager.transaction(
         async (m) => {
-          const outcome = await this.applyToSubscription(m, op, saas);
+          const outcome = await this.applyToSubscription(
+            m,
+            op,
+            saas,
+            awaitsAnswer,
+          );
           await m.insert(MarketplaceOperation, {
             id: payload.id,
-            subscriptionId: payload.subscriptionId,
+            subscriptionId: mpId(payload.subscriptionId),
             action: payload.action,
             result: outcome.result,
             detail: outcome.detail,
+            ackStatus: outcome.ack ?? null,
+            dissolveOrganizationId: outcome.dissolveOrg?.id ?? null,
+            dissolveCancel: outcome.dissolveOrg?.cancel ?? null,
           });
           return outcome;
         },
@@ -673,6 +805,7 @@ export class MarketplaceService {
     m: EntityManager,
     op: SaasOperation,
     saas: SaasSubscription | undefined,
+    awaitsAnswer: boolean,
   ): Promise<Outcome> {
     if (FINAL_FAILED_STATUSES.has(op.status)) {
       return { result: 'ignored', detail: `operation ${op.status}` };
@@ -681,28 +814,44 @@ export class MarketplaceService {
     // A plan KrakenKey doesn't sell is refused even before the purchase is
     // linked to an account.
     let newPlan: MarketplacePlan | null = null;
-    if (op.action === 'ChangePlan' && !saas) {
+    if (op.action === 'ChangePlan' && awaitsAnswer) {
       newPlan = op.planId ? this.config.planFor(op.offerId, op.planId) : null;
       if (!newPlan) {
-        return { result: 'rejected', detail: 'plan not available' };
+        return {
+          result: 'rejected',
+          detail: 'plan not available',
+          ack: 'Failure',
+        };
       }
     }
+    const accepted = awaitsAnswer ? ('Success' as const) : undefined;
 
     const sub = await m.findOne(Subscription, {
-      where: { marketplaceSubscriptionId: op.subscriptionId },
+      where: { marketplaceSubscriptionId: mpId(op.subscriptionId) },
       lock: { mode: 'pessimistic_write' },
     });
     // Not linked yet (the buyer hasn't finished on the landing page), or a
     // later Stripe checkout replaced it. The landing page reads the current
     // state from Microsoft when the buyer gets there.
     if (!sub || sub.source !== 'marketplace') {
-      return { result: 'ignored', detail: 'not linked to an account' };
+      return {
+        result: 'ignored',
+        detail: 'not linked to an account',
+        ack: accepted,
+      };
     }
-    // A canceled SaaS subscription can't be reactivated.
+    // A canceled SaaS subscription can't be reactivated or changed.
     if (sub.marketplaceStatus === 'Unsubscribed') {
-      return { result: 'ignored', detail: 'subscription already ended' };
+      return {
+        result: 'ignored',
+        detail: 'subscription already ended',
+        ack: awaitsAnswer ? 'Failure' : undefined,
+      };
     }
 
+    // A row still waiting for activation on the landing page has no paid
+    // plan yet, so nothing it goes through dissolves an organization.
+    const wasPending = sub.marketplaceStatus === PENDING;
     const previousPlan = sub.plan;
     let detail: string | null = null;
 
@@ -726,7 +875,7 @@ export class MarketplaceService {
     }
 
     let dissolveOrg: Outcome['dissolveOrg'];
-    if (sub.organizationId) {
+    if (sub.organizationId && !wasPending) {
       if (sub.marketplaceStatus === 'Unsubscribed') {
         dissolveOrg = { id: sub.organizationId, cancel: true };
       } else if (
@@ -738,7 +887,7 @@ export class MarketplaceService {
     }
 
     await m.save(Subscription, sub);
-    return { result: 'applied', detail, dissolveOrg };
+    return { result: 'applied', detail, ack: accepted, dissolveOrg };
   }
 
   /**

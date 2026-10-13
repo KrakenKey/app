@@ -1299,13 +1299,46 @@ describe('BillingService', () => {
       await expect(
         service.createCheckoutSession(userId, 'test@example.com', 'starter'),
       ).resolves.toBe('https://checkout.stripe.com/session123');
-      expect(mockRepository.save).toHaveBeenCalledWith(
-        expect.objectContaining({ id: ended.id, stripeCustomerId: 'cus_new' }),
+      // Only the customer column is written, so a Marketplace activation
+      // that changed the row meanwhile isn't undone.
+      expect(mockRepository.update).toHaveBeenCalledWith(
+        { id: ended.id, stripeCustomerId: expect.anything() },
+        { stripeCustomerId: 'cus_new' },
       );
+      expect(mockRepository.save).not.toHaveBeenCalled();
       expect(mockStripe.checkout.sessions.create).toHaveBeenCalledWith(
         expect.objectContaining({ customer: 'cus_new' }),
         expect.anything(),
       );
+    });
+
+    it('refuses a Stripe checkout with 409 while a Marketplace purchase is being activated', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...marketplaceSub('incomplete'),
+        plan: 'free',
+        marketplaceStatus: 'PendingFulfillmentStart',
+        updatedAt: new Date(),
+      });
+      await expect(
+        service.createCheckoutSession(userId, 'test@example.com', 'starter'),
+      ).rejects.toThrow(/being activated/);
+      expect(mockStripe.customers.create).not.toHaveBeenCalled();
+    });
+
+    it('allows a Stripe checkout over a Marketplace claim that was abandoned', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...marketplaceSub('incomplete'),
+        plan: 'free',
+        stripeCustomerId: 'cus_1',
+        marketplaceStatus: 'PendingFulfillmentStart',
+        updatedAt: new Date(Date.now() - 60 * 60 * 1000),
+      });
+      mockStripe.checkout.sessions.create.mockResolvedValue({
+        url: 'https://checkout.stripe.com/session123',
+      });
+      await expect(
+        service.createCheckoutSession(userId, 'test@example.com', 'starter'),
+      ).resolves.toBe('https://checkout.stripe.com/session123');
     });
 
     it('refuses the Stripe portal with 409', async () => {

@@ -33,6 +33,17 @@ export class MarketplaceOperation {
   @Column({ type: 'text', nullable: true })
   detail: string | null;
 
+  /** The answer Microsoft waits for (ChangePlan, ChangeQuantity, Reinstate), if any. */
+  @Column({ type: 'varchar', nullable: true })
+  ackStatus: 'Success' | 'Failure' | null;
+
+  /** Organization this operation dissolves, so a redelivery can re-queue it. */
+  @Column({ type: 'uuid', nullable: true })
+  dissolveOrganizationId: string | null;
+
+  @Column({ type: 'boolean', nullable: true })
+  dissolveCancel: boolean | null;
+
   @CreateDateColumn()
   createdAt: Date;
 }

@@ -235,6 +235,9 @@ CREATE TABLE "marketplace_operation" (
   "action" VARCHAR NOT NULL,                      -- Subscribe/ChangePlan/ChangeQuantity/Suspend/Reinstate/Renew/Unsubscribe
   "result" VARCHAR NOT NULL,                      -- applied/rejected/ignored
   "detail" TEXT,
+  "ackStatus" VARCHAR,                            -- Success/Failure sent to Microsoft, if it waited on one
+  "dissolveOrganizationId" UUID,                  -- organization this operation dissolves, if any
+  "dissolveCancel" BOOLEAN,
   "createdAt" TIMESTAMP NOT NULL DEFAULT now()
 );
 ```

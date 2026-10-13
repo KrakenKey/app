@@ -10,8 +10,24 @@ import {
 /** Injection token to replace fetch (tests). */
 export const MARKETPLACE_FETCH = 'MARKETPLACE_FETCH';
 
-/** Per-request timeout. Webhook handling must finish within 10 seconds. */
+/** Per-request timeout. Webhook calls also pass a deadline (see below). */
 const REQUEST_TIMEOUT_MS = 4000;
+
+/** Below this much time left before a deadline, a request isn't started. */
+const MIN_REQUEST_MS = 250;
+
+/**
+ * Time a request may take: the default timeout, cut to what is left before
+ * `deadline` (epoch ms). Throws when too little is left to bother.
+ */
+function timeoutFor(deadline?: number): number {
+  if (deadline === undefined) return REQUEST_TIMEOUT_MS;
+  const left = deadline - Date.now();
+  if (left < MIN_REQUEST_MS) {
+    throw new MarketplaceApiError('Deadline passed before the request', 0);
+  }
+  return Math.min(REQUEST_TIMEOUT_MS, left);
+}
 
 /** Refresh the publisher token this long before it expires. */
 const TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000;
@@ -117,10 +133,14 @@ export class MarketplaceFulfillmentClient {
     );
   }
 
-  async getSubscription(subscriptionId: string): Promise<SaasSubscription> {
+  async getSubscription(
+    subscriptionId: string,
+    deadline?: number,
+  ): Promise<SaasSubscription> {
     return this.call<SaasSubscription>(
       'GET',
       `/subscriptions/${encodeURIComponent(subscriptionId)}`,
+      { deadline },
     );
   }
 
@@ -135,10 +155,12 @@ export class MarketplaceFulfillmentClient {
   async getOperation(
     subscriptionId: string,
     operationId: string,
+    deadline?: number,
   ): Promise<SaasOperation> {
     const op = await this.call<SaasOperation & { 'id  '?: string }>(
       'GET',
       `/subscriptions/${encodeURIComponent(subscriptionId)}/operations/${encodeURIComponent(operationId)}`,
+      { deadline },
     );
     // Microsoft's own example spells the key "id  "; accept either.
     return { ...op, id: op.id ?? op['id  '] ?? '' };
@@ -149,21 +171,27 @@ export class MarketplaceFulfillmentClient {
     subscriptionId: string,
     operationId: string,
     status: 'Success' | 'Failure',
+    deadline?: number,
   ): Promise<void> {
     await this.call(
       'PATCH',
       `/subscriptions/${encodeURIComponent(subscriptionId)}/operations/${encodeURIComponent(operationId)}`,
-      { body: { status } },
+      { body: { status }, deadline },
     );
   }
 
   private async call<T>(
     method: string,
     path: string,
-    opts: { headers?: Record<string, string>; body?: unknown } = {},
+    opts: {
+      headers?: Record<string, string>;
+      body?: unknown;
+      deadline?: number;
+    } = {},
     retried = false,
   ): Promise<T> {
-    const token = await this.accessToken();
+    const token = await this.accessToken(opts.deadline);
+    const timeout = timeoutFor(opts.deadline);
     const requestId = randomUUID();
     const url = `${MARKETPLACE_API_BASE}${path}?api-version=${MARKETPLACE_API_VERSION}`;
     let res: Response;
@@ -178,7 +206,7 @@ export class MarketplaceFulfillmentClient {
           ...opts.headers,
         },
         body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeout),
       });
     } catch (err) {
       this.logger.warn(
@@ -188,7 +216,12 @@ export class MarketplaceFulfillmentClient {
     }
 
     // A token revoked or rotated early: fetch a new one once.
-    if (res.status === 401 && !retried) {
+    if (
+      res.status === 401 &&
+      !retried &&
+      (opts.deadline === undefined ||
+        opts.deadline - Date.now() >= MIN_REQUEST_MS)
+    ) {
       this.cached = null;
       return this.call<T>(method, path, opts, true);
     }
@@ -222,18 +255,18 @@ export class MarketplaceFulfillmentClient {
       .replace(/\/operations\/[^/]+/, '/operations/:id');
   }
 
-  private async accessToken(): Promise<string> {
+  private async accessToken(deadline?: number): Promise<string> {
     if (this.cached && Date.now() < this.cached.refreshAt) {
       return this.cached.token;
     }
     // Concurrent callers share one token request.
-    this.pending ??= this.fetchToken().finally(() => {
+    this.pending ??= this.fetchToken(timeoutFor(deadline)).finally(() => {
       this.pending = null;
     });
     return this.pending;
   }
 
-  private async fetchToken(): Promise<string> {
+  private async fetchToken(timeoutMs: number): Promise<string> {
     const { tenantId, clientId, clientSecret } = this.config;
     if (!tenantId || !clientId || !clientSecret) {
       throw new MarketplaceApiError('Marketplace credentials are not set', 0);
@@ -250,7 +283,7 @@ export class MarketplaceFulfillmentClient {
           client_secret: clientSecret,
           scope: `${MARKETPLACE_RESOURCE_ID}/.default`,
         }).toString(),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
       this.logger.warn(

@@ -375,6 +375,17 @@ const Marketplace: React.FC = () => {
             </p>
           );
           break;
+        case 'needs_team':
+          title = 'Organizations need Team or higher';
+          detail = (
+            <p className="mt-6 text-sm text-amber-400">
+              {planLabel} is a personal plan, and {purchase.target.name} is an
+              organization. Change the plan to Team or Business in the Azure
+              portal, or sign in with an account that isn&apos;t in an
+              organization.
+            </p>
+          );
+          break;
         case 'unknown_plan':
           title = 'Plan not available';
           detail = (

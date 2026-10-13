@@ -52,7 +52,7 @@ export class MarketplaceWebhookVerifier {
       jwksUri: `https://login.microsoftonline.com/${encodeURIComponent(this.config.tenantId)}/discovery/v2.0/keys`,
       cache: false,
       rateLimit: false,
-      timeout: 3000,
+      timeout: 2000,
     });
     return this.source;
   }

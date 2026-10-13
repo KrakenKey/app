@@ -124,7 +124,7 @@ Sells plans through a transactable SaaS offer in Microsoft Marketplace (SaaS ful
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `KK_MARKETPLACE_ENABLED` | No | `false` | `true` turns on the `/marketplace` landing page and `POST /billing/marketplace/webhook`. While off, the landing page says the offer isn't available, the webhook and the landing routes answer `404`, and Stripe billing is unchanged |
+| `KK_MARKETPLACE_ENABLED` | No | `false` | `true` turns on the `/marketplace` landing page and `POST /billing/marketplace/webhook`. While off, the landing page says the offer isn't available, the webhook answers `404`, `/billing/marketplace/resolve` and `/activate` answer `404` to a signed-in user (`401` without a session, since authentication runs first), and Stripe billing is unchanged |
 | `KK_MARKETPLACE_TENANT_ID` | Yes** | - | Entra tenant ID from the offer's technical configuration. Webhook tokens must be issued by it |
 | `KK_MARKETPLACE_CLIENT_ID` | Yes** | - | Entra app (client) ID from the offer's technical configuration. Webhook tokens must be issued for it; the API also uses it to call the fulfillment API |
 | `KK_MARKETPLACE_CLIENT_SECRET` | Yes** | - | Client secret of that app. Never logged |
