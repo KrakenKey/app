@@ -3,10 +3,12 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { TlsService } from '../tls.service';
 
 /**
- * Starts queued renewals (past an account's concurrent pending limit) once
- * there is room. Most start right away when an earlier job finishes; this
- * sweep catches the rest, for example a slot freed by a deleted
- * certificate, or a start that failed because Redis was briefly down.
+ * Every minute: recovers certificates stuck in flight with no live job
+ * (TlsService.recoverStuck), then starts queued renewals (past an
+ * account's concurrent pending limit) once there is room. Most start right
+ * away when an earlier job finishes; this sweep catches the rest, for
+ * example a slot freed by a deleted certificate, or a start that failed
+ * because Redis was briefly down.
  *
  * Safe to run in several API processes at once: startQueuedRenewals takes
  * a per-account advisory lock and gives each start its own job id.
@@ -23,6 +25,13 @@ export class RenewalQueueService {
     // A slow sweep must not overlap the next one in the same process
     if (this.running) return;
     this.running = true;
+    try {
+      await this.tlsService.recoverStuck();
+    } catch (err) {
+      this.logger.warn(
+        `Stuck certificate recovery failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     try {
       const userIds = await this.tlsService.findUsersWithQueuedRenewals();
       for (const userId of userIds) {

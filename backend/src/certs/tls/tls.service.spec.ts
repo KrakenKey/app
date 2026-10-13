@@ -47,7 +47,7 @@ describe('TlsService', () => {
   /** A renewal job added for this certificate. */
   const renewalJob = (certId: number) => ({
     name: 'tlsCertRenewal',
-    data: { certId },
+    data: { certId, inFlightSince: expect.any(Number) },
     opts: {
       attempts: 3,
       backoff: { type: 'exponential', delay: 5000 },
@@ -55,6 +55,13 @@ describe('TlsService', () => {
     },
   });
   const started = { status: 'renewing', skipped: false, queued: false };
+  /** renew() reads the cert, then re-reads it after trying to start it. */
+  const stillQueuedAfter = (cert: Record<string, unknown>) =>
+    mockRepository.findOneBy.mockResolvedValueOnce(cert).mockResolvedValueOnce({
+      ...cert,
+      status: 'renewing',
+      renewalQueuedAt: new Date(),
+    });
 
   beforeEach(async () => {
     mockRepository = {
@@ -369,11 +376,14 @@ describe('TlsService', () => {
         rawCsr: 'pem-data',
         parsedCsr: {},
         status: 'pending',
+        inFlightSince: expect.any(Date),
         userId,
       });
+      // The job carries the row's inFlightSince as its fencing token
+      const { inFlightSince } = mockRepository.save.mock.calls[0][0];
       expect(mockQueue.add).toHaveBeenCalledWith(
         'tlsCertIssuance',
-        { certId: 1 },
+        { certId: 1, inFlightSince: inFlightSince.getTime() },
         { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
       );
     });
@@ -867,11 +877,12 @@ describe('TlsService', () => {
           parsedCsr: expect.objectContaining({ subject: expect.any(Array) }),
           status: 'pending',
           failureReason: null,
+          inFlightSince: expect.any(Date),
         },
       );
       expect(mockQueue.add).toHaveBeenCalledWith(
         'tlsCertIssuance',
-        { certId: 5 },
+        { certId: 5, inFlightSince: expect.any(Number) },
         { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
       );
       expect(result).toEqual({ id: 5, status: 'pending', skipped: false });
@@ -1195,9 +1206,11 @@ describe('TlsService', () => {
 
       const result = await service.revoke(1, userId, 4);
 
-      expect(mockRepository.update).toHaveBeenCalledWith(1, {
-        status: 'revoking',
-      });
+      // Claimed only while still issued
+      expect(mockRepository.update).toHaveBeenCalledWith(
+        { id: 1, status: 'issued' },
+        { status: 'revoking', renewalQueuedAt: null, inFlightSince: null },
+      );
       expect(mockAcme.revoke).toHaveBeenCalledWith(issuedCert.crtPem, 4);
       expect(mockRepository.update).toHaveBeenCalledWith(1, {
         status: 'revoked',
@@ -1350,7 +1363,7 @@ describe('TlsService', () => {
     });
 
     it('waits past the concurrent pending limit instead of being refused', async () => {
-      mockRepository.findOneBy.mockResolvedValue({ ...issuedCert });
+      stillQueuedAfter({ ...issuedCert });
       // Free plan: both slots taken
       mockRepository.count.mockImplementation(async ({ where }) =>
         Array.isArray(where) ? 2 : 0,
@@ -1370,7 +1383,7 @@ describe('TlsService', () => {
     });
 
     it('stays queued, not failed, when the queue is unreachable', async () => {
-      mockRepository.findOneBy.mockResolvedValue({ ...issuedCert });
+      stillQueuedAfter({ ...issuedCert });
       mockQueue.addBulk.mockRejectedValue(new Error('Connection is closed.'));
 
       const result = await service.renew(1, userId);
@@ -1659,7 +1672,7 @@ describe('TlsService', () => {
       });
 
       it('stores the CSR with a renewal that waits past the pending limit', async () => {
-        mockRepository.findOneBy.mockResolvedValue({ ...certWithNames });
+        stillQueuedAfter({ ...certWithNames });
         const parsed = parsedFor('example.com', ['www.example.com']);
         mockNewCsr(parsed);
         mockRepository.count.mockResolvedValue(1000);
@@ -1776,10 +1789,11 @@ describe('TlsService', () => {
 
       expect(mockRepository.update).toHaveBeenCalledWith(1, {
         status: 'pending',
+        inFlightSince: expect.any(Date),
       });
       expect(mockQueue.add).toHaveBeenCalledWith(
         'tlsCertIssuance',
-        { certId: 1 },
+        { certId: 1, inFlightSince: expect.any(Number) },
         { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
       );
       expect(result).toEqual({ id: 1, status: 'pending' });

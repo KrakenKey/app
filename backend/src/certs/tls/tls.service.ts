@@ -20,6 +20,7 @@ import { TlsCrt } from './entities/tls-crt.entity';
 import {
   In,
   IsNull,
+  LessThan,
   MoreThanOrEqual,
   Not,
   Repository,
@@ -28,7 +29,7 @@ import {
 import type { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { InjectQueue } from '@nestjs/bullmq';
-import { Queue } from 'bullmq';
+import { Queue, type JobType } from 'bullmq';
 import { User } from '../../users/entities/user.entity';
 import { DomainsService } from '../../domains/domains.service';
 import { CertStatus } from '@krakenkey/shared';
@@ -82,6 +83,33 @@ export type TlsCrtResponse = TlsCrt & {
 const IDEMPOTENCY_TTL_SECONDS = 15 * 60;
 /** Placeholder stored while the original request is still being processed. */
 const IDEMPOTENCY_PENDING = '__pending__';
+
+const RENEWAL_IN_PROGRESS =
+  'A renewal of this certificate is already in progress';
+
+/** First key of the renewal queue's advisory lock ('KKRQ'). */
+const RENEWAL_QUEUE_LOCK_NAMESPACE = 0x4b4b5251;
+/** How long to wait for Redis to accept jobs inside a transaction. */
+export const QUEUE_ADD_TIMEOUT_MS = 10_000;
+/**
+ * A request in flight this long with no live job is recovered. Longer than
+ * any issuance with its retries; a job merely waiting behind others is
+ * still live and left alone.
+ */
+export const STUCK_AFTER_MS = 30 * 60_000;
+const IN_FLIGHT_STATUSES: CertStatus[] = [
+  CertStatus.PENDING,
+  CertStatus.ISSUING,
+  CertStatus.RENEWING,
+];
+const LIVE_JOB_STATES: JobType[] = [
+  'active',
+  'waiting',
+  'delayed',
+  'prioritized',
+  'paused',
+  'waiting-children',
+];
 
 /** BullMQ options for issuance and renewal jobs. */
 const CERT_JOB_OPTS = {
@@ -185,18 +213,16 @@ export class TlsService {
         // Plan-based limit checks
         await this.enforceCertLimits(userId);
 
+        const inFlightSince = new Date();
         const savedCsr = await this.TlsCrtRepository.save({
           rawCsr: csr.raw,
           parsedCsr: csr.parsed,
           status: CertStatus.PENDING,
+          inFlightSince,
           userId,
         });
         // Queue background job for ACME issuance
-        const jobPayload: TlsCertJobPayload = { certId: savedCsr.id };
-        await this.tlsCertQueue.add('tlsCertIssuance', jobPayload, {
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 5000 },
-        });
+        await this.queueIssuance(savedCsr.id, inFlightSince);
         return savedCsr;
       },
     );
@@ -527,7 +553,11 @@ export class TlsService {
       );
     }
 
-    if (cert.status !== CertStatus.ISSUED) {
+    // A renewal still waiting for a slot hasn't touched the certificate,
+    // so it can be revoked: the waiting renewal is dropped
+    const queuedRenewal =
+      cert.status === CertStatus.RENEWING && !!cert.renewalQueuedAt;
+    if (cert.status !== CertStatus.ISSUED && !queuedRenewal) {
       throw new BadRequestException(
         `Certificate must be in 'issued' state to revoke. Current status: ${cert.status}`,
       );
@@ -539,9 +569,29 @@ export class TlsService {
       );
     }
 
-    await this.TlsCrtRepository.update(cert.id, {
-      status: CertStatus.REVOKING,
-    });
+    // Claimed in one conditional update, so a renewal starting or another
+    // revoke at the same moment can't both act on it
+    const claimed = await this.TlsCrtRepository.update(
+      queuedRenewal
+        ? {
+            id: cert.id,
+            status: CertStatus.RENEWING,
+            renewalQueuedAt: Not(IsNull()),
+          }
+        : { id: cert.id, status: CertStatus.ISSUED },
+      {
+        status: CertStatus.REVOKING,
+        renewalQueuedAt: null,
+        inFlightSince: null,
+      },
+    );
+    if ((claimed?.affected ?? 0) === 0) {
+      throw new ConflictException(
+        queuedRenewal
+          ? 'The renewal of this certificate started meanwhile; revoke it once the renewal finishes'
+          : 'This certificate changed state meanwhile; check its status and try again',
+      );
+    }
 
     try {
       await this.acmeIssuerStrategy.revoke(cert.crtPem, reason);
@@ -641,6 +691,21 @@ export class TlsService {
       return this.completeAwaitingCsr(cert, userId, options.csrPem);
     }
 
+    // Already renewing (started or waiting): a renew timer sees "nothing to
+    // do", anyone else a conflict
+    if (cert.status === CertStatus.RENEWING) {
+      if (options.ifDue) {
+        return {
+          id: cert.id,
+          status: CertStatus.RENEWING,
+          skipped: true,
+          reason: 'in_progress',
+          queued: !!cert.renewalQueuedAt,
+        };
+      }
+      throw new ConflictException(RENEWAL_IN_PROGRESS);
+    }
+
     if (cert.status !== CertStatus.ISSUED) {
       throw new BadRequestException(
         `Certificate must be in 'issued' state to renew. Current status: ${cert.status}`,
@@ -684,18 +749,17 @@ export class TlsService {
           }
         : {}),
     });
-    if (!claimed) {
-      throw new ConflictException(
-        'A renewal of this certificate is already in progress',
-      );
-    }
+    if (!claimed) throw new ConflictException(RENEWAL_IN_PROGRESS);
 
-    const started = await this.startQueuedRenewalsSafely(cert.userId);
+    await this.startQueuedRenewalsSafely(cert.userId);
+    // Re-read: this renewal may have been started by another caller (a job
+    // finishing, the sweep) rather than by the call above
+    const after = await this.TlsCrtRepository.findOneBy({ id: cert.id });
     return {
       id: cert.id,
       status: CertStatus.RENEWING,
       skipped: false,
-      queued: !started.includes(cert.id),
+      queued: after?.status === CertStatus.RENEWING && !!after.renewalQueuedAt,
     };
   }
 
@@ -727,6 +791,7 @@ export class TlsService {
     await this.enforceCertLimits(userId, { excludeCertId: cert.id });
 
     // Only one CSR can complete it, even if two arrive at once
+    const inFlightSince = new Date();
     const result = await this.TlsCrtRepository.update(
       { id: cert.id, status: CertStatus.AWAITING_CSR },
       {
@@ -735,6 +800,7 @@ export class TlsService {
         parsedCsr: csr.parsed as QueryDeepPartialEntity<ParsedCsr>,
         status: CertStatus.PENDING,
         failureReason: null,
+        inFlightSince,
       },
     );
     if (result?.affected === 0) {
@@ -743,11 +809,7 @@ export class TlsService {
       );
     }
 
-    const jobPayload: TlsCertJobPayload = { certId: cert.id };
-    await this.tlsCertQueue.add('tlsCertIssuance', jobPayload, {
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 5000 },
-    });
+    await this.queueIssuance(cert.id, inFlightSince);
 
     return { id: cert.id, status: CertStatus.PENDING, skipped: false };
   }
@@ -821,21 +883,28 @@ export class TlsService {
     // Plan-based limit checks (retries consume the same quota as new certs)
     await this.enforceCertLimits(userId);
 
+    const inFlightSince = new Date();
     await this.TlsCrtRepository.update(cert.id, {
       status: CertStatus.PENDING,
+      inFlightSince,
     });
 
-    const jobPayload: TlsCertJobPayload = { certId: cert.id };
-    await this.tlsCertQueue.add('tlsCertIssuance', jobPayload, {
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 5000 },
-    });
+    await this.queueIssuance(cert.id, inFlightSince);
 
     const response: RetryTlsCertResponse = {
       id: cert.id,
       status: CertStatus.PENDING,
     };
     return response;
+  }
+
+  /** Queues an issuance job carrying the certificate's fencing token. */
+  private async queueIssuance(certId: number, inFlightSince: Date) {
+    const jobPayload: TlsCertJobPayload = {
+      certId,
+      inFlightSince: inFlightSince.getTime(),
+    };
+    await this.tlsCertQueue.add('tlsCertIssuance', jobPayload, CERT_JOB_OPTS);
   }
 
   // --- Internal System Methods (No User Check) ---
@@ -865,6 +934,33 @@ export class TlsService {
   ) {
     await this.TlsCrtRepository.update(id, { ...updateTlsCrtDto, status });
     return this.findOneInternal(id);
+  }
+
+  /**
+   * @internal
+   * For the worker: moves a certificate into processing (issuing, or
+   * renewing) and clears the old PEM data, but only while it is in the
+   * state the job was queued for and, for jobs that carry one, with the
+   * same inFlightSince token. Returns false when the job is stale.
+   */
+  async beginProcessing(
+    id: number,
+    job: { renewal: boolean; token?: number; status: CertStatus },
+  ): Promise<boolean> {
+    const result = await this.TlsCrtRepository.update(
+      {
+        id,
+        status: job.renewal
+          ? CertStatus.RENEWING
+          : In([CertStatus.PENDING, CertStatus.ISSUING]),
+        renewalQueuedAt: IsNull(),
+        ...(job.token !== undefined
+          ? { inFlightSince: new Date(job.token) }
+          : {}),
+      },
+      { status: job.status, crtPem: null, chainPem: null, failureReason: null },
+    );
+    return (result?.affected ?? 0) > 0;
   }
 
   /**
@@ -944,14 +1040,17 @@ export class TlsService {
    *
    * Called after a renewal is queued, when an issuance or renewal job
    * finishes, and every minute by RenewalQueueService. A Postgres advisory
-   * lock per account makes concurrent calls (several API processes, or a
-   * job finishing during a renew request) take turns, so the limit is never
-   * overshot; each started renewal's job id is derived from its claim, so a
-   * repeat can't queue a second ACME order for it.
+   * lock per account (organization or user) makes concurrent calls take
+   * turns, so the limit is never overshot. Each start is a conditional
+   * update, so a revoke at the same moment wins cleanly, and only rows
+   * that were actually started get a job.
    *
-   * The jobs are added before the transaction commits: if Redis refuses
-   * them, the renewals stay queued for the next call. Returns the ids of
-   * the certificates started.
+   * Each job carries the row's new inFlightSince as a fencing token: the
+   * worker drops a job whose token doesn't match the row. The jobs are
+   * added before the transaction commits; if Redis refuses them or doesn't
+   * answer within QUEUE_ADD_TIMEOUT_MS, the transaction rolls back and the
+   * renewals stay queued, and a job that still lands later is dropped by
+   * the worker. Returns the ids of the certificates started.
    */
   async startQueuedRenewals(userId: string): Promise<number[]> {
     const memberIds = await this.billingService.getResourceCountUserIds(userId);
@@ -959,11 +1058,12 @@ export class TlsService {
       userId,
     )) as SubscriptionPlan;
     const limit = (PLAN_LIMITS[plan] ?? PLAN_LIMITS.free).concurrentPending;
-    const accountKey = [...memberIds].sort()[0] ?? userId;
+    const lockKey = await this.accountLockKey(userId);
 
     return this.TlsCrtRepository.manager.transaction(async (manager) => {
-      await manager.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
-        `renewal-queue:${accountKey}`,
+      await manager.query('SELECT pg_advisory_xact_lock($1, hashtext($2))', [
+        RENEWAL_QUEUE_LOCK_NAMESPACE,
+        lockKey,
       ]);
       const repo = manager.getRepository(TlsCrt);
 
@@ -974,7 +1074,7 @@ export class TlsService {
       }
 
       const waiting = await repo.find({
-        select: { id: true, renewalQueuedAt: true },
+        select: { id: true },
         where: {
           userId: In(memberIds),
           status: CertStatus.RENEWING,
@@ -985,27 +1085,55 @@ export class TlsService {
       });
       if (waiting.length === 0) return [];
 
-      const ids = waiting.map((c) => c.id);
-      await repo.update(
-        { id: In(ids), status: CertStatus.RENEWING },
-        { renewalQueuedAt: null },
-      );
-      await this.tlsCertQueue.addBulk(
-        waiting.map((c) => ({
-          name: 'tlsCertRenewal',
-          data: { certId: c.id } satisfies TlsCertJobPayload,
-          opts: {
-            ...CERT_JOB_OPTS,
-            // One job per claim, even if a start is retried
-            jobId: `renewal-${c.id}-${c.renewalQueuedAt!.getTime()}`,
-          },
-        })),
+      const inFlightSince = new Date();
+      const started: number[] = [];
+      for (const { id } of waiting) {
+        const result = await repo.update(
+          { id, status: CertStatus.RENEWING, renewalQueuedAt: Not(IsNull()) },
+          { renewalQueuedAt: null, inFlightSince },
+        );
+        if ((result?.affected ?? 0) > 0) started.push(id);
+      }
+      if (started.length === 0) return [];
+
+      const token = inFlightSince.getTime();
+      await withTimeout(
+        this.tlsCertQueue.addBulk(
+          started.map((id) => ({
+            name: 'tlsCertRenewal',
+            data: {
+              certId: id,
+              inFlightSince: token,
+            } satisfies TlsCertJobPayload,
+            opts: {
+              ...CERT_JOB_OPTS,
+              // BullMQ ignores a repeated jobId only while the earlier job
+              // is kept: setting removeOnComplete on this queue would lose
+              // that. The fencing token above is what keeps a duplicate
+              // from sending a second order either way.
+              jobId: `renewal-${id}-${token}`,
+            },
+          })),
+        ),
+        QUEUE_ADD_TIMEOUT_MS,
+        'Queuing renewal jobs',
       );
       this.logger.log(
-        `Started ${ids.length} queued renewal(s): ${ids.map((id) => `#${id}`).join(', ')}`,
+        `Started ${started.length} queued renewal(s): ${started.map((id) => `#${id}`).join(', ')}`,
       );
-      return ids;
+      return started;
     });
+  }
+
+  /** The advisory lock key for an account's renewal queue. */
+  private async accountLockKey(userId: string): Promise<string> {
+    const user = await this.userRepo.findOne({
+      where: { id: userId },
+      select: { id: true, organizationId: true },
+    });
+    return user?.organizationId
+      ? `org:${user.organizationId}`
+      : `user:${userId}`;
   }
 
   /** startQueuedRenewals for callers that must not fail: logs and returns []. */
@@ -1030,6 +1158,154 @@ export class TlsService {
       },
     });
     return [...new Set(rows.map((r) => r.userId))];
+  }
+
+  // --- Recovery of lost jobs ---
+
+  /**
+   * Recovers certificates stuck in flight with no live job: BullMQ failed
+   * a job that stalled too often (no worker 'failed' event for that), Redis
+   * lost its data, or a process died between saving a request and queuing
+   * its job. Runs from RenewalQueueService's sweep; safe in several
+   * processes, since each recovery is a conditional update.
+   *
+   * Rows in flight with no inFlightSince (from before this column, or
+   * written by an older release during a deploy) are given one now and
+   * judged STUCK_AFTER_MS later. A row is recovered once it has been in
+   * flight that long and no waiting, active or delayed job names it.
+   * Returns the ids recovered.
+   */
+  async recoverStuck(now = new Date()): Promise<number[]> {
+    await this.TlsCrtRepository.update(
+      {
+        status: In(IN_FLIGHT_STATUSES),
+        renewalQueuedAt: IsNull(),
+        inFlightSince: IsNull(),
+      },
+      { inFlightSince: now },
+    );
+    const stale = await this.TlsCrtRepository.find({
+      where: {
+        status: In(IN_FLIGHT_STATUSES),
+        renewalQueuedAt: IsNull(),
+        inFlightSince: LessThan(new Date(now.getTime() - STUCK_AFTER_MS)),
+      },
+    });
+    if (stale.length === 0) return [];
+
+    let live: Set<number>;
+    try {
+      const jobs = await withTimeout(
+        this.tlsCertQueue.getJobs(LIVE_JOB_STATES),
+        QUEUE_ADD_TIMEOUT_MS,
+        'Listing live jobs',
+      );
+      live = new Set(
+        jobs
+          .filter((j): j is NonNullable<typeof j> => !!j)
+          .map((j) => (j.data as TlsCertJobPayload).certId),
+      );
+    } catch (err) {
+      // Can't tell which jobs are alive: leave everything for the next sweep
+      this.logger.warn(
+        `Stuck certificate check skipped: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return [];
+    }
+
+    const recovered: number[] = [];
+    for (const cert of stale) {
+      if (live.has(cert.id)) continue;
+      if (
+        await this.recoverInterrupted(
+          cert,
+          'its job was lost before it finished',
+        )
+      ) {
+        recovered.push(cert.id);
+      }
+    }
+    return recovered;
+  }
+
+  /**
+   * Worker 'failed' event for a job that won't be retried. Normally the
+   * job has already marked its certificate failed; this covers a final
+   * failure that couldn't (for example the database was unreachable). Only
+   * acts when the certificate is still in flight with this job's token.
+   */
+  async recoverAfterFailedJob(
+    certId: number,
+    token: number | undefined,
+    reason: string,
+  ): Promise<void> {
+    const cert = await this.TlsCrtRepository.findOneBy({ id: certId });
+    if (
+      !cert ||
+      !IN_FLIGHT_STATUSES.includes(cert.status) ||
+      cert.renewalQueuedAt ||
+      (token !== undefined && cert.inFlightSince?.getTime() !== token)
+    ) {
+      return;
+    }
+    await this.recoverInterrupted(cert, `its job failed: ${reason}`);
+  }
+
+  /**
+   * Puts an interrupted request back in a state the user or the system can
+   * act on, if the row is still exactly as seen (status and inFlightSince):
+   * - a renewal goes back to 'issued' when the old certificate is still
+   *   there (auto-renewal or the user renews again), and otherwise back in
+   *   the renewal queue;
+   * - a new certificate goes to 'failed' with a reason, so retry works.
+   */
+  private async recoverInterrupted(
+    cert: TlsCrt,
+    why: string,
+  ): Promise<boolean> {
+    const seen: FindOptionsWhere<TlsCrt> = {
+      id: cert.id,
+      status: cert.status,
+      renewalQueuedAt: IsNull(),
+      inFlightSince: cert.inFlightSince ?? IsNull(),
+    };
+    let changes: QueryDeepPartialEntity<TlsCrt>;
+    let outcome: string;
+    if (cert.status === CertStatus.RENEWING && cert.crtPem) {
+      changes = { status: CertStatus.ISSUED, inFlightSince: null };
+      outcome = 'back to issued with its current certificate';
+    } else if (cert.status === CertStatus.RENEWING && cert.rawCsr) {
+      changes = { renewalQueuedAt: new Date(), inFlightSince: null };
+      outcome = 'queued to renew again';
+    } else {
+      changes = {
+        status: CertStatus.FAILED,
+        inFlightSince: null,
+        failureReason: `${cert.status === CertStatus.RENEWING ? 'Renewal' : 'Issuance'} was interrupted and did not finish. Retry it with POST /certs/tls/${cert.id}/retry.`,
+      };
+      outcome = 'marked failed';
+    }
+    const result = await this.TlsCrtRepository.update(seen, changes);
+    if ((result?.affected ?? 0) === 0) return false;
+
+    this.logger.warn(
+      `Recovered certificate #${cert.id} (${cert.status}) because ${why}: ${outcome}`,
+    );
+    if (changes.status === CertStatus.FAILED) {
+      await this.alerts
+        .emit(cert.userId, 'cert.failed', {
+          subject: certDisplayName(cert),
+          resource: { type: 'certificate', id: cert.id },
+          details: {
+            certificateId: cert.id,
+            renewal: cert.status === CertStatus.RENEWING,
+            error: changes.failureReason as string,
+          },
+        })
+        .catch(() => undefined);
+    }
+    await this.startQueuedRenewalsSafely(cert.userId);
+    return true;
   }
 
   // --- Plan Limit Helpers ---
@@ -1174,4 +1450,20 @@ function inFlight(userIds: string[]): FindOptionsWhere<TlsCrt>[] {
       renewalQueuedAt: IsNull(),
     },
   ];
+}
+
+/** Waits for `promise`, or fails after `ms` so a caller can roll back. */
+function withTimeout<T>(promise: Promise<T>, ms: number, what: string) {
+  // The original may still settle later; nothing waits for it then
+  promise.catch(() => undefined);
+  let timer: NodeJS.Timeout | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`${what} timed out after ${ms / 1000}s`)),
+        ms,
+      );
+    }),
+  ]).finally(() => clearTimeout(timer));
 }

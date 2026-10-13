@@ -627,7 +627,20 @@ Poll `GET /certs/tls/:id` either way: the status goes `renewing` -> `issued` (or
 ```
 
 
-**Errors:** `400` when the certificate is not `issued` (or `awaiting_csr`), has no stored CSR and none was sent, or the CSR is invalid or has other names; `404` when it doesn't exist or the API key can't see it; `409` when another request started a renewal of the same certificate (or completed the `awaiting_csr` certificate) at the same moment; `402` only when completing an `awaiting_csr` certificate; `429` past the `renewal` rate limit.
+**Response `200` (`ifDue=true`, a renewal is already running or waiting; nothing changed):**
+```json
+{
+  "id": 42,
+  "status": "renewing",
+  "skipped": true,
+  "reason": "in_progress",
+  "queued": true
+}
+```
+
+**Errors:** `400` when the certificate is `pending`, `issuing`, `failed`, `revoking` or `revoked`, has no stored CSR and none was sent, or the CSR is invalid or has other names; `404` when it doesn't exist or the API key can't see it; `409` when a renewal of it is already running or waiting (status `renewing`, without `ifDue`), when another request started one at the same moment, or when another request completed the `awaiting_csr` certificate; `402` only when completing an `awaiting_csr` certificate; `429` past the `renewal` rate limit.
+
+A request whose job is lost (for example Redis lost its data, or the job stalled more often than the worker allows) doesn't stay in flight for good. After 30 minutes with no waiting, active or delayed job, a renewal goes back to `issued` when its current certificate is still there (otherwise it is queued again), and a new certificate goes to `failed` with a `failureReason` saying it was interrupted, so `POST /certs/tls/:id/retry` works.
 
 ### POST /certs/tls/:id/retry
 
@@ -645,6 +658,8 @@ Revoke an issued certificate via ACME.
 ```
 
 `reason` is an optional RFC 5280 revocation code (0–10). Default: 0 (unspecified).
+
+A certificate whose renewal is still waiting for a slot (status `renewing`, `renewalQueuedAt` set) can be revoked too: its current certificate is revoked and the waiting renewal is dropped. Once a renewal has started, revoke returns `400` until it finishes. If the certificate changes state while the request runs (for example its waiting renewal starts, or another revoke wins), the response is `409`.
 
 ### DELETE /certs/tls/:id
 

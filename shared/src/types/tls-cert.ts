@@ -57,6 +57,11 @@ export interface TlsCert {
    * renewals start oldest first as earlier requests finish. Null otherwise.
    */
   renewalQueuedAt?: string | null;
+  /**
+   * When the current issuance or renewal was handed to the worker; null
+   * when nothing is in flight. Used to recover requests whose job was lost.
+   */
+  inFlightSince?: string | null;
   revocationReason: number | null;
   /** Why the last issuance or renewal attempt failed; null otherwise. */
   failureReason: string | null;
@@ -125,20 +130,25 @@ export interface RenewTlsCertResponse {
    * inside its renewal window. Nothing was queued and the status is unchanged.
    */
   skipped: boolean;
-  /** Why the renewal was skipped. Only set when `skipped` is true. */
-  reason?: 'not_due';
-  /** Current expiry (ISO 8601). Only set when `skipped` is true. */
+  /**
+   * Why the renewal was skipped. Only set when `skipped` is true.
+   * `not_due`: outside the renewal window. `in_progress`: a renewal of this
+   * certificate is already running or waiting (status `renewing`).
+   */
+  reason?: 'not_due' | 'in_progress';
+  /** Current expiry (ISO 8601). Set when skipped as `not_due`. */
   expiresAt?: string;
   /**
    * The renewal window in days: the plan's window, at least 30 for
-   * connector-managed certificates. Only set when `skipped` is true.
+   * connector-managed certificates. Set when skipped as `not_due`.
    */
   renewalWindowDays?: number;
   /**
    * Set when a renewal was accepted (`skipped` false). True when it waits
    * for a free slot under the plan's concurrent pending limit (HTTP 202);
    * it starts on its own as earlier requests finish. False when it started
-   * right away (HTTP 201). The status is `renewing` either way.
+   * right away (HTTP 201). The status is `renewing` either way. Also set
+   * when skipped as `in_progress`: whether that renewal is still waiting.
    */
   queued?: boolean;
 }
@@ -189,4 +199,11 @@ export interface TlsCertChainInfo {
 
 export interface TlsCertJobPayload {
   certId: number;
+  /**
+   * The certificate's `inFlightSince` (ms since epoch) when the job was
+   * queued. The worker drops a job whose value no longer matches the
+   * certificate, so a stale or duplicate job can't send a second order.
+   * Absent on jobs queued by older releases.
+   */
+  inFlightSince?: number;
 }

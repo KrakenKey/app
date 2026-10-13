@@ -278,4 +278,22 @@ describe('AriMonitorService', () => {
     expect(alerts.emit).toHaveBeenCalledTimes(1);
     expect(tls.renewInternal).toHaveBeenCalledTimes(1);
   });
+
+  it('skips an hourly run while the previous one is still going', async () => {
+    let release!: () => void;
+    repo.find.mockReturnValue(
+      new Promise((resolve) => (release = () => resolve([]))),
+    );
+
+    const first = svc.checkRenewalInfo(NOW);
+    await new Promise((r) => setImmediate(r));
+    // The next hour fires while the first run is still waiting
+    await svc.checkRenewalInfo(new Date(NOW.getTime() + 3600 * 1000));
+    expect(repo.find).toHaveBeenCalledTimes(1);
+
+    release();
+    await first;
+    await svc.checkRenewalInfo(new Date(NOW.getTime() + 2 * 3600 * 1000));
+    expect(repo.find).toHaveBeenCalledTimes(2);
+  });
 });

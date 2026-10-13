@@ -1,5 +1,6 @@
 import {
   SCHEDULED_JOB_LOCK_TTL_SECONDS,
+  SHUTDOWN_WAIT_MS,
   slotOf,
 } from './scheduled-job-lock.service';
 import {
@@ -108,5 +109,50 @@ describe('ScheduledJobLock', () => {
     const run = jest.fn().mockResolvedValue(undefined);
     await expect(lock.runOnce('activation-reminder', run)).resolves.toBe(true);
     expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  describe('shutdown', () => {
+    it('waits for a run this process claimed before the app closes', async () => {
+      let finish!: () => void;
+      const run = jest.fn(
+        () => new Promise<void>((resolve) => (finish = resolve)),
+      );
+      const running = lock.runOnce('cert-monitor', run);
+      await new Promise((r) => setImmediate(r));
+
+      let closed = false;
+      const shutdown = lock.beforeApplicationShutdown().then(() => {
+        closed = true;
+      });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(closed).toBe(false);
+
+      finish();
+      await shutdown;
+      await running;
+      expect(closed).toBe(true);
+    });
+
+    it('gives up after the wait limit', async () => {
+      lock.shutdownWaitMs = 30;
+      void lock.runOnce('cert-monitor', () => new Promise(() => undefined));
+      await new Promise((r) => setImmediate(r));
+
+      const started = Date.now();
+      await lock.beforeApplicationShutdown();
+      expect(Date.now() - started).toBeLessThan(1000);
+    });
+
+    it('returns at once with nothing running, and forgets finished runs', async () => {
+      await lock.runOnce('ari-monitor', () => Promise.resolve());
+      lock.shutdownWaitMs = 60_000;
+      const started = Date.now();
+      await lock.beforeApplicationShutdown();
+      expect(Date.now() - started).toBeLessThan(100);
+    });
+
+    it('keeps the wait under the 60 s stop grace period', () => {
+      expect(SHUTDOWN_WAIT_MS).toBeLessThan(60_000);
+    });
   });
 });

@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { In } from 'typeorm';
 import { CertMonitorService } from './cert-monitor.service';
 import { TlsService } from '../tls.service';
 import { TlsCrt } from '../entities/tls-crt.entity';
@@ -174,7 +175,7 @@ describe('CertMonitorService', () => {
       expect(mockTlsService.renewInternal).toHaveBeenCalledWith(1);
     });
 
-    it('queries for issued auto-renew or connector-managed certs expiring within 30 days', async () => {
+    it('queries for issued or renewing auto-renew or connector-managed certs expiring within 30 days', async () => {
       mockRepository.find.mockResolvedValue([]);
 
       await service.checkExpiringCertificates();
@@ -182,18 +183,43 @@ describe('CertMonitorService', () => {
       expect(mockRepository.find).toHaveBeenCalledWith({
         where: [
           {
-            status: CertStatus.ISSUED,
+            status: In([CertStatus.ISSUED, CertStatus.RENEWING]),
             autoRenew: true,
             expiresAt: expect.any(Object), // LessThan(threshold)
           },
           {
-            status: CertStatus.ISSUED,
+            status: In([CertStatus.ISSUED, CertStatus.RENEWING]),
             managedBy: 'connector',
             expiresAt: expect.any(Object),
           },
         ],
         relations: ['user'],
       });
+    });
+
+    it('still warns about a certificate whose renewal is running or waiting, without queuing another', async () => {
+      mockAlerts.emit.mockClear();
+      mockRepository.find.mockResolvedValue([
+        { ...expiringCert, status: CertStatus.RENEWING },
+        {
+          ...expiringCert,
+          id: 2,
+          status: CertStatus.RENEWING,
+          renewalQueuedAt: new Date(),
+        },
+      ]);
+
+      await service.checkExpiringCertificates();
+
+      const email = module.get<Record<string, jest.Mock>>(EmailService);
+      expect(email.sendCertExpiryWarning).toHaveBeenCalledTimes(2);
+      expect(mockAlerts.emit).toHaveBeenCalledTimes(2);
+      expect(mockAlerts.emit).toHaveBeenCalledWith(
+        'user-123',
+        'cert.expiring',
+        expect.anything(),
+      );
+      expect(mockTlsService.renewInternal).not.toHaveBeenCalled();
     });
 
     describe('connector-managed certs', () => {

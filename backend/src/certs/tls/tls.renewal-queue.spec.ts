@@ -6,7 +6,11 @@
 import { ConflictException, HttpException } from '@nestjs/common';
 import { FindOperator } from 'typeorm';
 import type { ParsedCsr, RenewTlsCertResponse } from '@krakenkey/shared';
-import { TlsService } from './tls.service';
+import {
+  QUEUE_ADD_TIMEOUT_MS,
+  STUCK_AFTER_MS,
+  TlsService,
+} from './tls.service';
 import { RenewalQueueService } from './services/renewal-queue.service';
 
 type Row = Record<string, any> & { id: number };
@@ -26,9 +30,14 @@ function matchValue(value: unknown, cond: unknown): boolean {
         return !matchValue(value, cond.child);
       case 'moreThanOrEqual':
         return (value as number) >= (cond.value as number);
+      case 'lessThan':
+        return value != null && (value as number) < (cond.value as number);
       default:
         throw new Error(`Fake table: unsupported operator ${cond.type}`);
     }
+  }
+  if (cond instanceof Date) {
+    return value instanceof Date && value.getTime() === cond.getTime();
   }
   return value === cond;
 }
@@ -59,6 +68,8 @@ class FakeCertTable {
       autoRenew: true,
       renewalCount: 0,
       renewalQueuedAt: null,
+      inFlightSince: null,
+      crtPem: null,
       expiresAt: null,
       createdAt: new Date(),
       ...row,
@@ -153,23 +164,49 @@ class FakeCertTable {
 }
 
 /** BullMQ stand-in: records jobs and, like BullMQ, ignores a repeated jobId. */
-class FakeQueue {
-  jobs: { name: string; data: { certId: number }; opts: any }[] = [];
-  down = false;
+type FakeJob = {
+  name: string;
+  data: { certId: number; inFlightSince?: number };
+  opts: any;
+  state?: string;
+};
 
-  add(name: string, data: { certId: number }, opts: unknown) {
-    this.jobs.push({ name, data, opts });
+class FakeQueue {
+  jobs: FakeJob[] = [];
+  down = false;
+  /** When set, addBulk never answers (Redis hanging). */
+  hang = false;
+
+  add(name: string, data: FakeJob['data'], opts: unknown) {
+    this.jobs.push({ name, data, opts, state: 'waiting' });
     return Promise.resolve({});
   }
 
-  addBulk(list: { name: string; data: { certId: number }; opts: any }[]) {
+  addBulkCalls = 0;
+
+  addBulk(list: FakeJob[]) {
+    this.addBulkCalls++;
+    if (this.hang) return new Promise<never>(() => undefined);
     if (this.down) return Promise.reject(new Error('Connection is closed.'));
     for (const job of list) {
       if (!this.jobs.some((j) => j.opts?.jobId === job.opts.jobId)) {
-        this.jobs.push(job);
+        this.jobs.push({ ...job, state: 'waiting' });
       }
     }
     return Promise.resolve([]);
+  }
+
+  getJobs(states: string[]) {
+    if (this.down) return Promise.reject(new Error('Connection is closed.'));
+    return Promise.resolve(
+      this.jobs.filter((j) => states.includes(j.state ?? 'waiting')),
+    );
+  }
+
+  /** Marks every job for this certificate finished. */
+  finish(certId: number) {
+    for (const j of this.jobs)
+      if (j.data.certId === certId) j.state = 'completed';
   }
 
   renewals() {
@@ -199,6 +236,8 @@ describe('Renewal claims and queue', () => {
   let plans: Record<string, string>;
   let orgs: Record<string, string[]>;
   let csrUtil: { validateAndParse: jest.Mock; isAuthorized: jest.Mock };
+  let acme: { revoke: jest.Mock };
+  let alerts: { emit: jest.Mock };
 
   beforeEach(() => {
     table = new FakeCertTable();
@@ -214,6 +253,8 @@ describe('Renewal claims and queue', () => {
       }),
       isAuthorized: jest.fn(),
     };
+    acme = { revoke: jest.fn().mockResolvedValue(undefined) };
+    alerts = { emit: jest.fn().mockResolvedValue(0) };
     const billing = {
       resolveUserTier: jest.fn((id: string) =>
         Promise.resolve(plans[id] ?? 'free'),
@@ -231,16 +272,21 @@ describe('Renewal claims and queue', () => {
       {
         findAllVerified: () => Promise.resolve([{ hostname: 'example.com' }]),
       } as any,
-      {} as any,
-      {} as any,
+      acme as any,
+      { sendCertRevoked: jest.fn() } as any,
       billing as any,
-      { emit: jest.fn() } as any,
+      alerts as any,
     );
   });
 
   /** What the worker does when a job ends: final status, then refill. */
   const finishJob = async (id: number, status = 'issued') => {
-    await table.update(id, { status, renewalQueuedAt: null });
+    queue.finish(id);
+    await table.update(id, {
+      status,
+      renewalQueuedAt: null,
+      inFlightSince: null,
+    });
     await service.startQueuedRenewalsSafely(table.row(id).userId);
   };
 
@@ -490,6 +536,347 @@ describe('Renewal claims and queue', () => {
 
       expect(queue.renewals()).toEqual([]);
       expect(table.row(id).renewalQueuedAt).toBeInstanceOf(Date);
+    });
+  });
+
+  describe('status codes and the queued flag', () => {
+    const queuedRow = () =>
+      table.insert({
+        userId: 'u1',
+        status: 'renewing',
+        renewalQueuedAt: new Date(),
+      }).id;
+
+    it('renewing a certificate that is already renewing is a 409', async () => {
+      const id = queuedRow();
+      await expect(service.renew(id, 'u1')).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+    });
+
+    it('ifDue on a renewing certificate is a skip with reason in_progress', async () => {
+      const waiting = queuedRow();
+      const running = table.insert({ userId: 'u1', status: 'renewing' }).id;
+
+      await expect(
+        service.renew(waiting, 'u1', { ifDue: true }),
+      ).resolves.toEqual({
+        id: waiting,
+        status: 'renewing',
+        skipped: true,
+        reason: 'in_progress',
+        queued: true,
+      });
+      await expect(
+        service.renew(running, 'u1', { ifDue: true }),
+      ).resolves.toMatchObject({ skipped: true, queued: false });
+    });
+
+    it('reports queued: false when another caller started the renewal meanwhile', async () => {
+      const id = issued();
+      // The start runs, but as if a job finishing elsewhere had done it
+      const start = service.startQueuedRenewals.bind(service);
+      jest
+        .spyOn(service, 'startQueuedRenewalsSafely')
+        .mockImplementation(async (uid: string) => {
+          await start(uid);
+          return [];
+        });
+
+      const res = await service.renew(id, 'u1');
+
+      expect(res.queued).toBe(false);
+      expect(queue.renewals()).toEqual([id]);
+    });
+  });
+
+  describe('revoking a certificate whose renewal is waiting', () => {
+    const fullAccount = () => {
+      table.insert({ userId: 'u1', status: 'pending' });
+      table.insert({ userId: 'u1', status: 'pending' });
+    };
+
+    it('drops the waiting renewal and revokes the current certificate', async () => {
+      fullAccount();
+      const id = issued('u1', { crtPem: 'leaf-pem' });
+      expect((await service.renew(id, 'u1')).queued).toBe(true);
+
+      await expect(service.revoke(id, 'u1', 4)).resolves.toEqual({
+        id,
+        status: 'revoked',
+      });
+
+      expect(acme.revoke).toHaveBeenCalledWith('leaf-pem', 4);
+      expect(table.row(id)).toMatchObject({
+        status: 'revoked',
+        renewalQueuedAt: null,
+      });
+      // Nothing left to start once a slot frees
+      await finishJob(1);
+      expect(queue.renewals()).toEqual([]);
+    });
+
+    it('still refuses a renewal that has started', async () => {
+      const id = issued('u1', { crtPem: 'leaf-pem' });
+      await service.renew(id, 'u1');
+
+      await expect(service.revoke(id, 'u1')).rejects.toThrow(
+        "Certificate must be in 'issued' state to revoke",
+      );
+    });
+
+    it('a revoke racing the start of the same renewal: exactly one wins', async () => {
+      fullAccount();
+      const id = issued('u1', { crtPem: 'leaf-pem' });
+      await service.renew(id, 'u1');
+      await table.update(1, { status: 'issued' }); // a slot frees
+
+      const [start, revoke] = await Promise.allSettled([
+        service.startQueuedRenewals('u1'),
+        service.revoke(id, 'u1'),
+      ]);
+
+      const started = start.status === 'fulfilled' && start.value.includes(id);
+      const revoked = revoke.status === 'fulfilled';
+      expect(started).not.toBe(revoked);
+      if (revoked) {
+        expect(queue.renewals()).toEqual([]);
+        expect(table.row(id).status).toBe('revoked');
+      } else {
+        expect((revoke as PromiseRejectedResult).reason).toBeInstanceOf(
+          ConflictException,
+        );
+        expect(queue.renewals()).toEqual([id]);
+      }
+    });
+
+    it('revoking an issued certificate twice at once revokes it once', async () => {
+      const id = issued('u1', { crtPem: 'leaf-pem' });
+
+      const results = await Promise.allSettled([
+        service.revoke(id, 'u1'),
+        service.revoke(id, 'u1'),
+      ]);
+
+      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      expect(acme.revoke).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('when Redis hangs', () => {
+    beforeEach(() => {
+      // The fake table's round trips use setImmediate; only fake timeouts
+      jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick'] });
+    });
+    afterEach(() => jest.useRealTimers());
+
+    it('gives up after QUEUE_ADD_TIMEOUT_MS, rolls back, and leaves the renewal queued', async () => {
+      const id = issued();
+      queue.hang = true;
+
+      const res = service.renew(id, 'u1');
+      // Let the request reach Redis (real round trips), then let time pass
+      while (queue.addBulkCalls === 0) await roundTrip();
+      await jest.advanceTimersByTimeAsync(QUEUE_ADD_TIMEOUT_MS + 1);
+
+      await expect(res).resolves.toMatchObject({ queued: true });
+      expect(table.row(id)).toMatchObject({
+        status: 'renewing',
+        inFlightSince: null,
+      });
+      expect(table.row(id).renewalQueuedAt).toBeInstanceOf(Date);
+    });
+  });
+
+  describe('jobs act only on the request they were queued for', () => {
+    it('starts a renewal job whose token matches', async () => {
+      const id = issued();
+      await service.renewInternal(id);
+      const token = queue.jobs[0].data.inFlightSince;
+
+      await expect(
+        service.beginProcessing(id, {
+          renewal: true,
+          token,
+          status: 'renewing' as any,
+        }),
+      ).resolves.toBe(true);
+    });
+
+    it('drops a job whose token is stale, or whose renewal is still waiting', async () => {
+      const id = issued();
+      await service.renewInternal(id);
+      const token = queue.jobs[0].data.inFlightSince!;
+
+      await expect(
+        service.beginProcessing(id, {
+          renewal: true,
+          token: token - 1,
+          status: 'renewing' as any,
+        }),
+      ).resolves.toBe(false);
+
+      const waiting = table.insert({
+        userId: 'u2',
+        status: 'renewing',
+        renewalQueuedAt: new Date(),
+      }).id;
+      await expect(
+        service.beginProcessing(waiting, {
+          renewal: true,
+          status: 'renewing' as any,
+        }),
+      ).resolves.toBe(false);
+    });
+
+    it('drops an issuance job for a certificate that already failed', async () => {
+      const id = table.insert({ userId: 'u1', status: 'failed' }).id;
+      await expect(
+        service.beginProcessing(id, {
+          renewal: false,
+          status: 'issuing' as any,
+        }),
+      ).resolves.toBe(false);
+    });
+  });
+
+  describe('recovering requests whose job was lost', () => {
+    const later = (ms: number) => new Date(Date.now() + ms);
+    const old = () => new Date(Date.now() - STUCK_AFTER_MS - 60_000);
+
+    it('marks a lost new request failed with a reason, so it can be retried', async () => {
+      const id = table.insert({
+        userId: 'u1',
+        status: 'pending',
+        inFlightSince: old(),
+      }).id;
+
+      expect(await service.recoverStuck()).toEqual([id]);
+
+      expect(table.row(id)).toMatchObject({
+        status: 'failed',
+        inFlightSince: null,
+      });
+      expect(table.row(id).failureReason).toMatch(/interrupted.*retry/i);
+      expect(alerts.emit).toHaveBeenCalledWith(
+        'u1',
+        'cert.failed',
+        expect.objectContaining({ resource: { type: 'certificate', id } }),
+      );
+    });
+
+    it('puts a lost renewal back to issued while the old certificate is still there', async () => {
+      const id = table.insert({
+        userId: 'u1',
+        status: 'renewing',
+        crtPem: 'old-leaf',
+        inFlightSince: old(),
+      }).id;
+
+      await service.recoverStuck();
+
+      expect(table.row(id)).toMatchObject({
+        status: 'issued',
+        crtPem: 'old-leaf',
+        inFlightSince: null,
+      });
+    });
+
+    it('queues a lost renewal again once its old certificate was cleared, and starts it', async () => {
+      const id = table.insert({
+        userId: 'u1',
+        status: 'renewing',
+        crtPem: null,
+        inFlightSince: old(),
+      }).id;
+
+      await service.recoverStuck();
+
+      expect(table.row(id).status).toBe('renewing');
+      expect(queue.renewals()).toEqual([id]);
+      expect(table.row(id).inFlightSince).toBeInstanceOf(Date);
+    });
+
+    it('leaves a request alone while BullMQ still has a job for it', async () => {
+      const id = table.insert({
+        userId: 'u1',
+        status: 'pending',
+        inFlightSince: old(),
+      }).id;
+      await queue.add('tlsCertIssuance', { certId: id }, {});
+
+      expect(await service.recoverStuck()).toEqual([]);
+      expect(table.row(id).status).toBe('pending');
+    });
+
+    it('leaves recent requests alone', async () => {
+      table.insert({
+        userId: 'u1',
+        status: 'issuing',
+        inFlightSince: new Date(),
+      });
+      expect(await service.recoverStuck()).toEqual([]);
+    });
+
+    it('times rows with no inFlightSince from the first sweep that sees them', async () => {
+      // A row stuck since before this release
+      const id = table.insert({
+        userId: 'u1',
+        status: 'renewing',
+        crtPem: 'x',
+      }).id;
+
+      expect(await service.recoverStuck()).toEqual([]);
+      expect(table.row(id).inFlightSince).toBeInstanceOf(Date);
+
+      expect(await service.recoverStuck(later(STUCK_AFTER_MS + 1000))).toEqual([
+        id,
+      ]);
+      expect(table.row(id).status).toBe('issued');
+    });
+
+    it('does nothing when it cannot list BullMQ jobs', async () => {
+      table.insert({ userId: 'u1', status: 'pending', inFlightSince: old() });
+      queue.down = true;
+      expect(await service.recoverStuck()).toEqual([]);
+    });
+
+    it('frees the slots so waiting renewals start', async () => {
+      // Two renewals stuck from before (they hold both free-plan slots)
+      table.insert({ userId: 'u1', status: 'renewing', crtPem: 'a' });
+      table.insert({ userId: 'u1', status: 'renewing', crtPem: 'b' });
+      const waiting = issued();
+      expect((await service.renew(waiting, 'u1')).queued).toBe(true);
+
+      await service.recoverStuck();
+      expect(queue.renewals()).toEqual([]);
+      await new RenewalQueueService(service).startQueuedRenewals();
+      expect(queue.renewals()).toEqual([]); // timed from now, not yet stale
+
+      await service.recoverStuck(later(STUCK_AFTER_MS + 1000));
+      expect(queue.renewals()).toEqual([waiting]);
+    });
+
+    it("cleans up after a final job failure that couldn't record itself", async () => {
+      const id = issued();
+      await service.renewInternal(id);
+      const token = queue.jobs[0].data.inFlightSince;
+      await table.update(id, { crtPem: null }); // the worker had started
+      await new Promise((resolve) => setTimeout(resolve, 5)); // a new token
+
+      await service.recoverAfterFailedJob(id, token! + 1, 'db down');
+      expect(table.row(id).renewalQueuedAt).toBeNull(); // wrong token: untouched
+
+      await service.recoverAfterFailedJob(id, token, 'db down');
+      // Queued again and, with a free slot, started again
+      expect(queue.renewals()).toEqual([id, id]);
+    });
+
+    it('ignores a failed job whose certificate already recorded the failure', async () => {
+      const id = table.insert({ userId: 'u1', status: 'failed' }).id;
+      await service.recoverAfterFailedJob(id, undefined, 'boom');
+      expect(table.row(id).status).toBe('failed');
+      expect(alerts.emit).not.toHaveBeenCalled();
     });
   });
 });

@@ -74,6 +74,15 @@ export class TlsCrt {
   @Column({ type: 'timestamp', nullable: true })
   renewalQueuedAt: Date | null;
 
+  /**
+   * When the current issuance or renewal was handed to the worker (status
+   * pending, issuing, or renewing without renewalQueuedAt); null otherwise.
+   * Jobs carry it as a fencing token, and RenewalQueueService recovers
+   * requests that stay in flight with no live job (see recoverStuck).
+   */
+  @Column({ type: 'timestamp', nullable: true })
+  inFlightSince: Date | null;
+
   @Column({ type: 'int', nullable: true })
   revocationReason: number | null;
 

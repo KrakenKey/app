@@ -204,10 +204,23 @@ export class TlsController {
 
   @Post(':id/revoke')
   @RequireScope('certs:revoke')
-  @ApiOperation({ summary: 'Revoke a certificate' })
+  @ApiOperation({
+    summary: 'Revoke a certificate',
+    description:
+      "Revokes an issued certificate. A certificate whose renewal is still waiting for a slot (status 'renewing', renewalQueuedAt set) can be revoked too; the waiting renewal is dropped.",
+  })
   @ApiParam({ name: 'id', description: 'Certificate ID' })
   @ApiResponse({ status: 200, description: 'Certificate revocation initiated' })
-  @ApiResponse({ status: 400, description: 'Certificate not in issued state' })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Certificate not issued (or not waiting to renew), or has no PEM data',
+  })
+  @ApiResponse({
+    status: 409,
+    description:
+      'The certificate changed state meanwhile, for example its waiting renewal started',
+  })
   @ApiResponse({
     status: 403,
     description: 'Viewers cannot revoke certificates',
@@ -292,12 +305,14 @@ export class TlsController {
     status: 200,
     description:
       'ifDue=true and the certificate is not due yet; nothing was queued ' +
-      "(skipped: true, reason: 'not_due')",
+      "(skipped: true, reason: 'not_due'). Or ifDue=true and a renewal of " +
+      "it is already running or waiting (skipped: true, reason: 'in_progress', " +
+      'queued tells which)',
   })
   @ApiResponse({
     status: 400,
     description:
-      'Certificate not issued or missing CSR data, invalid CSR, ' +
+      'Certificate not issued (pending, issuing, failed, revoking, revoked) or missing CSR data, invalid CSR, ' +
       "'CSR names must match the certificate', or 'This certificate is " +
       "waiting for a CSR' (awaiting_csr without csrPem)",
   })
@@ -310,8 +325,9 @@ export class TlsController {
   @ApiResponse({
     status: 409,
     description:
-      'Another request renewed the certificate, or completed the ' +
-      'awaiting_csr certificate, meanwhile',
+      "A renewal of the certificate is already running or waiting (status 'renewing', " +
+      'without ifDue), another request started one at the same moment, or ' +
+      'another request completed the awaiting_csr certificate meanwhile',
   })
   @ApiResponse({
     status: 403,

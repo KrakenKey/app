@@ -97,6 +97,7 @@ CREATE TABLE "tls_crt" (
   "renewalCount" INTEGER DEFAULT 0,
   "lastRenewalAttemptAt" TIMESTAMP,
   "renewalQueuedAt" TIMESTAMP,                    -- Set while a renewal waits for a concurrent pending slot
+  "inFlightSince" TIMESTAMP,                      -- When the current issuance/renewal job was queued; job fencing token
   "revocationReason" INTEGER,                     -- RFC 5280 reason code (0-10)
   "revokedAt" TIMESTAMP,
   "managedBy" TEXT,                               -- 'connector' or NULL (KrakenKey renews)

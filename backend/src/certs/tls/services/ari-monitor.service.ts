@@ -44,6 +44,8 @@ const ERROR_RETRY_MS = 6 * HOUR_MS;
 @Injectable()
 export class AriMonitorService {
   private readonly logger = new Logger(AriMonitorService.name);
+  /** A slow run (up to BATCH CA requests) must not overlap the next one. */
+  private running = false;
 
   constructor(
     @InjectRepository(TlsCrt)
@@ -62,9 +64,18 @@ export class AriMonitorService {
   @Cron(CronExpression.EVERY_HOUR)
   async checkRenewalInfo(now = new Date()): Promise<void> {
     if (!this.ariService.isEnabled()) return;
-    await this.jobLock.runOnce('ari-monitor', () => this.checkDue(now), {
-      now,
-    });
+    if (this.running) {
+      this.logger.warn('Previous ARI check still running; skipping this one');
+      return;
+    }
+    this.running = true;
+    try {
+      await this.jobLock.runOnce('ari-monitor', () => this.checkDue(now), {
+        now,
+      });
+    } finally {
+      this.running = false;
+    }
   }
 
   private async checkDue(now: Date): Promise<void> {

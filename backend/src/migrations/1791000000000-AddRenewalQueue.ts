@@ -13,6 +13,9 @@ export class AddRenewalQueue1791000000000 implements MigrationInterface {
   name = 'AddRenewalQueue1791000000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
+    // The previous release keeps serving during a deploy: give up rather
+    // than queue its requests behind a long wait for the table lock
+    await queryRunner.query(`SET LOCAL lock_timeout = '5s'`);
     await queryRunner.query(`
       ALTER TABLE "tls_crt"
         ADD COLUMN IF NOT EXISTS "renewalQueuedAt" TIMESTAMP

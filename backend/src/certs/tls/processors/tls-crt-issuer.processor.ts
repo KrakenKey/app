@@ -1,4 +1,4 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job, UnrecoverableError } from 'bullmq';
 import { TlsService } from '../tls.service';
 import { TlsCrt } from '../entities/tls-crt.entity';
@@ -114,6 +114,24 @@ export class CertIssuerConsumer extends WorkerHost {
 
     const commonName = certDisplayName(csrRecord);
 
+    // Only act on the certificate this job was queued for, in the state it
+    // was queued in. A duplicate job, one whose queuing was rolled back, or
+    // one for a request already recovered is dropped here.
+    const statusDuringProcess = isRenewal
+      ? CertStatus.RENEWING
+      : CertStatus.ISSUING;
+    const current = await this.tlsService.beginProcessing(certId, {
+      renewal: isRenewal,
+      token: job.data.inFlightSince,
+      status: statusDuringProcess,
+    });
+    if (!current) {
+      this.logger.warn(
+        `Dropping ${job.name} job for cert #${certId}: the certificate is no longer waiting for it (status ${csrRecord.status})`,
+      );
+      return { success: false };
+    }
+
     try {
       // Validate CSR format before attempting ACME
       const raw = csrRecord.rawCsr ?? '';
@@ -124,23 +142,8 @@ export class CertIssuerConsumer extends WorkerHost {
         );
       }
 
-      const statusDuringProcess = isRenewal
-        ? CertStatus.RENEWING
-        : CertStatus.ISSUING;
       this.logger.log(
         `Processing certificate ${certId} with status: ${statusDuringProcess}`,
-      );
-
-      await this.tlsService.updateInternal(
-        csrRecord.id,
-        {
-          crtPem: null,
-          chainPem: null,
-          failureReason: null,
-          // A started renewal no longer waits for a slot
-          ...(isRenewal ? { renewalQueuedAt: null } : {}),
-        },
-        statusDuringProcess,
       );
 
       // A renewal tells the CA which certificate it replaces (RFC 9773).
@@ -175,6 +178,7 @@ export class CertIssuerConsumer extends WorkerHost {
         ariExplanationUrl: null,
         ariNextCheckAt: null,
         ariReplacementRequestedAt: null,
+        inFlightSince: null,
       };
       if (isRenewal) {
         updateData.lastRenewedAt = new Date();
@@ -259,6 +263,7 @@ export class CertIssuerConsumer extends WorkerHost {
           crtPem: null,
           chainPem: null,
           failureReason: message.slice(0, MAX_FAILURE_REASON_LENGTH),
+          inFlightSince: null,
         },
         CertStatus.FAILED,
       );
@@ -292,6 +297,27 @@ export class CertIssuerConsumer extends WorkerHost {
         throw new UnrecoverableError(message);
       }
       throw err instanceof Error ? err : new Error(message);
+    }
+  }
+
+  /**
+   * A job that won't be retried. process() normally marked the certificate
+   * failed already; when it couldn't (for example the database was down),
+   * this puts the certificate back in a usable state.
+   */
+  @OnWorkerEvent('failed')
+  async onFailed(job: Job<TlsCertJobPayload> | undefined, err: Error) {
+    if (!job?.finishedOn) return; // a retry follows
+    try {
+      await this.tlsService.recoverAfterFailedJob(
+        job.data.certId,
+        job.data.inFlightSince,
+        err?.message ?? 'unknown error',
+      );
+    } catch (e) {
+      this.logger.error(
+        `Could not clean up after failed job for cert #${job.data.certId}: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
 
