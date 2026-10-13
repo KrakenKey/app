@@ -118,6 +118,8 @@ const Marketplace: React.FC = () => {
   // Outcome of looking up (and activating) the purchase; the other states
   // follow from the flag, the token and the session.
   const [result, setResult] = useState<State | null>(null);
+  // Required when the signed-in email isn't the purchaser's or beneficiary's.
+  const [confirmed, setConfirmed] = useState(false);
 
   useEffect(() => {
     let ignore = false;
@@ -296,11 +298,28 @@ const Marketplace: React.FC = () => {
                 {purchase.isFreeTrial &&
                   ' Your free trial starts now; Microsoft bills you when it ends.'}
               </p>
+              {!purchase.accountMatchesPurchase && (
+                <label className="mt-5 flex items-start gap-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-left text-sm text-amber-200">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={confirmed}
+                    onChange={(e) => setConfirmed(e.target.checked)}
+                  />
+                  <span>
+                    This purchase was made for a different email address than
+                    the one you're signed in with. Only continue if you expected
+                    it and want it applied to {purchase.target.name}.
+                  </span>
+                </label>
+              )}
               <Button
                 variant="primary"
                 className="mt-6"
                 onClick={activate}
-                disabled={busy}
+                disabled={
+                  busy || (!purchase.accountMatchesPurchase && !confirmed)
+                }
               >
                 {busy ? 'Activating...' : 'Activate subscription'}
               </Button>

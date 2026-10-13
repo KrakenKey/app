@@ -44,6 +44,7 @@ const purchase = (
   beneficiaryEmail: 'admin@acme.example',
   termUnit: 'P1M',
   isFreeTrial: false,
+  accountMatchesPurchase: true,
   target: { kind: 'user', name: 'me@acme.example' },
   ...overrides,
 });
@@ -183,6 +184,28 @@ describe('Marketplace landing page', () => {
     expect(
       screen.getByRole('link', { name: /Manage in the Azure portal/ }),
     ).toHaveAttribute('href', expect.stringContaining('portal.azure.com'));
+  });
+
+  it('asks for confirmation when the purchase was made for another email', async () => {
+    const seen = marketplaceApi({
+      resolve: purchase({ accountMatchesPurchase: false }),
+    });
+    const user = userEvent.setup();
+    render(<Marketplace />);
+
+    const activate = await screen.findByRole('button', {
+      name: 'Activate subscription',
+    });
+    expect(activate).toBeDisabled();
+    await user.click(
+      screen.getByRole('checkbox', { name: /different email address/ }),
+    );
+    expect(activate).toBeEnabled();
+    await user.click(activate);
+    expect(
+      await screen.findByText('Your subscription is active'),
+    ).toBeInTheDocument();
+    expect(seen.activate).toHaveLength(1);
   });
 
   it('shows an existing subscription on a "manage" visit without activating again', async () => {

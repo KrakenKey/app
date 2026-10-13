@@ -15,6 +15,11 @@ const config = {
   clientSecret: SECRET,
 } as unknown as MarketplaceConfig;
 
+/** The Entra token endpoint, by exact host. */
+function isTokenUrl(url: string): boolean {
+  return new URL(url).host === 'login.microsoftonline.com';
+}
+
 function json(status: number, body?: unknown): Response {
   return new Response(body === undefined ? '' : JSON.stringify(body), {
     status,
@@ -30,7 +35,7 @@ describe('MarketplaceFulfillmentClient', () => {
   beforeEach(() => {
     tokenCount = 0;
     fetchMock = jest.fn(async (url: string) => {
-      if (url.startsWith('https://login.microsoftonline.com/')) {
+      if (isTokenUrl(url)) {
         tokenCount += 1;
         return json(200, {
           token_type: 'Bearer',
@@ -104,7 +109,7 @@ describe('MarketplaceFulfillmentClient', () => {
 
   it('activates and updates operations with the documented paths and bodies', async () => {
     fetchMock.mockImplementation(async (url: string) =>
-      url.includes('login.microsoftonline.com')
+      isTokenUrl(url)
         ? json(200, { access_token: 't', expires_in: 3600 })
         : json(200),
     );
@@ -128,7 +133,7 @@ describe('MarketplaceFulfillmentClient', () => {
 
   it('reads an operation id spelled "id  " like Microsoft\'s example', async () => {
     fetchMock.mockImplementation(async (url: string) =>
-      url.includes('login.microsoftonline.com')
+      isTokenUrl(url)
         ? json(200, { access_token: 't', expires_in: 3600 })
         : json(200, {
             'id  ': 'op-1',
@@ -146,7 +151,7 @@ describe('MarketplaceFulfillmentClient', () => {
   it('gets a new token once when the API answers 401', async () => {
     let apiCalls = 0;
     fetchMock.mockImplementation(async (url: string) => {
-      if (url.includes('login.microsoftonline.com')) {
+      if (isTokenUrl(url)) {
         tokenCount += 1;
         return json(200, { access_token: `t${tokenCount}`, expires_in: 3600 });
       }
@@ -162,7 +167,7 @@ describe('MarketplaceFulfillmentClient', () => {
 
   it('throws MarketplaceApiError with the status for API errors', async () => {
     fetchMock.mockImplementation(async (url: string) =>
-      url.includes('login.microsoftonline.com')
+      isTokenUrl(url)
         ? json(200, { access_token: 't', expires_in: 3600 })
         : json(400, { error: 'bad token' }),
     );
@@ -173,7 +178,7 @@ describe('MarketplaceFulfillmentClient', () => {
 
   it('throws status 0 when Microsoft is unreachable', async () => {
     fetchMock.mockImplementation(async (url: string) => {
-      if (url.includes('login.microsoftonline.com')) {
+      if (isTokenUrl(url)) {
         return json(200, { access_token: 't', expires_in: 3600 });
       }
       throw new Error('ECONNRESET');
@@ -195,7 +200,7 @@ describe('MarketplaceFulfillmentClient', () => {
 
   it('never logs the secret, the access token or the purchase token', async () => {
     fetchMock.mockImplementation(async (url: string) =>
-      url.includes('login.microsoftonline.com')
+      isTokenUrl(url)
         ? json(200, { access_token: 'access-xyz', expires_in: 3600 })
         : json(500),
     );

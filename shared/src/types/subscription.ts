@@ -115,6 +115,11 @@ export interface MarketplaceLandingResponse {
   /** Billing term, e.g. P1M (monthly) or P1Y (yearly). */
   termUnit: string | null;
   isFreeTrial: boolean;
+  /**
+   * Whether the signed-in user's email is the purchaser's or the
+   * beneficiary's. When it isn't, the page asks for an explicit confirmation.
+   */
+  accountMatchesPurchase: boolean;
   /** The KrakenKey account the subscription applies to. */
   target: { kind: 'user' | 'organization'; name: string };
 }

@@ -1356,6 +1356,41 @@ describe('BillingService', () => {
       expect(mockRepository.save).not.toHaveBeenCalled();
     });
 
+    it('cancels the Stripe subscription when Microsoft started billing while checkout completed', async () => {
+      mockRepository.findOne
+        .mockResolvedValueOnce({
+          ...mockSubscription,
+          stripeSubscriptionId: null,
+          plan: 'free',
+        })
+        .mockResolvedValueOnce(marketplaceSub('active'));
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        id: 'sub_new',
+        status: 'active',
+        current_period_end: Math.floor(Date.now() / 1000) + 86400 * 30,
+        cancel_at_period_end: false,
+        cancel_at: null,
+      });
+      jest
+        .spyOn((service as any).logger, 'error')
+        .mockImplementation(() => undefined);
+
+      await service.handleWebhookEvent({
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            id: 'cs_race',
+            metadata: { userId, plan: 'starter' },
+            subscription: 'sub_new',
+            customer: 'cus_test123',
+          },
+        },
+      } as any);
+
+      expect(mockStripe.subscriptions.cancel).toHaveBeenCalledWith('sub_new');
+      expect(mockRepository.save).not.toHaveBeenCalled();
+    });
+
     it('clears the Marketplace fields when a Stripe checkout replaces an ended one', async () => {
       mockRepository.findOne.mockResolvedValue({
         ...marketplaceSub('canceled'),

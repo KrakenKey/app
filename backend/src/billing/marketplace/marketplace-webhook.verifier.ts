@@ -15,7 +15,15 @@ import {
 /** Injection token to replace the Entra JWKS client (tests). */
 export const MARKETPLACE_JWKS_CLIENT = 'MARKETPLACE_JWKS_CLIENT';
 
-type SigningKeySource = Pick<JwksClient, 'getSigningKey'>;
+type SigningKeySource = Pick<JwksClient, 'getSigningKeys'>;
+
+/**
+ * An unknown key id triggers at most one key download per this interval,
+ * so junk tokens can't keep the endpoint busy or crowd out a real refresh.
+ */
+const UNKNOWN_KID_REFRESH_MS = 5 * 60 * 1000;
+/** Known keys are downloaded again after this long. */
+const KEYS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Verifies the bearer token Microsoft sends with every Marketplace webhook
@@ -27,25 +35,57 @@ type SigningKeySource = Pick<JwksClient, 'getSigningKey'>;
 @Injectable()
 export class MarketplaceWebhookVerifier {
   private readonly logger = new Logger(MarketplaceWebhookVerifier.name);
-  private jwks: SigningKeySource | null;
+  private source: SigningKeySource | null;
+  private keys = new Map<string, string>();
+  private fetchedAt = 0;
+  private refreshing: Promise<void> | null = null;
 
   constructor(
     private readonly config: MarketplaceConfig,
     @Optional() @Inject(MARKETPLACE_JWKS_CLIENT) jwks?: SigningKeySource,
   ) {
-    this.jwks = jwks ?? null;
+    this.source = jwks ?? null;
   }
 
-  private keys(): SigningKeySource {
-    this.jwks ??= new JwksClient({
+  private keySource(): SigningKeySource {
+    this.source ??= new JwksClient({
       jwksUri: `https://login.microsoftonline.com/${encodeURIComponent(this.config.tenantId)}/discovery/v2.0/keys`,
-      cache: true,
-      cacheMaxAge: 3600_000,
-      rateLimit: true,
-      jwksRequestsPerMinute: 10,
+      cache: false,
+      rateLimit: false,
       timeout: 3000,
     });
-    return this.jwks;
+    return this.source;
+  }
+
+  /** The PEM key for a key id, downloading the key set when needed. */
+  private async publicKey(kid: string): Promise<string> {
+    const age = Date.now() - this.fetchedAt;
+    if (
+      age > KEYS_MAX_AGE_MS ||
+      (!this.keys.has(kid) && age > UNKNOWN_KID_REFRESH_MS)
+    ) {
+      this.refreshing ??= this.refreshKeys().finally(() => {
+        this.refreshing = null;
+      });
+      await this.refreshing;
+    }
+    const key = this.keys.get(kid);
+    if (!key) throw new Error('unknown kid');
+    return key;
+  }
+
+  private async refreshKeys(): Promise<void> {
+    try {
+      const keys = await this.keySource().getSigningKeys();
+      this.keys = new Map(keys.map((k) => [k.kid, k.getPublicKey()]));
+    } catch (err) {
+      this.logger.warn(
+        `Could not download Entra signing keys: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      // Also after a failure, so a failing endpoint isn't asked on every call.
+      this.fetchedAt = Date.now();
+    }
   }
 
   /** Throws UnauthorizedException unless the Authorization header is valid. */
@@ -63,9 +103,14 @@ export class MarketplaceWebhookVerifier {
         throw new Error(`unexpected alg ${decoded.header.alg}`);
       }
       if (!decoded.header.kid) throw new Error('missing kid');
+      // Cheap checks before any key lookup; the signature check below is
+      // what proves them.
+      const unverified = decoded.payload as jwt.JwtPayload;
+      if (unverified.tid !== tenantId) throw new Error('wrong tid');
+      if (unverified.aud !== clientId) throw new Error('wrong aud');
 
-      const key = await this.keys().getSigningKey(decoded.header.kid);
-      const claims = jwt.verify(token, key.getPublicKey(), {
+      const key = await this.publicKey(decoded.header.kid);
+      const claims = jwt.verify(token, key, {
         algorithms: ['RS256'],
         audience: clientId,
         issuer: [

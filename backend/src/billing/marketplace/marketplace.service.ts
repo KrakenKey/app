@@ -47,6 +47,9 @@ const FINAL_FAILED_STATUSES = new Set(['Failed', 'Conflict']);
 
 const POSTGRES_UNIQUE_VIOLATION = '23505';
 
+/** Purchased but not activated yet (manual activation). */
+const PENDING = 'PendingFulfillmentStart';
+
 interface WebhookPayload {
   id: string;
   subscriptionId: string;
@@ -86,6 +89,16 @@ function termEnd(sub: SaasSubscription | undefined): Date | null {
   if (!end) return null;
   const date = new Date(end);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** Whether the user's email is one of the purchase's (case-insensitive). */
+function emailMatches(
+  email: string | null | undefined,
+  candidates: (string | null | undefined)[],
+): boolean {
+  const mine = email?.trim().toLowerCase();
+  if (!mine) return false;
+  return candidates.some((c) => c?.trim().toLowerCase() === mine);
 }
 
 function normalizeStatus(status: string | undefined): MarketplaceSaasStatus {
@@ -150,6 +163,11 @@ export class MarketplaceService {
    * activates it with Microsoft, which starts billing. A purchase that is
    * already linked to this account is returned as is, so a second visit
    * ("Manage account" in the Azure portal) is harmless.
+   *
+   * The purchase is claimed on the account first (no paid limits yet), then
+   * activated, then switched to active. A conflict is caught before
+   * Microsoft starts billing, and webhooks that arrive while activation is
+   * in flight find the claimed row.
    */
   async activate(
     userId: string,
@@ -171,10 +189,14 @@ export class MarketplaceService {
       );
     }
 
+    await this.claim(owner, purchase);
+
     if (response.saasStatus === 'PendingFulfillmentStart') {
       try {
         await this.client.activate(purchase.id);
       } catch (err) {
+        // The claim stays as a pending row with no paid limits; opening the
+        // page again retries.
         this.logger.error(
           `Marketplace activation failed: subscription=${purchase.id} status=${err instanceof MarketplaceApiError ? err.status : 'unknown'}`,
         );
@@ -184,15 +206,7 @@ export class MarketplaceService {
       }
     }
 
-    try {
-      await this.link(owner, purchase, plan);
-    } catch (err) {
-      // Microsoft may already bill for it; someone has to sort it out.
-      this.logger.error(
-        `Marketplace subscription ${purchase.id} could not be linked after activation: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      throw err;
-    }
+    await this.finishActivation(purchase, plan);
     this.logger.log(
       `Marketplace subscription activated: subscription=${purchase.id} ${owner.organizationId ? `org=${owner.organizationId}` : `user=${owner.userId}`} plan=${plan}`,
     );
@@ -266,6 +280,10 @@ export class MarketplaceService {
       beneficiaryEmail: saas.beneficiary?.emailId ?? null,
       termUnit: saas.term?.termUnit ?? null,
       isFreeTrial: saas.isFreeTrial === true,
+      accountMatchesPurchase: emailMatches(user.email, [
+        saas.purchaser?.emailId,
+        saas.beneficiary?.emailId,
+      ]),
       target: {
         kind: user.organizationId
           ? ('organization' as const)
@@ -284,10 +302,20 @@ export class MarketplaceService {
 
     if (linked && linked.source === 'marketplace') {
       if (own?.id !== linked.id) return result('linked_elsewhere');
-      return result(saasStatus === 'Unsubscribed' ? 'ended' : 'active');
+      if (saasStatus === 'Unsubscribed') return result('ended');
+      // Claimed here but activation didn't finish: offer it again below.
+      if (linked.marketplaceStatus !== PENDING) return result('active');
     }
     if (saasStatus === 'Unsubscribed') return result('ended');
     if (saasStatus === 'Suspended') return result('suspended');
+    if (saasStatus !== PENDING && saasStatus !== 'Subscribed') {
+      this.logger.error(
+        `Marketplace purchase ${purchase.id} has an unexpected status: ${saasStatus || '(none)'}`,
+      );
+      throw new BadGatewayException(
+        'Microsoft returned an unexpected status for this purchase. Contact support.',
+      );
+    }
     if (!plan) return result('unknown_plan');
     if (user.organizationId && user.role !== 'owner') {
       return result('not_owner');
@@ -322,28 +350,31 @@ export class MarketplaceService {
     }
   }
 
-  /** Writes the Marketplace subscription onto the owner's row (or a new one). */
-  private async link(
+  /**
+   * Puts the purchase on the owner's row (or a new one) as pending: no paid
+   * limits until finishActivation. Refuses an account that already has a
+   * live subscription.
+   */
+  private async claim(
     owner: Assessment['owner'],
     purchase: ResolvedPurchase,
-    plan: MarketplacePlan,
   ): Promise<void> {
-    const saas = purchase.subscription;
     const fields: Partial<Subscription> = {
       source: 'marketplace',
       marketplaceSubscriptionId: purchase.id,
       marketplaceOfferId: purchase.offerId,
       marketplacePlanId: purchase.planId,
-      marketplaceStatus: 'Subscribed',
-      marketplaceQuantity: purchase.quantity ?? saas.quantity ?? null,
+      marketplaceStatus: PENDING,
+      marketplaceQuantity:
+        purchase.quantity ?? purchase.subscription.quantity ?? null,
       // Stripe events for an older, ended Stripe subscription must not
       // touch this row.
       stripeSubscriptionId: null,
-      plan,
-      status: 'active',
+      plan: 'free',
+      status: 'incomplete',
       pastDueSince: null,
-      currentPeriodEnd: termEnd(saas),
-      cancelAtPeriodEnd: saas.autoRenew === false,
+      currentPeriodEnd: null,
+      cancelAtPeriodEnd: false,
     };
 
     try {
@@ -365,6 +396,7 @@ export class MarketplaceService {
               'This account already has a paid subscription.',
             );
           }
+          if (existing.marketplaceSubscriptionId === purchase.id) return;
           Object.assign(existing, fields);
           await m.save(Subscription, existing);
           return;
@@ -381,7 +413,7 @@ export class MarketplaceService {
       });
     } catch (err) {
       if (isUniqueViolation(err)) {
-        // Linked to another account in the meantime, or a parallel click.
+        // Claimed by another account in the meantime, or a parallel click.
         const linked = await this.subscriptionRepository.findOne({
           where: { marketplaceSubscriptionId: purchase.id },
         });
@@ -395,6 +427,40 @@ export class MarketplaceService {
       }
       throw err;
     }
+  }
+
+  /** Switches the claimed row to active after Microsoft accepted it. */
+  private async finishActivation(
+    purchase: ResolvedPurchase,
+    plan: MarketplacePlan,
+  ): Promise<void> {
+    const saas = purchase.subscription;
+    const result = await this.subscriptionRepository.update(
+      { marketplaceSubscriptionId: purchase.id, marketplaceStatus: PENDING },
+      {
+        marketplaceStatus: 'Subscribed',
+        plan,
+        status: 'active',
+        pastDueSince: null,
+        currentPeriodEnd: termEnd(saas),
+        cancelAtPeriodEnd: saas.autoRenew === false,
+      },
+    );
+    if (result.affected) return;
+
+    // A webhook may already have brought the row up to date.
+    const row = await this.subscriptionRepository.findOne({
+      where: { marketplaceSubscriptionId: purchase.id },
+    });
+    if (row?.source === 'marketplace') return;
+    // A Stripe checkout replaced the claim between the claim and here, so
+    // both may now bill this account.
+    this.logger.error(
+      `Marketplace subscription ${purchase.id} was activated but its account row was taken over; check for double billing`,
+    );
+    throw new ConflictException(
+      'This account changed while the subscription was being activated. Contact support.',
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -417,6 +483,9 @@ export class MarketplaceService {
       this.logger.log(
         `Marketplace operation already handled: op=${payload.id} action=${payload.action}`,
       );
+      // An earlier delivery may have failed after recording the operation
+      // but before the dissolution was queued.
+      await this.queuePendingDissolution(payload.subscriptionId);
       return 'duplicate';
     }
 
@@ -535,25 +604,47 @@ export class MarketplaceService {
   }
 
   /**
+   * Re-queues an organization's dissolution if its Marketplace subscription
+   * ended or dropped below Team and the organization still exists.
+   * queueDissolution ignores a job that is already queued.
+   */
+  private async queuePendingDissolution(subscriptionId: string): Promise<void> {
+    const sub = await this.subscriptionRepository.findOne({
+      where: { marketplaceSubscriptionId: subscriptionId },
+    });
+    if (!sub?.organizationId || sub.source !== 'marketplace') return;
+    if (sub.marketplaceStatus === 'Unsubscribed') {
+      await this.billingService.queueDissolution(sub.organizationId, true);
+    } else if (!ORG_ELIGIBLE_PLANS.has(sub.plan)) {
+      await this.billingService.queueDissolution(sub.organizationId, false);
+    }
+  }
+
+  /**
    * Applies the confirmed operation and records it in one transaction. The
    * operation id is the primary key of the record, so a concurrent delivery
    * of the same operation fails here and is treated as a duplicate.
+   *
+   * Changes Microsoft waits on (ChangePlan, ChangeQuantity, Reinstate still
+   * InProgress) are applied from the operation. Everything else sets the row
+   * to Microsoft's current state of the subscription, so a webhook that
+   * arrives late or out of order (Microsoft retries for hours) can't roll
+   * back a newer change.
    */
   private async applyOperation(
     payload: WebhookPayload,
     op: SaasOperation,
   ): Promise<Outcome> {
-    // Renew and Subscribe change the term; read it before the transaction.
+    const awaitsAnswer =
+      ACK_ACTIONS.has(op.action) && op.status === 'InProgress';
     let saas: SaasSubscription | undefined;
-    if (
-      (op.action === 'Renew' || op.action === 'Subscribe') &&
-      !FINAL_FAILED_STATUSES.has(op.status)
-    ) {
+    if (!awaitsAnswer && !FINAL_FAILED_STATUSES.has(op.status)) {
       try {
         saas = await this.client.getSubscription(op.subscriptionId);
       } catch {
-        this.logger.warn(
-          `Could not read Marketplace subscription ${op.subscriptionId} for ${op.action}; keeping the stored term`,
+        // Microsoft retries the webhook; nothing is recorded.
+        throw new ServiceUnavailableException(
+          'Could not read the subscription from Microsoft',
         );
       }
     }
@@ -590,7 +681,7 @@ export class MarketplaceService {
     // A plan KrakenKey doesn't sell is refused even before the purchase is
     // linked to an account.
     let newPlan: MarketplacePlan | null = null;
-    if (op.action === 'ChangePlan') {
+    if (op.action === 'ChangePlan' && !saas) {
       newPlan = op.planId ? this.config.planFor(op.offerId, op.planId) : null;
       if (!newPlan) {
         return { result: 'rejected', detail: 'plan not available' };
@@ -607,63 +698,102 @@ export class MarketplaceService {
     if (!sub || sub.source !== 'marketplace') {
       return { result: 'ignored', detail: 'not linked to an account' };
     }
+    // A canceled SaaS subscription can't be reactivated.
+    if (sub.marketplaceStatus === 'Unsubscribed') {
+      return { result: 'ignored', detail: 'subscription already ended' };
+    }
 
     const previousPlan = sub.plan;
-    let dissolveOrg: Outcome['dissolveOrg'];
+    let detail: string | null = null;
 
-    switch (op.action) {
-      case 'Subscribe':
-      case 'Reinstate':
+    if (saas) {
+      detail = this.syncFromMicrosoft(sub, saas);
+    } else {
+      switch (op.action) {
+        case 'ChangePlan':
+          sub.plan = newPlan!;
+          sub.marketplacePlanId = op.planId!;
+          break;
+        case 'ChangeQuantity':
+          sub.marketplaceQuantity = op.quantity ?? null;
+          break;
+        case 'Reinstate':
+          sub.status = 'active';
+          sub.pastDueSince = null;
+          sub.marketplaceStatus = 'Subscribed';
+          break;
+      }
+    }
+
+    let dissolveOrg: Outcome['dissolveOrg'];
+    if (sub.organizationId) {
+      if (sub.marketplaceStatus === 'Unsubscribed') {
+        dissolveOrg = { id: sub.organizationId, cancel: true };
+      } else if (
+        ORG_ELIGIBLE_PLANS.has(previousPlan) &&
+        !ORG_ELIGIBLE_PLANS.has(sub.plan)
+      ) {
+        dissolveOrg = { id: sub.organizationId, cancel: false };
+      }
+    }
+
+    await m.save(Subscription, sub);
+    return { result: 'applied', detail, dissolveOrg };
+  }
+
+  /**
+   * Sets status, plan, quantity and term from Microsoft's subscription.
+   * Returns a note for the operation record, or null.
+   */
+  private syncFromMicrosoft(
+    sub: Subscription,
+    saas: SaasSubscription,
+  ): string | null {
+    const status = normalizeStatus(saas.saasSubscriptionStatus);
+    switch (status) {
+      case 'Subscribed':
         sub.status = 'active';
         sub.pastDueSince = null;
         sub.marketplaceStatus = 'Subscribed';
-        if (saas) {
-          sub.currentPeriodEnd = termEnd(saas) ?? sub.currentPeriodEnd;
-          sub.cancelAtPeriodEnd = saas.autoRenew === false;
-        }
         break;
-      case 'Renew':
-        if (saas) {
-          sub.currentPeriodEnd = termEnd(saas) ?? sub.currentPeriodEnd;
-          sub.cancelAtPeriodEnd = saas.autoRenew === false;
-        }
-        break;
-      case 'ChangePlan':
-        sub.plan = newPlan!;
-        sub.marketplacePlanId = op.planId!;
-        if (
-          sub.organizationId &&
-          ORG_ELIGIBLE_PLANS.has(previousPlan) &&
-          !ORG_ELIGIBLE_PLANS.has(sub.plan)
-        ) {
-          dissolveOrg = { id: sub.organizationId, cancel: false };
-        }
-        break;
-      case 'ChangeQuantity':
-        sub.marketplaceQuantity = op.quantity ?? null;
-        break;
-      case 'Suspend':
+      case 'Suspended':
         // Paid limits stay for Microsoft's 30-day grace (see entitlement.ts).
         sub.status = 'past_due';
         sub.pastDueSince ??= new Date();
         sub.marketplaceStatus = 'Suspended';
         break;
-      case 'Unsubscribe':
+      case 'Unsubscribed':
         sub.plan = 'free';
         sub.status = 'canceled';
         sub.pastDueSince = null;
         sub.currentPeriodEnd = null;
         sub.cancelAtPeriodEnd = false;
         sub.marketplaceStatus = 'Unsubscribed';
-        if (sub.organizationId) {
-          dissolveOrg = { id: sub.organizationId, cancel: true };
-        }
-        break;
+        return null;
+      case PENDING:
+        // Claimed on the landing page; activation finishes there.
+        return 'activation pending';
       default:
-        return { result: 'ignored', detail: 'unknown action' };
+        return `unexpected status ${status || '(none)'}`;
     }
 
-    await m.save(Subscription, sub);
-    return { result: 'applied', detail: null, dissolveOrg };
+    let note: string | null = null;
+    const plan = this.config.planFor(saas.offerId, saas.planId);
+    if (plan) {
+      sub.plan = plan;
+      sub.marketplacePlanId = saas.planId;
+    } else {
+      // Keep the current plan rather than guess.
+      note = `plan ${saas.planId} not in KK_MARKETPLACE_PLAN_MAP`;
+      this.logger.error(
+        `Marketplace subscription ${saas.id} is on unmapped plan ${saas.planId}; kept ${sub.plan}`,
+      );
+    }
+    if (saas.quantity !== undefined) sub.marketplaceQuantity = saas.quantity;
+    sub.currentPeriodEnd = termEnd(saas) ?? sub.currentPeriodEnd;
+    if (saas.autoRenew !== undefined) {
+      sub.cancelAtPeriodEnd = saas.autoRenew === false;
+    }
+    return note;
   }
 }

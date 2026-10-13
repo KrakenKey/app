@@ -35,21 +35,24 @@ function sign(
 
 describe('MarketplaceWebhookVerifier', () => {
   const jwks = {
-    getSigningKey: jest.fn(async (kid?: string) => {
-      if (kid !== 'k1') throw new Error('unknown kid');
-      return {
-        getPublicKey: () => publicKey.export({ type: 'spki', format: 'pem' }),
-      };
-    }),
+    getSigningKeys: jest.fn(async () => [
+      {
+        kid: 'k1',
+        getPublicKey: () =>
+          publicKey.export({ type: 'spki', format: 'pem' }) as string,
+      },
+    ]),
   };
   const config = {
     tenantId: TENANT,
     clientId: CLIENT,
   } as unknown as MarketplaceConfig;
-  const verifier = new MarketplaceWebhookVerifier(config, jwks as any);
+  let verifier: MarketplaceWebhookVerifier;
   const bearer = (token: string) => `Bearer ${token}`;
 
   beforeEach(() => {
+    jwks.getSigningKeys.mockClear();
+    verifier = new MarketplaceWebhookVerifier(config, jwks as any);
     jest
       .spyOn((verifier as any).logger, 'warn')
       .mockImplementation(() => undefined);
@@ -161,5 +164,42 @@ describe('MarketplaceWebhookVerifier', () => {
     for (const [msg] of warn.mock.calls) {
       expect(String(msg)).not.toContain(token);
     }
+  });
+
+  it('downloads the key set once and reuses it', async () => {
+    await verifier.verify(bearer(sign()));
+    await verifier.verify(bearer(sign()));
+    expect(jwks.getSigningKeys).toHaveBeenCalledTimes(1);
+  });
+
+  it('limits key downloads for unknown key ids', async () => {
+    jest.useFakeTimers({ now: new Date('2026-10-13T00:00:00Z') });
+    try {
+      await verifier.verify(bearer(sign())); // first download
+      for (let i = 0; i < 20; i++) {
+        await verifier
+          .verify(bearer(sign(baseClaims, { keyid: `junk-${i}` })))
+          .catch(() => undefined);
+      }
+      expect(jwks.getSigningKeys).toHaveBeenCalledTimes(1);
+
+      jest.setSystemTime(new Date('2026-10-13T00:06:00Z'));
+      await verifier
+        .verify(bearer(sign(baseClaims, { keyid: 'rotated' })))
+        .catch(() => undefined);
+      expect(jwks.getSigningKeys).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('does not download keys for a token meant for another tenant or app', async () => {
+    await verifier
+      .verify(bearer(sign({ ...baseClaims, tid: OTHER_TENANT })))
+      .catch(() => undefined);
+    await verifier
+      .verify(bearer(sign(baseClaims, { audience: 'another-app' })))
+      .catch(() => undefined);
+    expect(jwks.getSigningKeys).not.toHaveBeenCalled();
   });
 });

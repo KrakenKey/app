@@ -816,6 +816,20 @@ export class BillingService {
     };
 
     if (sub) {
+      // Microsoft may have started billing this account while Stripe was
+      // being asked about the subscription above.
+      const latest = await this.subscriptionRepository.findOne({
+        where: { id: sub.id },
+      });
+      if (hasLiveMarketplaceSubscription(latest)) {
+        await this.cancelDuplicateSubscription(
+          owner,
+          `marketplace:${latest!.marketplaceSubscriptionId}`,
+          stripeSubscriptionId,
+          session.id,
+        );
+        return;
+      }
       Object.assign(sub, shared);
     } else {
       sub = this.subscriptionRepository.create({
