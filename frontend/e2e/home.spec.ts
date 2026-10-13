@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures/auth';
 
 test.describe('Home page', () => {
   test('renders branding and auth buttons', async ({ page }) => {

@@ -45,7 +45,7 @@ test.describe('Certificate management', () => {
       if (route.request().method() === 'GET') {
         return route.fulfill({ status: 200, json: mockCertificates });
       }
-      return route.continue();
+      return route.fallback();
     });
   });
 

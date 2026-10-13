@@ -37,7 +37,7 @@ test.describe('Organizations — eligible plan, no org yet', () => {
           },
         });
       }
-      return route.continue();
+      return route.fallback();
     });
 
     // After creation, profile refetch shows the org.
@@ -83,7 +83,7 @@ test.describe('Organizations — owner managing org', () => {
       if (route.request().method() === 'GET') {
         return route.fulfill({ status: 200, json: mockOrg });
       }
-      return route.continue();
+      return route.fallback();
     });
   });
 
@@ -106,7 +106,7 @@ test.describe('Organizations — owner managing org', () => {
         inviteBody = route.request().postDataJSON();
         return route.fulfill({ status: 201 });
       }
-      return route.continue();
+      return route.fallback();
     });
 
     // Refetch org after invite includes new member
@@ -139,7 +139,7 @@ test.describe('Organizations — owner managing org', () => {
         removeCalled = true;
         return route.fulfill({ status: 200 });
       }
-      return route.continue();
+      return route.fallback();
     });
 
     await page.goto('/dashboard/organizations');
@@ -277,7 +277,7 @@ test.describe('Organizations — invite rejection', () => {
           },
         });
       }
-      return route.continue();
+      return route.fallback();
     });
 
     await page.goto('/dashboard/organizations');
@@ -342,18 +342,6 @@ test.describe('Organizations — cross-member domain visibility', () => {
 test.describe('Organizations — pooled resource counts', () => {
   test('overview shows pooled counts for org members', async ({ page }) => {
     await authenticateAs(page, orgMemberUser);
-    // The Overview's health lists, answered empty so the page renders at once
-    for (const path of [
-      '/certs/tls',
-      '/domains',
-      '/endpoints',
-      '/endpoints/probes/mine',
-      '/connectors',
-    ]) {
-      await page.route(api(path), (route) =>
-        route.fulfill({ status: 200, json: [] }),
-      );
-    }
 
     await page.goto('/dashboard');
 

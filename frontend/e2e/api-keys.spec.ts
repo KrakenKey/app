@@ -11,7 +11,7 @@ test.describe('API key management', () => {
       if (route.request().method() === 'GET') {
         return route.fulfill({ status: 200, json: mockApiKeys });
       }
-      return route.continue();
+      return route.fallback();
     });
     await page.route(api('/auth/github-oidc/trusts'), (route) =>
       route.fulfill({ status: 200, json: [] }),
@@ -173,7 +173,7 @@ test.describe('API key management', () => {
           json: { message: 'API key revoked' },
         });
       }
-      return route.continue();
+      return route.fallback();
     });
 
     await page.goto('/dashboard/api-keys');
