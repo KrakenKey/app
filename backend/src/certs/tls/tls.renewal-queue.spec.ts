@@ -828,6 +828,8 @@ describe('Renewal claims and queue', () => {
       const loseJobAgain = async () => {
         queue.finish(id); // the worker crashed: its job is gone
         await table.update(id, { inFlightSince: old() });
+        // Real restarts are 30 minutes apart; keep each start's token unique
+        await new Promise((resolve) => setTimeout(resolve, 3));
       };
 
       for (let i = 1; i < MAX_RECOVERIES; i++) {
