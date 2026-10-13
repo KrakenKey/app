@@ -61,10 +61,13 @@ describe('ScanResultCleanupService', () => {
     expect(tierCall).toBeDefined();
     const [sql, params] = tierCall!;
     expect(sql).toContain(
-      `s_personal.status = 'past_due' AND s_personal."pastDueSince" > :graceCutoff`,
+      `s_personal.source <> 'marketplace' AND s_personal."pastDueSince" > :graceCutoff`,
     );
     expect(sql).toContain(
-      `s_org.status = 'past_due' AND s_org."pastDueSince" > :graceCutoff`,
+      `s_org.source <> 'marketplace' AND s_org."pastDueSince" > :graceCutoff`,
+    );
+    expect(sql).toContain(
+      `s_org.source = 'marketplace' AND s_org."pastDueSince" > :marketplaceGraceCutoff`,
     );
     const fourteenDays = 14 * 24 * 60 * 60 * 1000;
     expect(params.graceCutoff.getTime()).toBeGreaterThanOrEqual(
@@ -72,6 +75,13 @@ describe('ScanResultCleanupService', () => {
     );
     expect(params.graceCutoff.getTime()).toBeLessThanOrEqual(
       Date.now() - fourteenDays,
+    );
+    const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+    expect(params.marketplaceGraceCutoff.getTime()).toBeGreaterThanOrEqual(
+      before - thirtyDays,
+    );
+    expect(params.marketplaceGraceCutoff.getTime()).toBeLessThanOrEqual(
+      Date.now() - thirtyDays,
     );
   });
 });

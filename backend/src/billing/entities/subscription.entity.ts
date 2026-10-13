@@ -25,10 +25,14 @@ export class Subscription {
   @Index('IDX_subscription_organizationId')
   organizationId: string | null;
 
+  /**
+   * Null for an account that never started a Stripe checkout, e.g. one that
+   * only bought through Microsoft Marketplace.
+   */
   @ApiHideProperty()
   @Index('IDX_subscription_stripeCustomerId')
-  @Column()
-  stripeCustomerId: string;
+  @Column({ type: 'varchar', nullable: true })
+  stripeCustomerId: string | null;
 
   @ApiHideProperty()
   @Index('IDX_subscription_stripeSubscriptionId')
@@ -54,6 +58,36 @@ export class Subscription {
    */
   @Column({ type: 'timestamp', nullable: true, default: null })
   pastDueSince: Date | null;
+
+  /**
+   * Who bills this subscription: 'stripe' (direct) or 'marketplace'
+   * (Microsoft Marketplace SaaS offer). Rows written before Marketplace
+   * support are 'stripe'.
+   */
+  @Column({ type: 'varchar', default: 'stripe' })
+  source: 'stripe' | 'marketplace';
+
+  /** Microsoft's SaaS subscription id. Unique when set. */
+  @ApiHideProperty()
+  @Column({ type: 'varchar', nullable: true, default: null })
+  marketplaceSubscriptionId: string | null;
+
+  @ApiHideProperty()
+  @Column({ type: 'varchar', nullable: true, default: null })
+  marketplaceOfferId: string | null;
+
+  /** The Marketplace plan id; `plan` holds the KrakenKey plan it maps to. */
+  @ApiHideProperty()
+  @Column({ type: 'varchar', nullable: true, default: null })
+  marketplacePlanId: string | null;
+
+  /** Microsoft's status: PendingFulfillmentStart, Subscribed, Suspended or Unsubscribed. */
+  @Column({ type: 'varchar', nullable: true, default: null })
+  marketplaceStatus: string | null;
+
+  @ApiHideProperty()
+  @Column({ type: 'integer', nullable: true, default: null })
+  marketplaceQuantity: number | null;
 
   @ManyToOne(() => User, { onDelete: 'CASCADE', nullable: true })
   @JoinColumn({ name: 'userId' })

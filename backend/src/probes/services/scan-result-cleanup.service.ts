@@ -7,7 +7,7 @@ import { PLAN_LIMITS } from '../../billing/constants/plan-limits';
 import type { SubscriptionPlan } from '@krakenkey/shared';
 import {
   entitledSubscriptionSql,
-  pastDueGraceCutoff,
+  entitlementSqlParams,
 } from '../../billing/entitlement';
 
 const BATCH_SIZE = 10_000;
@@ -88,7 +88,7 @@ export class ScanResultCleanupService {
     // Join through subscription to determine tier. Handles both personal and
     // org-based subscriptions. A past_due subscription keeps its plan's
     // retention during the grace period.
-    const graceCutoff = pastDueGraceCutoff();
+    const graceParams = entitlementSqlParams();
     do {
       const result = await this.scanResultRepo
         .createQueryBuilder()
@@ -108,7 +108,7 @@ export class ScanResultCleanupService {
               AND COALESCE(s_org.plan, s_personal.plan, 'free') = :tier
             LIMIT :limit
           )`,
-          { cutoff, tier, graceCutoff, limit: BATCH_SIZE },
+          { cutoff, tier, ...graceParams, limit: BATCH_SIZE },
         )
         .execute();
       affected = result.affected ?? 0;

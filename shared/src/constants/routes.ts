@@ -64,6 +64,10 @@ export const API_ROUTES = {
     WEBHOOK: '/billing/webhook',
     UPGRADE_PREVIEW: '/billing/upgrade/preview',
     UPGRADE: '/billing/upgrade',
+    MARKETPLACE_STATUS: '/billing/marketplace/status',
+    MARKETPLACE_RESOLVE: '/billing/marketplace/resolve',
+    MARKETPLACE_ACTIVATE: '/billing/marketplace/activate',
+    MARKETPLACE_WEBHOOK: '/billing/marketplace/webhook',
   },
   ORGANIZATIONS: {
     BASE: '/organizations',

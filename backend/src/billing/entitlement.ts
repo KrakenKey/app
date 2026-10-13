@@ -9,14 +9,32 @@ import type { Subscription } from './entities/subscription.entity';
 export const PAST_DUE_GRACE_DAYS = 14;
 export const PAST_DUE_GRACE_MS = PAST_DUE_GRACE_DAYS * 24 * 60 * 60 * 1000;
 
-type EntitlementFields = Pick<Subscription, 'plan' | 'status' | 'pastDueSince'>;
+/**
+ * How long a Microsoft Marketplace subscription keeps its paid plan once
+ * Microsoft suspends it for nonpayment (stored as past_due). Microsoft gives
+ * the customer 30 days to pay before it cancels the subscription and sends
+ * Unsubscribe, which drops the account to Free right away.
+ */
+export const MARKETPLACE_SUSPENDED_GRACE_DAYS = 30;
+export const MARKETPLACE_SUSPENDED_GRACE_MS =
+  MARKETPLACE_SUSPENDED_GRACE_DAYS * 24 * 60 * 60 * 1000;
+
+type GraceFields = Pick<Subscription, 'status' | 'pastDueSince'> &
+  Partial<Pick<Subscription, 'source'>>;
+
+type EntitlementFields = GraceFields & Pick<Subscription, 'plan'>;
+
+/** Length of the grace period for this subscription's billing source. */
+function graceMs(sub: GraceFields): number {
+  return sub.source === 'marketplace'
+    ? MARKETPLACE_SUSPENDED_GRACE_MS
+    : PAST_DUE_GRACE_MS;
+}
 
 /** When the paid plan stops applying for a past_due subscription, or null. */
-export function graceEndsAt(
-  sub: Pick<Subscription, 'status' | 'pastDueSince'>,
-): Date | null {
+export function graceEndsAt(sub: GraceFields): Date | null {
   if (sub.status !== 'past_due' || !sub.pastDueSince) return null;
-  return new Date(sub.pastDueSince.getTime() + PAST_DUE_GRACE_MS);
+  return new Date(sub.pastDueSince.getTime() + graceMs(sub));
 }
 
 /**
@@ -26,7 +44,7 @@ export function graceEndsAt(
  * until the next Stripe event for it records the start.
  */
 export function hasPlanEntitlement(
-  sub: Pick<Subscription, 'status' | 'pastDueSince'>,
+  sub: GraceFields,
   now: Date = new Date(),
 ): boolean {
   if (sub.status === 'active') return true;
@@ -45,13 +63,30 @@ export function effectivePlan(
 
 /**
  * SQL version of hasPlanEntitlement for queries that join the subscription
- * table. Bind `graceCutoff` to pastDueGraceCutoff().
+ * table. Bind the parameters from entitlementSqlParams().
  */
 export function entitledSubscriptionSql(alias: string): string {
-  return `(${alias}.status = 'active' OR (${alias}.status = 'past_due' AND ${alias}."pastDueSince" > :graceCutoff))`;
+  return (
+    `(${alias}.status = 'active' OR (${alias}.status = 'past_due' AND (` +
+    `(${alias}.source = 'marketplace' AND ${alias}."pastDueSince" > :marketplaceGraceCutoff) OR ` +
+    `(${alias}.source <> 'marketplace' AND ${alias}."pastDueSince" > :graceCutoff))))`
+  );
 }
 
-/** past_due subscriptions that failed after this time are still in grace. */
+/** past_due Stripe subscriptions that failed after this time are still in grace. */
 export function pastDueGraceCutoff(now: Date = new Date()): Date {
   return new Date(now.getTime() - PAST_DUE_GRACE_MS);
+}
+
+/** Parameters for entitledSubscriptionSql. */
+export function entitlementSqlParams(now: Date = new Date()): {
+  graceCutoff: Date;
+  marketplaceGraceCutoff: Date;
+} {
+  return {
+    graceCutoff: pastDueGraceCutoff(now),
+    marketplaceGraceCutoff: new Date(
+      now.getTime() - MARKETPLACE_SUSPENDED_GRACE_MS,
+    ),
+  };
 }

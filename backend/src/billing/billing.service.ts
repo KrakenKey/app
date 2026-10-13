@@ -21,6 +21,13 @@ import { UserApiKey } from '../auth/entities/user-api-key.entity';
 import type { OrgDissolutionJobPayload } from './processors/org-dissolution.processor';
 import { EmailService } from '../notifications/email.service';
 import { effectivePlan, graceEndsAt } from './entitlement';
+import {
+  BILLED_BY_MICROSOFT_MESSAGE,
+  LIVE_STRIPE_STATUSES,
+  ORG_ELIGIBLE_PLANS,
+  hasLiveMarketplaceSubscription,
+  hasLiveStripeSubscription,
+} from './subscription-source';
 
 const PLAN_ORDER: Record<string, number> = {
   free: 0,
@@ -29,8 +36,6 @@ const PLAN_ORDER: Record<string, number> = {
   business: 3,
   enterprise: 4,
 };
-
-const ORG_ELIGIBLE_PLANS = new Set(['team', 'business', 'enterprise']);
 
 const ENDED_STRIPE_STATUSES = new Set(['canceled', 'incomplete_expired']);
 
@@ -46,24 +51,6 @@ function invoiceSubscriptionId(invoice: Stripe.Invoice): string | null {
       .subscription;
   if (!ref) return null;
   return typeof ref === 'string' ? ref : ref.id;
-}
-
-/**
- * Stripe statuses where the subscription still bills (or will bill) the
- * customer. A second checkout on top of one of these creates a duplicate.
- */
-const LIVE_STRIPE_STATUSES = new Set([
-  'active',
-  'past_due',
-  'trialing',
-  'unpaid',
-]);
-
-/** True when the row points at a Stripe subscription that is still live. */
-function hasLiveStripeSubscription(sub: Subscription | null): boolean {
-  return (
-    !!sub?.stripeSubscriptionId && LIVE_STRIPE_STATUSES.has(sub.status ?? '')
-  );
 }
 
 /**
@@ -84,8 +71,12 @@ function isStripeError(
   );
 }
 
-/** True when the subscription is backed by a Stripe subscription that has not ended. */
-function isBillingInStripe(sub: Subscription): boolean {
+/**
+ * True when someone still bills for the subscription: a Stripe subscription
+ * that has not ended, or a live Microsoft Marketplace subscription.
+ */
+function isBillingLive(sub: Subscription): boolean {
+  if (sub.source === 'marketplace') return hasLiveMarketplaceSubscription(sub);
   return !!sub.stripeSubscriptionId && !ENDED_STRIPE_STATUSES.has(sub.status);
 }
 
@@ -202,12 +193,19 @@ export class BillingService {
   ): Promise<Subscription> {
     // Check for existing sub (personal or org)
     const existing = await this.getSubscription(userId);
-    if (existing) return existing;
+    if (existing?.stripeCustomerId) return existing;
 
     const customer = await this.stripe.customers.create({
       email,
       metadata: { userId },
     });
+
+    // An account that so far only bought through Microsoft Marketplace has
+    // a row but no Stripe customer.
+    if (existing) {
+      existing.stripeCustomerId = customer.id;
+      return this.subscriptionRepository.save(existing);
+    }
 
     const subscription = this.subscriptionRepository.create({
       userId,
@@ -242,6 +240,9 @@ export class BillingService {
     // getSubscription resolves the org's subscription for org members, so
     // this covers both a personal plan and the org pool the owner pays for.
     const existing = await this.getSubscription(userId);
+    if (hasLiveMarketplaceSubscription(existing)) {
+      throw new ConflictException(BILLED_BY_MICROSOFT_MESSAGE);
+    }
     if (hasLiveStripeSubscription(existing)) {
       throw new ConflictException(
         'You already have a paid subscription. Upgrade your plan from the billing page or manage it in the billing portal instead of starting a new checkout.',
@@ -270,7 +271,7 @@ export class BillingService {
     try {
       session = await this.stripe.checkout.sessions.create(
         {
-          customer: sub.stripeCustomerId,
+          customer: sub.stripeCustomerId!,
           mode: 'subscription',
           line_items: [{ price: priceId, quantity: 1 }],
           success_url: `https://${appDomain}/dashboard/billing?success=true`,
@@ -301,7 +302,12 @@ export class BillingService {
     await this.assertBillingAccess(userId);
 
     const sub = await this.getSubscription(userId);
-    if (!sub) {
+    if (hasLiveMarketplaceSubscription(sub)) {
+      throw new ConflictException(
+        'Your subscription is billed through Microsoft. Manage it in the Azure portal.',
+      );
+    }
+    if (!sub?.stripeCustomerId) {
       throw new NotFoundException('No subscription record found');
     }
 
@@ -371,14 +377,14 @@ export class BillingService {
 
     // Charge the flat price difference immediately.
     await this.stripe.invoiceItems.create({
-      customer: sub.stripeCustomerId,
+      customer: sub.stripeCustomerId!,
       amount: differenceCents,
       currency,
       description: `Plan upgrade: ${sub.plan} \u2192 ${newPlan}`,
     });
 
     const invoice = await this.stripe.invoices.create({
-      customer: sub.stripeCustomerId,
+      customer: sub.stripeCustomerId!,
       auto_advance: true,
     });
     await this.stripe.invoices.pay(invoice.id);
@@ -424,6 +430,11 @@ export class BillingService {
     newPlan: string,
   ): Promise<Subscription> {
     const sub = await this.getSubscription(userId);
+    if (hasLiveMarketplaceSubscription(sub)) {
+      throw new ConflictException(
+        'Your subscription is billed through Microsoft. Change your plan in the Azure portal.',
+      );
+    }
     if (!sub || !sub.stripeSubscriptionId) {
       throw new NotFoundException('No active subscription found');
     }
@@ -629,14 +640,14 @@ export class BillingService {
             `Dropped canceled org subscription: sub=${sub.id} org=${organizationId}, owner keeps sub=${personalSub.id}`,
           );
           sub = null;
-        } else if (!isBillingInStripe(personalSub)) {
+        } else if (!isBillingLive(personalSub)) {
           // The owner's own sub is free or canceled; the org's paid sub replaces it.
           await manager.delete(Subscription, personalSub.id);
           this.logger.log(
             `Replaced owner's inactive subscription: sub=${personalSub.id} with org sub=${sub.id}`,
           );
         } else {
-          // Both are live in Stripe. Deleting either row would orphan a
+          // Both are still billed. Deleting either row would orphan a
           // subscription that is still billing, so leave it for manual review.
           throw new UnrecoverableError(
             `Owner ${org.ownerId} has a billing personal subscription (sub=${personalSub.id}) and org ${organizationId} has a billing subscription (sub=${sub.id}); resolve manually`,
@@ -652,6 +663,8 @@ export class BillingService {
           sub.plan = 'free';
           sub.status = 'canceled';
           sub.stripeSubscriptionId = null;
+          if (sub.source === 'marketplace')
+            sub.marketplaceStatus = 'Unsubscribed';
           sub.currentPeriodEnd = null;
           sub.cancelAtPeriodEnd = false;
           sub.pastDueSince = null;
@@ -750,6 +763,18 @@ export class BillingService {
       return;
     }
 
+    if (sub && hasLiveMarketplaceSubscription(sub)) {
+      // Microsoft started billing this account (Marketplace) after the
+      // checkout was opened. Keep the Marketplace subscription.
+      await this.cancelDuplicateSubscription(
+        owner,
+        `marketplace:${sub.marketplaceSubscriptionId}`,
+        stripeSubscriptionId,
+        session.id,
+      );
+      return;
+    }
+
     if (
       sub &&
       hasLiveStripeSubscription(sub) &&
@@ -775,6 +800,13 @@ export class BillingService {
     const shared = {
       stripeCustomerId,
       stripeSubscriptionId,
+      // A previous Marketplace subscription has ended; Stripe bills now.
+      source: 'stripe' as const,
+      marketplaceSubscriptionId: null,
+      marketplaceOfferId: null,
+      marketplacePlanId: null,
+      marketplaceStatus: null,
+      marketplaceQuantity: null,
       plan,
       status: 'active' as const,
       pastDueSince: null,
