@@ -95,7 +95,7 @@ export class MarketplaceConfig {
     const missing = this.missingSettings();
     if (missing.length > 0) {
       this.logger.error(
-        `KK_MARKETPLACE_ENABLED is true but ${missing.join(', ')} is not set; Marketplace purchases and webhooks will fail until it is`,
+        `KK_MARKETPLACE_ENABLED is true but these settings are empty: ${missing.join(', ')}. Marketplace purchases and webhooks fail until they are set`,
       );
     }
   }
