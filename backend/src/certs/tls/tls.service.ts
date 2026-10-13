@@ -46,6 +46,7 @@ import type {
 import { AcmeIssuerStrategy } from './strategies/acme-issuer.strategy';
 import { EmailService } from '../../notifications/email.service';
 import { AlertsService } from '../../notifications/channels/alerts.service';
+import { MetricsService } from '../../metrics/metrics.service';
 import { BillingService } from '../../billing/billing.service';
 import { PLAN_LIMITS } from '../../billing/constants/plan-limits';
 import type { SubscriptionPlan } from '@krakenkey/shared';
@@ -97,6 +98,8 @@ export const QUEUE_ADD_TIMEOUT_MS = 10_000;
  * still live and left alone.
  */
 export const STUCK_AFTER_MS = 30 * 60_000;
+/** A renewal recovered this many times is marked failed, not re-queued. */
+export const MAX_RECOVERIES = 3;
 const IN_FLIGHT_STATUSES: CertStatus[] = [
   CertStatus.PENDING,
   CertStatus.ISSUING,
@@ -148,6 +151,7 @@ export class TlsService {
     private readonly emailService: EmailService,
     private readonly billingService: BillingService,
     private readonly alerts: AlertsService,
+    private readonly metricsService: MetricsService,
   ) {}
 
   /**
@@ -621,9 +625,18 @@ export class TlsService {
       this.logger.error(
         `ACME revocation failed for cert #${cert.id}: ${err instanceof Error ? err.message : String(err)}`,
       );
-      await this.TlsCrtRepository.update(cert.id, {
-        status: CertStatus.ISSUED,
-      });
+      // Back as it was: an issued certificate, or one whose renewal was
+      // waiting (at its old place in the queue, so it isn't lost)
+      await this.TlsCrtRepository.update(
+        cert.id,
+        queuedRenewal
+          ? {
+              status: CertStatus.RENEWING,
+              renewalQueuedAt: cert.renewalQueuedAt,
+            }
+          : { status: CertStatus.ISSUED },
+      );
+      if (queuedRenewal) await this.startQueuedRenewalsSafely(cert.userId);
       throw new InternalServerErrorException('Certificate revocation failed');
     }
 
@@ -887,6 +900,7 @@ export class TlsService {
     await this.TlsCrtRepository.update(cert.id, {
       status: CertStatus.PENDING,
       inFlightSince,
+      recoveryCount: 0,
     });
 
     await this.queueIssuance(cert.id, inFlightSince);
@@ -959,6 +973,35 @@ export class TlsService {
           : {}),
       },
       { status: job.status, crtPem: null, chainPem: null, failureReason: null },
+    );
+    return (result?.affected ?? 0) > 0;
+  }
+
+  /**
+   * @internal
+   * For the worker: records a job's final result, but only while the
+   * certificate is still in the processing status this job set and, for
+   * jobs that carry one, still has the job's inFlightSince token. A job
+   * that stalled and was replaced (BullMQ failed it while process() kept
+   * running, and the sweep queued it again) can't overwrite the new job's
+   * result. Returns false when nothing matched.
+   */
+  async finishProcessing(
+    id: number,
+    guard: { status: CertStatus; token?: number },
+    changes: InternalUpdateTlsCrtDto & Record<string, unknown>,
+    status: CertStatus,
+  ): Promise<boolean> {
+    const result = await this.TlsCrtRepository.update(
+      {
+        id,
+        status: guard.status,
+        renewalQueuedAt: IsNull(),
+        ...(guard.token !== undefined
+          ? { inFlightSince: new Date(guard.token) }
+          : {}),
+      },
+      { ...(changes as QueryDeepPartialEntity<TlsCrt>), status },
     );
     return (result?.affected ?? 0) > 0;
   }
@@ -1269,22 +1312,34 @@ export class TlsService {
       renewalQueuedAt: IsNull(),
       inFlightSince: cert.inFlightSince ?? IsNull(),
     };
+    const recoveries = (cert.recoveryCount ?? 0) + 1;
+    const what = cert.status === CertStatus.RENEWING ? 'Renewal' : 'Issuance';
     let changes: QueryDeepPartialEntity<TlsCrt>;
     let outcome: string;
     if (cert.status === CertStatus.RENEWING && cert.crtPem) {
       changes = { status: CertStatus.ISSUED, inFlightSince: null };
       outcome = 'back to issued with its current certificate';
-    } else if (cert.status === CertStatus.RENEWING && cert.rawCsr) {
+    } else if (
+      cert.status === CertStatus.RENEWING &&
+      cert.rawCsr &&
+      recoveries < MAX_RECOVERIES
+    ) {
       changes = { renewalQueuedAt: new Date(), inFlightSince: null };
       outcome = 'queued to renew again';
     } else {
       changes = {
         status: CertStatus.FAILED,
         inFlightSince: null,
-        failureReason: `${cert.status === CertStatus.RENEWING ? 'Renewal' : 'Issuance'} was interrupted and did not finish. Retry it with POST /certs/tls/${cert.id}/retry.`,
+        failureReason:
+          recoveries >= MAX_RECOVERIES && cert.status === CertStatus.RENEWING
+            ? `${what} was interrupted ${recoveries} times without finishing, so it was stopped. Retry it with POST /certs/tls/${cert.id}/retry.`
+            : `${what} was interrupted and did not finish. Retry it with POST /certs/tls/${cert.id}/retry.`,
       };
       outcome = 'marked failed';
     }
+    // Counted so a request that keeps crashing its worker stops after
+    // MAX_RECOVERIES instead of sending an order every half hour
+    changes.recoveryCount = recoveries;
     const result = await this.TlsCrtRepository.update(seen, changes);
     if ((result?.affected ?? 0) === 0) return false;
 
@@ -1292,6 +1347,26 @@ export class TlsService {
       `Recovered certificate #${cert.id} (${cert.status}) because ${why}: ${outcome}`,
     );
     if (changes.status === CertStatus.FAILED) {
+      // Same notifications as a failure inside the job
+      this.metricsService.certIssuanceTotal.inc({ status: 'failed' });
+      const owner = await this.userRepo
+        .findOne({
+          where: { id: cert.userId },
+          select: { id: true, username: true, email: true },
+        })
+        .catch(() => null);
+      if (owner?.email) {
+        await this.emailService
+          .sendCertFailed({
+            userId: owner.id,
+            username: owner.username,
+            email: owner.email,
+            certId: cert.id,
+            commonName: certDisplayName(cert),
+            errorMessage: changes.failureReason as string,
+          })
+          .catch(() => undefined);
+      }
       await this.alerts
         .emit(cert.userId, 'cert.failed', {
           subject: certDisplayName(cert),

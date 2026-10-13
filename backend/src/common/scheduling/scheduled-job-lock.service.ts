@@ -3,6 +3,7 @@ import {
   Inject,
   Injectable,
   Logger,
+  OnApplicationShutdown,
   OnModuleDestroy,
   OnModuleInit,
   Optional,
@@ -41,6 +42,8 @@ export interface ScheduledJobLockStore {
     ttl: number,
     nx: 'NX',
   ): Promise<'OK' | null>;
+  /** Closes the connection; called last on shutdown. */
+  disconnect?(): void;
 }
 
 /**
@@ -58,19 +61,36 @@ export interface ScheduledJobLockStore {
  *
  * If Redis can't be reached the job runs anyway (fail open), which is how
  * it behaved before this lock: a duplicate run is better than a missed one.
+ *
+ * Shutdown (a blue/green deploy retiring this container). Nest calls every
+ * onModuleDestroy first, then every beforeApplicationShutdown (this one
+ * can run before @nestjs/schedule stops its timers), then closes the
+ * database and BullMQ in onApplicationShutdown. So:
+ * - onModuleDestroy sets `closing`: from then on runOnce claims nothing
+ *   and runs nothing, even if a timer still fires. The new container runs
+ *   the job instead.
+ * - beforeApplicationShutdown waits for runs already claimed, while the
+ *   database and queues are still open.
+ * - onApplicationShutdown disconnects Redis, last.
  */
 @Injectable()
 export class ScheduledJobLock
-  implements OnModuleInit, OnModuleDestroy, BeforeApplicationShutdown
+  implements
+    OnModuleInit,
+    OnModuleDestroy,
+    BeforeApplicationShutdown,
+    OnApplicationShutdown
 {
   private readonly logger = new Logger(ScheduledJobLock.name);
-  /** Runs this process claimed and hasn't finished. */
+  /** Claims and runs in this process that haven't finished. */
   private readonly running = new Set<Promise<unknown>>();
   /** See SHUTDOWN_WAIT_MS; changeable for tests. */
   shutdownWaitMs = SHUTDOWN_WAIT_MS;
   private readonly store: ScheduledJobLockStore;
   private readonly redis: Redis | null;
   private readonly owner = `${hostname()}:${process.pid}`;
+  /** Set when shutdown starts; runOnce then skips every job. */
+  private closing = false;
 
   constructor(
     config: ConfigService,
@@ -111,14 +131,14 @@ export class ScheduledJobLock
     }
   }
 
+  /** First shutdown hook: stop claiming new runs (see the class comment). */
   onModuleDestroy() {
-    this.redis?.disconnect();
+    this.closing = true;
   }
 
   /**
-   * Nest stops the cron timers and then closes the database and Redis on
-   * shutdown (a blue/green deploy retiring this container). Let a run that
-   * already claimed its slot finish first, up to `shutdownWaitMs`.
+   * Lets runs this process already claimed finish, up to `shutdownWaitMs`,
+   * before the database and queues close (see the class comment).
    */
   async beforeApplicationShutdown(): Promise<void> {
     const waitMs = this.shutdownWaitMs;
@@ -141,6 +161,11 @@ export class ScheduledJobLock
     }
   }
 
+  /** Last shutdown hook: the connection is no longer needed. */
+  onApplicationShutdown() {
+    this.store.disconnect?.();
+  }
+
   /**
    * Runs `run` unless another process already claimed `job` for the
    * current slot. Returns false when the run was skipped.
@@ -149,6 +174,26 @@ export class ScheduledJobLock
     job: string,
     run: () => Promise<unknown>,
     opts: { now?: Date; ttlSeconds?: number } = {},
+  ): Promise<boolean> {
+    if (this.closing) {
+      this.logger.log(`Skipping ${job}: this API process is shutting down`);
+      return false;
+    }
+    // Tracked from the claim on, so shutdown also waits for a claim that
+    // was in flight when it started (the claimed slot must still run)
+    const attempt = this.claimAndRun(job, run, opts);
+    this.running.add(attempt);
+    try {
+      return await attempt;
+    } finally {
+      this.running.delete(attempt);
+    }
+  }
+
+  private async claimAndRun(
+    job: string,
+    run: () => Promise<unknown>,
+    opts: { now?: Date; ttlSeconds?: number },
   ): Promise<boolean> {
     const slot = slotOf(opts.now ?? new Date());
     const key = `${job}:${slot}`;
@@ -174,13 +219,7 @@ export class ScheduledJobLock
       );
       return false;
     }
-    const running = run();
-    this.running.add(running);
-    try {
-      await running;
-    } finally {
-      this.running.delete(running);
-    }
+    await run();
     return true;
   }
 }

@@ -3,10 +3,15 @@
  * run against an in-memory tls_crt table instead of call-by-call mocks, so
  * concurrent callers really race for the same rows.
  */
-import { ConflictException, HttpException } from '@nestjs/common';
+import {
+  ConflictException,
+  HttpException,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { FindOperator } from 'typeorm';
 import type { ParsedCsr, RenewTlsCertResponse } from '@krakenkey/shared';
 import {
+  MAX_RECOVERIES,
   QUEUE_ADD_TIMEOUT_MS,
   STUCK_AFTER_MS,
   TlsService,
@@ -69,6 +74,7 @@ class FakeCertTable {
       renewalCount: 0,
       renewalQueuedAt: null,
       inFlightSince: null,
+      recoveryCount: 0,
       crtPem: null,
       expiresAt: null,
       createdAt: new Date(),
@@ -238,6 +244,8 @@ describe('Renewal claims and queue', () => {
   let csrUtil: { validateAndParse: jest.Mock; isAuthorized: jest.Mock };
   let acme: { revoke: jest.Mock };
   let alerts: { emit: jest.Mock };
+  let email: { sendCertRevoked: jest.Mock; sendCertFailed: jest.Mock };
+  let metrics: { certIssuanceTotal: { inc: jest.Mock } };
 
   beforeEach(() => {
     table = new FakeCertTable();
@@ -255,6 +263,11 @@ describe('Renewal claims and queue', () => {
     };
     acme = { revoke: jest.fn().mockResolvedValue(undefined) };
     alerts = { emit: jest.fn().mockResolvedValue(0) };
+    email = {
+      sendCertRevoked: jest.fn().mockResolvedValue(undefined),
+      sendCertFailed: jest.fn().mockResolvedValue(undefined),
+    };
+    metrics = { certIssuanceTotal: { inc: jest.fn() } };
     const billing = {
       resolveUserTier: jest.fn((id: string) =>
         Promise.resolve(plans[id] ?? 'free'),
@@ -265,7 +278,14 @@ describe('Renewal claims and queue', () => {
     };
     service = new TlsService(
       table as any,
-      { findOne: () => Promise.resolve(null) } as any,
+      {
+        findOne: ({ where }: { where: { id: string } }) =>
+          Promise.resolve(
+            where.id === 'u1'
+              ? { id: 'u1', username: 'one', email: 'one@example.com' }
+              : null,
+          ),
+      } as any,
       queue as any,
       csrUtil as any,
       {} as any,
@@ -273,9 +293,10 @@ describe('Renewal claims and queue', () => {
         findAllVerified: () => Promise.resolve([{ hostname: 'example.com' }]),
       } as any,
       acme as any,
-      { sendCertRevoked: jest.fn() } as any,
+      email as any,
       billing as any,
       alerts as any,
+      metrics as any,
     );
   });
 
@@ -616,6 +637,26 @@ describe('Renewal claims and queue', () => {
       expect(queue.renewals()).toEqual([]);
     });
 
+    it('keeps the renewal queued, at its place, when the CA refuses the revocation', async () => {
+      fullAccount();
+      const id = issued('u1', { crtPem: 'leaf-pem' });
+      await service.renew(id, 'u1');
+      const queuedAt = table.row(id).renewalQueuedAt;
+      acme.revoke.mockRejectedValue(new Error('CA unavailable'));
+
+      await expect(service.revoke(id, 'u1')).rejects.toBeInstanceOf(
+        InternalServerErrorException,
+      );
+
+      expect(table.row(id)).toMatchObject({
+        status: 'renewing',
+        renewalQueuedAt: queuedAt,
+        crtPem: 'leaf-pem',
+      });
+      await finishJob(1);
+      expect(queue.renewals()).toEqual([id]);
+    });
+
     it('still refuses a renewal that has started', async () => {
       const id = issued('u1', { crtPem: 'leaf-pem' });
       await service.renew(id, 'u1');
@@ -762,6 +803,57 @@ describe('Renewal claims and queue', () => {
         'u1',
         'cert.failed',
         expect.objectContaining({ resource: { type: 'certificate', id } }),
+      );
+      // Same email and metric as a failure inside the job
+      expect(email.sendCertFailed).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'u1',
+          email: 'one@example.com',
+          certId: id,
+          errorMessage: expect.stringMatching(/interrupted/),
+        }),
+      );
+      expect(metrics.certIssuanceTotal.inc).toHaveBeenCalledWith({
+        status: 'failed',
+      });
+    });
+
+    it(`stops re-queuing a renewal that keeps losing its job after ${MAX_RECOVERIES} recoveries`, async () => {
+      const id = table.insert({
+        userId: 'u1',
+        status: 'renewing',
+        crtPem: null,
+        inFlightSince: old(),
+      }).id;
+      const loseJobAgain = async () => {
+        queue.finish(id); // the worker crashed: its job is gone
+        await table.update(id, { inFlightSince: old() });
+      };
+
+      for (let i = 1; i < MAX_RECOVERIES; i++) {
+        await service.recoverStuck();
+        expect(table.row(id)).toMatchObject({
+          status: 'renewing',
+          recoveryCount: i,
+        });
+        expect(queue.renewals()).toHaveLength(i); // re-queued and started
+        await loseJobAgain();
+      }
+      await service.recoverStuck();
+
+      expect(table.row(id)).toMatchObject({
+        status: 'failed',
+        recoveryCount: MAX_RECOVERIES,
+      });
+      expect(table.row(id).failureReason).toMatch(
+        new RegExp(`interrupted ${MAX_RECOVERIES} times`),
+      );
+      expect(queue.renewals()).toHaveLength(MAX_RECOVERIES - 1);
+      expect(email.sendCertFailed).toHaveBeenCalledTimes(1);
+      expect(alerts.emit).toHaveBeenCalledWith(
+        'u1',
+        'cert.failed',
+        expect.anything(),
       );
     });
 

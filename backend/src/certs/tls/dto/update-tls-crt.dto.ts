@@ -46,4 +46,5 @@ export class InternalUpdateTlsCrtDto extends UpdateTlsCrtDto {
   ariReplacementRequestedAt?: Date | null;
   renewalQueuedAt?: Date | null;
   inFlightSince?: Date | null;
+  recoveryCount?: number;
 }

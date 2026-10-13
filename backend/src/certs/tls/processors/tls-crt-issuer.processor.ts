@@ -120,9 +120,13 @@ export class CertIssuerConsumer extends WorkerHost {
     const statusDuringProcess = isRenewal
       ? CertStatus.RENEWING
       : CertStatus.ISSUING;
+    const guard = {
+      status: statusDuringProcess,
+      token: job.data.inFlightSince,
+    };
     const current = await this.tlsService.beginProcessing(certId, {
       renewal: isRenewal,
-      token: job.data.inFlightSince,
+      token: guard.token,
       status: statusDuringProcess,
     });
     if (!current) {
@@ -184,11 +188,19 @@ export class CertIssuerConsumer extends WorkerHost {
         updateData.lastRenewedAt = new Date();
       }
 
-      await this.tlsService.updateInternal(
+      // Only while the certificate is still this job's (see finishProcessing)
+      const recorded = await this.tlsService.finishProcessing(
         csrRecord.id,
-        updateData,
+        guard,
+        { ...updateData, recoveryCount: 0 },
         CertStatus.ISSUED,
       );
+      if (!recorded) {
+        this.logger.warn(
+          `Not recording ${job.name} result for cert #${certId}: the certificate was taken over meanwhile`,
+        );
+        return { success: false };
+      }
       await this.startWaitingRenewals(csrRecord);
 
       this.logger.log(
@@ -255,10 +267,12 @@ export class CertIssuerConsumer extends WorkerHost {
         throw err instanceof Error ? err : new Error(message);
       }
 
-      // No retry will follow: record the failure and notify the owner once.
-      this.metricsService.certIssuanceTotal.inc({ status: 'failed' });
-      await this.tlsService.updateInternal(
+      // No retry will follow: record the failure and notify the owner once,
+      // unless the certificate was taken over meanwhile (this job stalled
+      // and was replaced), so a stale failure can't overwrite a new result
+      const recorded = await this.tlsService.finishProcessing(
         csrRecord.id,
+        guard,
         {
           crtPem: null,
           chainPem: null,
@@ -267,6 +281,17 @@ export class CertIssuerConsumer extends WorkerHost {
         },
         CertStatus.FAILED,
       );
+      if (!recorded) {
+        this.logger.warn(
+          `Not recording ${job.name} failure for cert #${certId}: the certificate was taken over meanwhile`,
+        );
+        throw permanent
+          ? new UnrecoverableError(message)
+          : err instanceof Error
+            ? err
+            : new Error(message);
+      }
+      this.metricsService.certIssuanceTotal.inc({ status: 'failed' });
       await this.startWaitingRenewals(csrRecord);
       if (csrRecord.user) {
         await this.emailService.sendCertFailed({

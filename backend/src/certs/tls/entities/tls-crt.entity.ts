@@ -21,6 +21,9 @@ import type { CertManagedBy, CertStatus, ParsedCsr } from '@krakenkey/shared';
 @Index('IDX_tls_crt_renewalQueuedAt', ['renewalQueuedAt'], {
   where: '"renewalQueuedAt" IS NOT NULL',
 })
+@Index('IDX_tls_crt_inFlight', ['inFlightSince'], {
+  where: `"status" IN ('pending', 'issuing', 'renewing') AND "renewalQueuedAt" IS NULL`,
+})
 export class TlsCrt {
   @PrimaryGeneratedColumn()
   id: number;
@@ -82,6 +85,14 @@ export class TlsCrt {
    */
   @Column({ type: 'timestamp', nullable: true })
   inFlightSince: Date | null;
+
+  /**
+   * How many times the current request was recovered after losing its job
+   * (see TlsService.recoverStuck). Reset when a certificate is issued or a
+   * failed one is retried.
+   */
+  @Column({ type: 'int', default: 0 })
+  recoveryCount: number;
 
   @Column({ type: 'int', nullable: true })
   revocationReason: number | null;

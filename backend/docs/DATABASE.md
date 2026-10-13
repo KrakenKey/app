@@ -98,6 +98,7 @@ CREATE TABLE "tls_crt" (
   "lastRenewalAttemptAt" TIMESTAMP,
   "renewalQueuedAt" TIMESTAMP,                    -- Set while a renewal waits for a concurrent pending slot
   "inFlightSince" TIMESTAMP,                      -- When the current issuance/renewal job was queued; job fencing token
+  "recoveryCount" INTEGER DEFAULT 0,              -- Times the current request was recovered after losing its job
   "revocationReason" INTEGER,                     -- RFC 5280 reason code (0-10)
   "revokedAt" TIMESTAMP,
   "managedBy" TEXT,                               -- 'connector' or NULL (KrakenKey renews)
@@ -108,6 +109,7 @@ CREATE TABLE "tls_crt" (
 CREATE INDEX idx_tls_crt_user ON tls_crt("userId");
 CREATE INDEX idx_tls_crt_renewal ON tls_crt("status", "autoRenew", "expiresAt");
 CREATE INDEX "IDX_tls_crt_renewalQueuedAt" ON tls_crt("renewalQueuedAt") WHERE "renewalQueuedAt" IS NOT NULL;
+CREATE INDEX "IDX_tls_crt_inFlight" ON tls_crt("inFlightSince") WHERE status IN ('pending', 'issuing', 'renewing') AND "renewalQueuedAt" IS NULL;
 ```
 
 **Status Values:**

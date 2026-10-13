@@ -28,6 +28,13 @@ export class InMemoryLockStore implements ScheduledJobLockStore {
     return Promise.resolve('OK');
   }
 
+  /** When disconnect() was called, in call order with `events`. */
+  readonly events: string[] = [];
+
+  disconnect() {
+    this.events.push('disconnect');
+  }
+
   /** Moves the clock forward. */
   advance(seconds: number) {
     this.now += seconds * 1000;

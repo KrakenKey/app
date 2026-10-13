@@ -20,6 +20,7 @@ import type { ParsedCsr } from '@krakenkey/shared';
 import { EmailService } from '../../notifications/email.service';
 import { AlertsService } from '../../notifications/channels/alerts.service';
 import { BillingService } from '../../billing/billing.service';
+import { MetricsService } from '../../metrics/metrics.service';
 
 describe('TlsService', () => {
   const mockAlerts = { emit: jest.fn().mockResolvedValue(0) };
@@ -181,6 +182,10 @@ describe('TlsService', () => {
           useValue: mockQueue,
         },
         { provide: AlertsService, useValue: mockAlerts },
+        {
+          provide: MetricsService,
+          useValue: { certIssuanceTotal: { inc: jest.fn() } },
+        },
         {
           provide: EmailService,
           useValue: {
@@ -1790,6 +1795,7 @@ describe('TlsService', () => {
       expect(mockRepository.update).toHaveBeenCalledWith(1, {
         status: 'pending',
         inFlightSince: expect.any(Date),
+        recoveryCount: 0,
       });
       expect(mockQueue.add).toHaveBeenCalledWith(
         'tlsCertIssuance',
