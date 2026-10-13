@@ -16,6 +16,12 @@ export enum RateLimitCategory {
   AUTHENTICATED_READ = 'read',
   AUTHENTICATED_WRITE = 'write',
   EXPENSIVE = 'expensive',
+  /**
+   * POST /certs/tls/:id/renew. Its own allowance, so routine renewals of a
+   * large account (often from daily timers) fit, without raising the limit
+   * on new issuance.
+   */
+  RENEWAL = 'renewal',
 }
 
 /** Categories limited per client IP at the default tier, whatever the token. */

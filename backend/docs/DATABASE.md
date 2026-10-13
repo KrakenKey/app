@@ -96,6 +96,7 @@ CREATE TABLE "tls_crt" (
   "autoRenew" BOOLEAN DEFAULT TRUE,
   "renewalCount" INTEGER DEFAULT 0,
   "lastRenewalAttemptAt" TIMESTAMP,
+  "renewalQueuedAt" TIMESTAMP,                    -- Set while a renewal waits for a concurrent pending slot
   "revocationReason" INTEGER,                     -- RFC 5280 reason code (0-10)
   "revokedAt" TIMESTAMP,
   "managedBy" TEXT,                               -- 'connector' or NULL (KrakenKey renews)
@@ -105,6 +106,7 @@ CREATE TABLE "tls_crt" (
 
 CREATE INDEX idx_tls_crt_user ON tls_crt("userId");
 CREATE INDEX idx_tls_crt_renewal ON tls_crt("status", "autoRenew", "expiresAt");
+CREATE INDEX "IDX_tls_crt_renewalQueuedAt" ON tls_crt("renewalQueuedAt") WHERE "renewalQueuedAt" IS NOT NULL;
 ```
 
 **Status Values:**
@@ -116,7 +118,7 @@ CREATE INDEX idx_tls_crt_renewal ON tls_crt("status", "autoRenew", "expiresAt");
 | `issuing` | ACME workflow actively running |
 | `issued` | Certificate successfully issued |
 | `failed` | Issuance failed after 3 retries |
-| `renewing` | Renewal in progress |
+| `renewing` | Renewal in progress, or waiting for a concurrent pending slot when `renewalQueuedAt` is set |
 | `revoking` | Revocation request sent to ACME CA |
 | `revoked` | Certificate successfully revoked |
 

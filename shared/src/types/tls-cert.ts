@@ -51,6 +51,12 @@ export interface TlsCert {
   autoRenew: boolean;
   renewalCount: number;
   lastRenewalAttemptAt: string | null;
+  /**
+   * Set while a renewal waits for a free slot under the plan's concurrent
+   * pending limit (status `renewing`, nothing sent to the CA yet). Queued
+   * renewals start oldest first as earlier requests finish. Null otherwise.
+   */
+  renewalQueuedAt?: string | null;
   revocationReason: number | null;
   /** Why the last issuance or renewal attempt failed; null otherwise. */
   failureReason: string | null;
@@ -128,6 +134,13 @@ export interface RenewTlsCertResponse {
    * connector-managed certificates. Only set when `skipped` is true.
    */
   renewalWindowDays?: number;
+  /**
+   * Set when a renewal was accepted (`skipped` false). True when it waits
+   * for a free slot under the plan's concurrent pending limit (HTTP 202);
+   * it starts on its own as earlier requests finish. False when it started
+   * right away (HTTP 201). The status is `renewing` either way.
+   */
+  queued?: boolean;
 }
 
 export interface RetryTlsCertResponse {

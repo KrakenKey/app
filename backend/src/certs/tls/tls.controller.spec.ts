@@ -233,6 +233,36 @@ describe('TlsController', () => {
       expect(res.status).toHaveBeenCalledWith(200);
     });
 
+    it('returns 202 when the renewal waits for a free slot', async () => {
+      const res = mockRes();
+      const queued = {
+        id: 1,
+        status: 'renewing',
+        skipped: false,
+        queued: true,
+      };
+      mockService.renew.mockResolvedValue(queued);
+
+      await expect(controller.renew(mockReq, '1', res)).resolves.toEqual(
+        queued,
+      );
+      expect(res.status).toHaveBeenCalledWith(202);
+    });
+
+    it('keeps 201 when the renewal started', async () => {
+      const res = mockRes();
+      mockService.renew.mockResolvedValue({
+        id: 1,
+        status: 'renewing',
+        skipped: false,
+        queued: false,
+      });
+
+      await controller.renew(mockReq, '1', res);
+
+      expect(res.status).not.toHaveBeenCalled();
+    });
+
     it('passes a CSR from the body to service.renew()', async () => {
       mockService.renew.mockResolvedValue({ skipped: false });
       const csrPem =

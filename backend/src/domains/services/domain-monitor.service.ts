@@ -6,6 +6,7 @@ import { Domain } from '../entities/domain.entity';
 import { DomainsService } from '../domains.service';
 import { EmailService } from '../../notifications/email.service';
 import { AlertsService } from '../../notifications/channels/alerts.service';
+import { ScheduledJobLock } from '../../common/scheduling/scheduled-job-lock.service';
 
 @Injectable()
 export class DomainMonitorService {
@@ -17,6 +18,7 @@ export class DomainMonitorService {
     private readonly domainsService: DomainsService,
     private readonly emailService: EmailService,
     private readonly alerts: AlertsService,
+    private readonly jobLock: ScheduledJobLock,
   ) {}
 
   /**
@@ -27,9 +29,16 @@ export class DomainMonitorService {
    * Note: In-flight cert issuance/renewal jobs that were already queued before
    * this check runs will complete — the authorization check happens at submission
    * time, not at job execution time. Only new cert submissions are blocked.
+   *
+   * Runs once across API processes (see ScheduledJobLock), so a failing
+   * domain gets one email and one alert.
    */
   @Cron('0 2 * * *')
   async checkVerifiedDomains(): Promise<void> {
+    await this.jobLock.runOnce('domain-monitor', () => this.recheckDomains());
+  }
+
+  private async recheckDomains(): Promise<void> {
     const verifiedDomains = await this.domainsRepository.find({
       where: { isVerified: true },
       relations: ['owner'],

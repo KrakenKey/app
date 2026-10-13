@@ -8,19 +8,21 @@ Implementation lives in `backend/src/throttler/`.
 
 ## Limits by tier and category
 
-| Tier | Public | Reads | Writes | Expensive |
-|------|--------|-------|--------|-----------|
-| free | 30/min | 60/min | 20/min | 5/hr |
-| starter | 60/min | 120/min | 40/min | 10/hr |
-| team | 60/min | 300/min | 60/min | 30/hr |
-| business | 120/min | 600/min | 120/min | 60/hr |
-| enterprise | 120/min | 1000/min | 200/min | 100/hr |
+| Tier | Public | Reads | Writes | Expensive | Renewals |
+|------|--------|-------|--------|-----------|----------|
+| free | 30/min | 60/min | 20/min | 5/hr | 10/hr |
+| starter | 60/min | 120/min | 40/min | 10/hr | 30/hr |
+| team | 60/min | 300/min | 60/min | 30/hr | 120/hr |
+| business | 120/min | 600/min | 120/min | 60/hr | 300/hr |
+| enterprise | 120/min | 1000/min | 200/min | 100/hr | 600/hr |
 
-Source of truth: `backend/src/throttler/config/rate-limit-tiers.config.ts`. Update the table above and the one in the KrakenKey monorepo's `AGENTS.md` whenever that file changes.
+Source of truth: `backend/src/throttler/config/rate-limit-tiers.config.ts` (renewal numbers in `RENEWAL_LIMITS_PER_HOUR`). Update the table above and the one in the KrakenKey monorepo's `AGENTS.md` whenever that file changes.
 
 Each limit applies **per route**, not across the API. See [Tracking key](#tracking-key).
 
 `PUBLIC` routes are always limited per IP at the `free` row, because the caller's tier can only come from an unverified token there. The higher Public values for paid tiers are currently unused.
+
+**Renewals** (`POST /certs/tls/:id/renew`) have their own allowance instead of the expensive one. A renewal replaces a certificate, so it can't grow an account, and renewals are often driven by daily timers (CI jobs, the CLI with `--if-due`, connectors) that fire together across all of an account's certificates. Each tier's number is at least twice its expensive allowance and lets an account at its plan's total active certificate limit renew everything within a few hours of clustered requests: Free's 10 certificates in one hour, Starter's 75 and Team's 375 in about three, Business's 1500 in five. `ifDue=true` requests count even when nothing is due. The number of ACME orders running at once is capped separately by the plan's concurrent pending limit: renewals past it wait their turn instead of failing (see [CERTIFICATE_FLOW.md](../backend/docs/CERTIFICATE_FLOW.md#renewal-queue)). Completing an `awaiting_csr` certificate goes through the same route and the same allowance, but it is still a new certificate, so the monthly and concurrent pending limits refuse it with `402` when reached.
 
 Three connector categories use the same limit on every tier:
 
@@ -50,7 +52,8 @@ Defined in `interfaces/rate-limit-category.enum.ts`:
 | `connector-report` | `CONNECTOR_REPORT` | `POST /connectors/report`, `PUT /connectors/config`, `DELETE /connectors/config` |
 | `read` | `AUTHENTICATED_READ` | Authenticated reads: list domains, view certificates, endpoint history |
 | `write` | `AUTHENTICATED_WRITE` | Authenticated mutations: create domain, delete certificate, update endpoint |
-| `expensive` | `EXPENSIVE` | Resource-heavy operations: certificate issuance, renewal, retry, revocation, domain verification |
+| `expensive` | `EXPENSIVE` | Resource-heavy operations: certificate issuance, retry, revocation, domain verification |
+| `renewal` | `RENEWAL` | `POST /certs/tls/:id/renew` |
 
 `AuthController` is `PUBLIC` at the class level, but its authenticated routes (profile, API keys, `confirm-auto-renewal`) override that with `AUTHENTICATED_READ` or `AUTHENTICATED_WRITE`.
 
@@ -92,7 +95,7 @@ If the billing lookup throws, `SubscriptionTierResolver` logs a warning and retu
 | Service key (`Bearer kk_svc_...`) | client IP |
 | Unauthenticated | client IP |
 
-The guard does not override `generateKey()`, so the library default applies: the stored key is a hash of the controller name, the handler name and the tracker. **Every route has its own bucket.** A free-tier user gets 5 issuances per hour *and* 5 renewals per hour *and* 5 domain verifications per hour, and being blocked on one route does not block the others.
+The guard does not override `generateKey()`, so the library default applies: the stored key is a hash of the controller name, the handler name and the tracker. **Every route has its own bucket.** A free-tier user gets 5 issuances per hour *and* 10 renewals per hour *and* 5 domain verifications per hour, and being blocked on one route does not block the others.
 
 Details that matter when changing this code:
 
@@ -117,7 +120,7 @@ Because the guard is global and runs before every controller, a Redis outage fai
 
 An exceeded limit returns **`429 Too Many Requests`** with a `Retry-After` header giving the seconds until the block lifts. Allowed responses carry `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` (seconds until the current window resets).
 
-Clients should back off rather than retry immediately. Expensive-category windows are hourly, so a tight retry loop on a failed issuance will stay blocked for up to an hour.
+Clients should back off rather than retry immediately. Expensive and renewal windows are hourly, so a tight retry loop on a failed issuance will stay blocked for up to an hour.
 
 For the plan limits that cap resource *totals* (domains, certificates per month, monitored endpoints) rather than request rates, see the Plan Limits table in the KrakenKey monorepo's `AGENTS.md`. Those are enforced separately from this guard.
 

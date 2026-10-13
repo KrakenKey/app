@@ -534,8 +534,12 @@ function AttentionPanel({
     setBusy(item.id);
     try {
       if (a.kind === 'renew') {
-        await certService.renewCertificate(a.certId);
-        toast.success(`Renewal started for ${item.title}`);
+        const res = await certService.renewCertificate(a.certId);
+        toast.success(
+          res.queued
+            ? `Renewal queued for ${item.title}`
+            : `Renewal started for ${item.title}`,
+        );
       } else if (a.kind === 'retry') {
         await certService.retryCertificate(a.certId);
         toast.success(`Retrying ${item.title}`);

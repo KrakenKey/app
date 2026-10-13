@@ -23,12 +23,14 @@ import { EndpointsModule } from './endpoints/endpoints.module';
 import { PublicScanModule } from './public-scan/public-scan.module';
 import { ReportsModule } from './reports/reports.module';
 import { ConnectorsModule } from './connectors/connectors.module';
+import { ScheduledJobLockModule } from './common/scheduling/scheduled-job-lock.module';
 
 @Module({
   imports: [
     CertsModule,
     HealthModule,
     ScheduleModule.forRoot(),
+    ScheduledJobLockModule,
     ConfigModule.forRoot({ isGlobal: true }),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],

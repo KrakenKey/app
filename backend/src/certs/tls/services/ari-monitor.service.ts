@@ -12,6 +12,7 @@ import { BillingService } from '../../../billing/billing.service';
 import { MetricsService } from '../../../metrics/metrics.service';
 import { AlertsService } from '../../../notifications/channels/alerts.service';
 import { ariCertId, isEarlyReplacement } from '../util/ari';
+import { ScheduledJobLock } from '../../../common/scheduling/scheduled-job-lock.service';
 
 type AriField =
   | 'ariCertId'
@@ -54,12 +55,19 @@ export class AriMonitorService {
     private readonly billingService: BillingService,
     private readonly metricsService: MetricsService,
     private readonly alerts: AlertsService,
+    private readonly jobLock: ScheduledJobLock,
   ) {}
 
+  /** Hourly; once across API processes (see ScheduledJobLock). */
   @Cron(CronExpression.EVERY_HOUR)
   async checkRenewalInfo(now = new Date()): Promise<void> {
     if (!this.ariService.isEnabled()) return;
+    await this.jobLock.runOnce('ari-monitor', () => this.checkDue(now), {
+      now,
+    });
+  }
 
+  private async checkDue(now: Date): Promise<void> {
     const due = await this.tlsCrtRepository.find({
       where: [
         {

@@ -261,9 +261,14 @@ CertMonitorService (daily 06:00 UTC)
   ├─ Query: status=issued, autoRenew=true, expiring within window
   ├─ Filter by user tier (free: 5 days, paid: 30 days)
   ├─ For each cert: TlsService.renewInternal()
-  │  ├─ Update status → 'renewing'
-  │  └─ Enqueue tlsCertRenewal BullMQ job
+  │  ├─ Claim: UPDATE ... SET status 'renewing', renewalQueuedAt now WHERE status 'issued'
+  │  └─ startQueuedRenewals(): under a per-account advisory lock, start waiting
+  │     renewals oldest first while the account has concurrent pending room
+  │     (clear renewalQueuedAt, enqueue tlsCertRenewal BullMQ job)
   └─ Send expiry warning emails
+
+Waiting renewals also start when any issuance or renewal job ends, and from
+RenewalQueueService's sweep every minute.
 ```
 
 ### 4. Organization Dissolution Flow
@@ -289,6 +294,11 @@ OrgDissolutionProcessor.process()
 |---------|------|------|--------|
 | `DomainMonitorService` | `0 2 * * *` | 02:00 UTC | Re-verify DNS TXT for all verified domains. Marks unverified if missing. Sends email notification |
 | `CertMonitorService` | `0 6 * * *` | 06:00 UTC | Find expiring certs, queue renewal jobs, send warning emails, update metrics |
+| `AriMonitorService` | `0 * * * *` | hourly | Check ACME Renewal Information; alert and renew early when the CA asks |
+| `ActivationReminderService` | `0 10 * * *` | 10:00 UTC | Remind users who haven't added a domain after a day |
+| `RenewalQueueService` | `* * * * *` | every minute | Start renewals waiting for a concurrent pending slot |
+
+**Several API processes**: during a blue/green deploy, or with more than one replica, every process fires every `@Cron`. The four jobs above that send email or alerts (`DomainMonitorService`, `CertMonitorService`, `AriMonitorService`, `ActivationReminderService`) run through `ScheduledJobLock` (`common/scheduling/`): the first process to `SET cron-lock:<job>:<start of the UTC hour> NX EX 1800` in Redis runs the job and the others skip it. If Redis is unreachable the job runs anyway, as before. `RenewalQueueService` needs no lock: starting a renewal is a conditional update under a per-account advisory lock. The other jobs are safe to run twice (purges, cleanup, atomic claims).
 
 **Ordering**: Domain re-verification runs at 2AM so revoked domains block cert operations before the 6AM cert monitor runs.
 

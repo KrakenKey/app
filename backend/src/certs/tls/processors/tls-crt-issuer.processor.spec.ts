@@ -31,6 +31,7 @@ describe('CertIssuerConsumer', () => {
     mockTlsService = {
       findOneInternal: jest.fn().mockResolvedValue(mockCsrRecord),
       updateInternal: jest.fn().mockResolvedValue({}),
+      startQueuedRenewalsSafely: jest.fn().mockResolvedValue([]),
     };
     mockAcme = {
       issue: jest
@@ -118,6 +119,44 @@ describe('CertIssuerConsumer', () => {
           lastRenewedAt: expect.any(Date),
         }),
         'issued',
+      );
+    });
+
+    it('clears the queue marker when a renewal starts', async () => {
+      await processor.process({
+        name: 'tlsCertRenewal',
+        data: { certId: 1 },
+      } as any);
+      expect(mockTlsService.updateInternal).toHaveBeenNthCalledWith(
+        1,
+        1,
+        expect.objectContaining({ renewalQueuedAt: null }),
+        'renewing',
+      );
+    });
+
+    it('leaves the queue marker alone for a first issuance', async () => {
+      await processor.process({
+        name: 'tlsCertIssuance',
+        data: { certId: 1 },
+      } as any);
+      expect(mockTlsService.updateInternal.mock.calls[0][1]).not.toHaveProperty(
+        'renewalQueuedAt',
+      );
+    });
+
+    it("starts the owner's next queued renewal once a job succeeds", async () => {
+      mockTlsService.findOneInternal.mockResolvedValue({
+        ...mockCsrRecord,
+        userId: 'owner-1',
+      });
+      await processor.process({
+        name: 'tlsCertIssuance',
+        data: { certId: 1 },
+      } as any);
+      expect(mockTlsService.startQueuedRenewalsSafely).toHaveBeenCalledTimes(1);
+      expect(mockTlsService.startQueuedRenewalsSafely).toHaveBeenCalledWith(
+        'owner-1',
       );
     });
 
@@ -432,6 +471,23 @@ describe('CertIssuerConsumer', () => {
         'failed',
       );
       expect(mockEmailService.sendCertFailed).toHaveBeenCalledTimes(1);
+      // The slot is free again: the next queued renewal can start
+      expect(mockTlsService.startQueuedRenewalsSafely).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the slot while a retry will follow', async () => {
+      mockTlsService.findOneInternal.mockResolvedValue(userRecord);
+      mockAcme.issue.mockRejectedValue(new Error('DNS propagation timeout'));
+
+      await expect(
+        processor.process({
+          name: 'tlsCertRenewal',
+          data: { certId: 1 },
+          attemptsMade: 0,
+          opts: { attempts: 3 },
+        } as any),
+      ).rejects.toThrow('DNS propagation timeout');
+      expect(mockTlsService.startQueuedRenewalsSafely).not.toHaveBeenCalled();
     });
 
     it('aborts retries via UnrecoverableError for permanent ACME rejections', async () => {

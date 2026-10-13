@@ -6,7 +6,7 @@ import {
   ForbiddenException,
   InternalServerErrorException,
 } from '@nestjs/common';
-import { In, Not } from 'typeorm';
+import { In, IsNull, Not } from 'typeorm';
 import { TlsService } from './tls.service';
 import { CsrUtilService } from './util/csr-util.service';
 import { CertUtilService } from './util/cert-util.service';
@@ -31,8 +31,30 @@ describe('TlsService', () => {
   let mockRepository: any;
   let mockQueue: any;
   let billingService: { resolveUserTier: jest.Mock };
+  /** Renewals claimed through mockRepository.update, waiting for a slot. */
+  let claimed: { id: number; renewalQueuedAt: Date }[];
 
   const userId = 'user123';
+
+  /** The claim renew/renewInternal make: issued -> renewing, queued. */
+  const claimOf = (id: number, extra: Record<string, unknown> = {}) => [
+    { id, status: 'issued', ...extra },
+    expect.objectContaining({
+      status: 'renewing',
+      renewalQueuedAt: expect.any(Date),
+    }),
+  ];
+  /** A renewal job added for this certificate. */
+  const renewalJob = (certId: number) => ({
+    name: 'tlsCertRenewal',
+    data: { certId },
+    opts: {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5000 },
+      jobId: expect.stringMatching(new RegExp(`^renewal-${certId}-\\d+$`)),
+    },
+  });
+  const started = { status: 'renewing', skipped: false, queued: false };
 
   beforeEach(async () => {
     mockRepository = {
@@ -41,13 +63,37 @@ describe('TlsService', () => {
       find: jest.fn().mockResolvedValue([]),
       findOne: jest.fn().mockResolvedValue(null),
       findOneBy: jest.fn().mockResolvedValue(null),
-      update: jest.fn().mockResolvedValue({ affected: 1 }),
+      update: jest.fn(
+        (criteria: { id?: number; status?: string }, changes: any) => {
+          if (criteria?.status === 'issued' && changes?.renewalQueuedAt) {
+            claimed.push({
+              id: criteria.id!,
+              renewalQueuedAt: changes.renewalQueuedAt,
+            });
+          }
+          return Promise.resolve({ affected: 1 });
+        },
+      ),
       delete: jest.fn().mockResolvedValue({ affected: 1 }),
       count: jest.fn().mockResolvedValue(0),
+    };
+    // The queue lookup in startQueuedRenewals sees the claimed renewals
+    claimed = [];
+    mockRepository.find = jest.fn(
+      ({ where }: { where?: { renewalQueuedAt?: unknown } } = {}) =>
+        Promise.resolve(where?.renewalQueuedAt ? claimed : []),
+    );
+    const mockManager = {
+      query: jest.fn().mockResolvedValue([]),
+      getRepository: () => mockRepository,
+    };
+    mockRepository.manager = {
+      transaction: jest.fn((run: (m: unknown) => unknown) => run(mockManager)),
     };
 
     mockQueue = {
       add: jest.fn().mockResolvedValue({}),
+      addBulk: jest.fn().mockResolvedValue([]),
     };
 
     mockAcme = {
@@ -739,14 +785,18 @@ describe('TlsService', () => {
   });
 
   describe('concurrent pending limit for CSR requests', () => {
-    it('counts pending, issuing and renewing, not awaiting_csr', async () => {
+    it('counts pending, issuing and started renewals, not awaiting_csr or queued renewals', async () => {
       await service.create(userId, { csrPem: 'valid-csr-pem' });
 
       expect(mockRepository.count).toHaveBeenCalledWith({
-        where: {
-          userId: In([userId]),
-          status: In(['pending', 'issuing', 'renewing']),
-        },
+        where: [
+          { userId: In([userId]), status: In(['pending', 'issuing']) },
+          {
+            userId: In([userId]),
+            status: 'renewing',
+            renewalQueuedAt: IsNull(),
+          },
+        ],
       });
       expect(mockRepository.count).toHaveBeenCalledWith({
         where: {
@@ -905,14 +955,9 @@ describe('TlsService', () => {
     });
 
     it('is refused by the concurrent pending limit', async () => {
-      mockRepository.count.mockImplementation(
-        ({ where }: { where: { status: unknown } }) =>
-          Promise.resolve(
-            JSON.stringify(where.status) ===
-              JSON.stringify(In(['pending', 'issuing', 'renewing']))
-              ? 2
-              : 0,
-          ),
+      // The in-flight count is the only query with several conditions
+      mockRepository.count.mockImplementation(({ where }: { where: unknown }) =>
+        Promise.resolve(Array.isArray(where) ? 2 : 0),
       );
 
       await expect(service.renew(5, userId, { csrPem })).rejects.toMatchObject({
@@ -1262,15 +1307,22 @@ describe('TlsService', () => {
 
       const result = await service.renew(1, userId);
 
-      expect(mockRepository.update).toHaveBeenCalledWith(1, {
-        status: 'renewing',
-      });
-      expect(mockQueue.add).toHaveBeenCalledWith(
-        'tlsCertRenewal',
-        { certId: 1 },
-        { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
+      expect(mockRepository.update).toHaveBeenCalledWith(...claimOf(1));
+      expect(mockQueue.addBulk).toHaveBeenCalledWith([renewalJob(1)]);
+      expect(mockQueue.add).not.toHaveBeenCalled();
+      expect(result).toEqual({ id: 1, ...started });
+    });
+
+    it('returns 409 when another request claimed the certificate first', async () => {
+      mockRepository.findOneBy.mockResolvedValue({ ...issuedCert });
+      mockRepository.update.mockResolvedValue({ affected: 0 });
+
+      await expect(service.renew(1, userId)).rejects.toThrow(
+        new ConflictException(
+          'A renewal of this certificate is already in progress',
+        ),
       );
-      expect(result).toEqual({ id: 1, status: 'renewing', skipped: false });
+      expect(mockQueue.addBulk).not.toHaveBeenCalled();
     });
 
     it('renews at the total active certificate limit', async () => {
@@ -1282,8 +1334,8 @@ describe('TlsService', () => {
 
       const result = await service.renew(1, userId);
 
-      expect(result).toEqual({ id: 1, status: 'renewing', skipped: false });
-      expect(mockQueue.add).toHaveBeenCalled();
+      expect(result).toEqual({ id: 1, ...started });
+      expect(mockQueue.addBulk).toHaveBeenCalled();
     });
 
     it('renews after the monthly new-certificate limit is used up', async () => {
@@ -1294,22 +1346,36 @@ describe('TlsService', () => {
 
       const result = await service.renew(1, userId);
 
-      expect(result).toEqual({ id: 1, status: 'renewing', skipped: false });
+      expect(result).toEqual({ id: 1, ...started });
     });
 
-    it('is still refused by the concurrent pending limit', async () => {
+    it('waits past the concurrent pending limit instead of being refused', async () => {
       mockRepository.findOneBy.mockResolvedValue({ ...issuedCert });
+      // Free plan: both slots taken
       mockRepository.count.mockImplementation(async ({ where }) =>
-        where.status?.value?.includes?.('renewing') ? 2 : 0,
+        Array.isArray(where) ? 2 : 0,
       );
 
-      await expect(service.renew(1, userId)).rejects.toMatchObject({
-        status: 402,
-        response: expect.objectContaining({
-          message: 'Concurrent pending request limit reached',
-        }),
+      const result = await service.renew(1, userId);
+
+      expect(result).toEqual({
+        id: 1,
+        status: 'renewing',
+        skipped: false,
+        queued: true,
       });
+      expect(mockRepository.update).toHaveBeenCalledWith(...claimOf(1));
+      expect(mockQueue.addBulk).not.toHaveBeenCalled();
       expect(mockQueue.add).not.toHaveBeenCalled();
+    });
+
+    it('stays queued, not failed, when the queue is unreachable', async () => {
+      mockRepository.findOneBy.mockResolvedValue({ ...issuedCert });
+      mockQueue.addBulk.mockRejectedValue(new Error('Connection is closed.'));
+
+      const result = await service.renew(1, userId);
+
+      expect(result).toMatchObject({ status: 'renewing', queued: true });
     });
 
     it('throws BadRequestException when cert is not issued', async () => {
@@ -1336,8 +1402,8 @@ describe('TlsService', () => {
 
         const result = await service.renew(1, userId);
 
-        expect(result).toEqual({ id: 1, status: 'renewing', skipped: false });
-        expect(mockQueue.add).toHaveBeenCalled();
+        expect(result).toEqual({ id: 1, ...started });
+        expect(mockQueue.addBulk).toHaveBeenCalled();
         expect(billingService.resolveUserTier).toHaveBeenCalledTimes(1); // limits only
       });
 
@@ -1351,8 +1417,8 @@ describe('TlsService', () => {
 
         const result = await service.renew(1, userId, { ifDue: true });
 
-        expect(result).toEqual({ id: 1, status: 'renewing', skipped: false });
-        expect(mockQueue.add).toHaveBeenCalled();
+        expect(result).toEqual({ id: 1, ...started });
+        expect(mockQueue.addBulk).toHaveBeenCalled();
       });
 
       it('skips without touching status, quota or queue when outside the window', async () => {
@@ -1390,15 +1456,9 @@ describe('TlsService', () => {
 
         const result = await service.renew(1, userId, { ifDue: true });
 
-        expect(result).toEqual({ id: 1, status: 'renewing', skipped: false });
-        expect(mockRepository.update).toHaveBeenCalledWith(1, {
-          status: 'renewing',
-        });
-        expect(mockQueue.add).toHaveBeenCalledWith(
-          'tlsCertRenewal',
-          { certId: 1 },
-          expect.any(Object),
-        );
+        expect(result).toEqual({ id: 1, ...started });
+        expect(mockRepository.update).toHaveBeenCalledWith(...claimOf(1));
+        expect(mockQueue.addBulk).toHaveBeenCalledWith([renewalJob(1)]);
       });
 
       it('uses the 5-day free window: 20 days out is skipped', async () => {
@@ -1423,8 +1483,8 @@ describe('TlsService', () => {
 
         const result = await service.renew(1, userId, { ifDue: true });
 
-        expect(result).toEqual({ id: 1, status: 'renewing', skipped: false });
-        expect(mockQueue.add).toHaveBeenCalled();
+        expect(result).toEqual({ id: 1, ...started });
+        expect(mockQueue.addBulk).toHaveBeenCalled();
       });
 
       it('resolves the window from the cert owner', async () => {
@@ -1447,7 +1507,7 @@ describe('TlsService', () => {
 
         const result = await service.renew(1, userId, { ifDue: true });
 
-        expect(result).toEqual({ id: 1, status: 'renewing', skipped: false });
+        expect(result).toEqual({ id: 1, ...started });
       });
 
       it('still rejects a cert that is not issued', async () => {
@@ -1516,17 +1576,17 @@ describe('TlsService', () => {
         const result = await service.renew(1, userId, { csrPem: newCsrPem });
 
         expect(csrUtilService.validateAndParse).toHaveBeenCalledWith(newCsrPem);
-        expect(mockRepository.update).toHaveBeenCalledWith(1, {
-          rawCsr: 'new-normalized-pem',
-          parsedCsr: parsed,
-          status: 'renewing',
-        });
-        expect(mockQueue.add).toHaveBeenCalledWith(
-          'tlsCertRenewal',
-          { certId: 1 },
-          { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
+        expect(mockRepository.update).toHaveBeenCalledWith(
+          { id: 1, status: 'issued' },
+          {
+            rawCsr: 'new-normalized-pem',
+            parsedCsr: parsed,
+            status: 'renewing',
+            renewalQueuedAt: expect.any(Date),
+          },
         );
-        expect(result).toEqual({ id: 1, status: 'renewing', skipped: false });
+        expect(mockQueue.addBulk).toHaveBeenCalledWith([renewalJob(1)]);
+        expect(result).toEqual({ id: 1, ...started });
       });
 
       it('rejects a CSR whose names differ from the certificate', async () => {
@@ -1598,16 +1658,23 @@ describe('TlsService', () => {
         ).rejects.toThrow('CSR names must match the certificate');
       });
 
-      it('does not store the CSR when the plan limit refuses the renewal', async () => {
+      it('stores the CSR with a renewal that waits past the pending limit', async () => {
         mockRepository.findOneBy.mockResolvedValue({ ...certWithNames });
-        mockNewCsr(parsedFor('example.com', ['www.example.com']));
+        const parsed = parsedFor('example.com', ['www.example.com']);
+        mockNewCsr(parsed);
         mockRepository.count.mockResolvedValue(1000);
 
-        await expect(
-          service.renew(1, userId, { csrPem: newCsrPem }),
-        ).rejects.toThrow();
-        expect(mockRepository.update).not.toHaveBeenCalled();
-        expect(mockQueue.add).not.toHaveBeenCalled();
+        const result = await service.renew(1, userId, { csrPem: newCsrPem });
+
+        expect(result).toMatchObject({ status: 'renewing', queued: true });
+        expect(mockRepository.update).toHaveBeenCalledWith(
+          { id: 1, status: 'issued' },
+          expect.objectContaining({
+            rawCsr: 'new-normalized-pem',
+            parsedCsr: parsed,
+          }),
+        );
+        expect(mockQueue.addBulk).not.toHaveBeenCalled();
       });
 
       it('renews with a new CSR when the stored CSR is missing', async () => {
@@ -1641,7 +1708,7 @@ describe('TlsService', () => {
 
         const result = await service.renew(1, userId, { ifDue: true });
 
-        expect(result).toEqual({ id: 1, status: 'renewing', skipped: false });
+        expect(result).toEqual({ id: 1, ...started });
       });
 
       it('skips with the 30-day window when not due', async () => {
@@ -1799,16 +1866,36 @@ describe('TlsService', () => {
 
       await service.renewInternal(1);
 
-      expect(mockRepository.update).toHaveBeenCalledWith(1, {
-        status: 'renewing',
-        renewalCount: 1,
-        lastRenewalAttemptAt: expect.any(Date),
+      const [criteria, changes] = mockRepository.update.mock.calls[0];
+      expect(criteria).toEqual({
+        id: 1,
+        status: 'issued',
+        managedBy: IsNull(),
       });
-      expect(mockQueue.add).toHaveBeenCalledWith(
-        'tlsCertRenewal',
-        { certId: 1 },
-        { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
-      );
+      expect(changes).toEqual({
+        status: 'renewing',
+        renewalCount: expect.any(Function),
+        lastRenewalAttemptAt: expect.any(Date),
+        renewalQueuedAt: expect.any(Date),
+      });
+      // Incremented in SQL, so a stale read can't lose a count
+      expect(changes.renewalCount()).toBe('"renewalCount" + 1');
+      expect(mockQueue.addBulk).toHaveBeenCalledWith([renewalJob(1)]);
+    });
+
+    it('queues nothing when another caller claimed the certificate first', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        id: 1,
+        status: 'issued',
+        rawCsr: 'pem',
+        renewalCount: 0,
+      });
+      mockRepository.update.mockResolvedValue({ affected: 0 });
+
+      await service.renewInternal(1);
+
+      expect(mockQueue.addBulk).not.toHaveBeenCalled();
+      expect(mockQueue.add).not.toHaveBeenCalled();
     });
 
     it('renews after the monthly new-certificate limit is used up', async () => {
@@ -1818,15 +1905,14 @@ describe('TlsService', () => {
         rawCsr: 'pem',
         renewalCount: 0,
       });
-      mockRepository.count.mockResolvedValue(1000);
+      // Everything but the in-flight count is at its limit
+      mockRepository.count.mockImplementation(({ where }: { where: unknown }) =>
+        Promise.resolve(Array.isArray(where) ? 0 : 1000),
+      );
 
       await service.renewInternal(1);
 
-      expect(mockQueue.add).toHaveBeenCalledWith(
-        'tlsCertRenewal',
-        { certId: 1 },
-        expect.any(Object),
-      );
+      expect(mockQueue.addBulk).toHaveBeenCalledWith([renewalJob(1)]);
     });
 
     it('never renews a connector-managed cert', async () => {

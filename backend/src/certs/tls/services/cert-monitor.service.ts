@@ -13,6 +13,7 @@ import { BillingService } from '../../../billing/billing.service';
 import { daysUntilExpiry, renewalWindowDays } from '../util/renewal-window';
 import { User } from '../../../users/entities/user.entity';
 import { certDisplayName } from '../util/cert-names';
+import { ScheduledJobLock } from '../../../common/scheduling/scheduled-job-lock.service';
 
 @Injectable()
 export class CertMonitorService {
@@ -28,6 +29,7 @@ export class CertMonitorService {
     private readonly emailService: EmailService,
     private readonly billingService: BillingService,
     private readonly alerts: AlertsService,
+    private readonly jobLock: ScheduledJobLock,
   ) {}
 
   /**
@@ -39,9 +41,16 @@ export class CertMonitorService {
    * renewed here: the connector renews them with its own keys. They are
    * checked whatever their autoRenew flag, which only controls server-side
    * renewal.
+   *
+   * Runs once across API processes (see ScheduledJobLock), so each expiry
+   * warning goes out once.
    */
   @Cron(CronExpression.EVERY_DAY_AT_6AM)
   async checkExpiringCertificates(): Promise<void> {
+    await this.jobLock.runOnce('cert-monitor', () => this.checkExpiring());
+  }
+
+  private async checkExpiring(): Promise<void> {
     // Use max window (30 days) for the DB query, then filter per-user by tier
     const threshold = new Date();
     threshold.setDate(threshold.getDate() + 30);

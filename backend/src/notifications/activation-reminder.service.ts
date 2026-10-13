@@ -4,6 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, LessThan, Repository } from 'typeorm';
 import { User } from '../users/entities/user.entity';
 import { EmailService } from './email.service';
+import { ScheduledJobLock } from '../common/scheduling/scheduled-job-lock.service';
 
 @Injectable()
 export class ActivationReminderService {
@@ -13,10 +14,18 @@ export class ActivationReminderService {
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     private readonly emailService: EmailService,
+    private readonly jobLock: ScheduledJobLock,
   ) {}
 
+  /** Daily at 10:00; once across API processes (see ScheduledJobLock). */
   @Cron('0 10 * * *')
   async sendActivationReminders(): Promise<void> {
+    await this.jobLock.runOnce('activation-reminder', () =>
+      this.sendReminders(),
+    );
+  }
+
+  private async sendReminders(): Promise<void> {
     const cutoff = new Date();
     cutoff.setHours(cutoff.getHours() - 24);
 

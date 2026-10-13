@@ -17,7 +17,14 @@ import {
 import { CsrUtilService } from './util/csr-util.service';
 import { CertUtilService } from './util/cert-util.service';
 import { TlsCrt } from './entities/tls-crt.entity';
-import { In, MoreThanOrEqual, Not, Repository } from 'typeorm';
+import {
+  In,
+  IsNull,
+  MoreThanOrEqual,
+  Not,
+  Repository,
+  type FindOptionsWhere,
+} from 'typeorm';
 import type { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -75,6 +82,12 @@ export type TlsCrtResponse = TlsCrt & {
 const IDEMPOTENCY_TTL_SECONDS = 15 * 60;
 /** Placeholder stored while the original request is still being processed. */
 const IDEMPOTENCY_PENDING = '__pending__';
+
+/** BullMQ options for issuance and renewal jobs. */
+const CERT_JOB_OPTS = {
+  attempts: 3,
+  backoff: { type: 'exponential', delay: 5000 },
+} as const;
 
 /** Minimal Redis surface used for idempotency (satisfied by BullMQ's client). */
 interface IdempotencyStore {
@@ -658,12 +671,11 @@ export class TlsService {
       if (skip) return skip;
     }
 
-    // A renewal replaces a certificate rather than adding one, so only the
-    // in-flight limit applies
-    await this.enforceCertLimits(userId, { renewal: true });
-
-    // The new CSR is only stored once the renewal is certain to be queued
-    await this.TlsCrtRepository.update(cert.id, {
+    // A renewal replaces a certificate rather than adding one, so the total
+    // active and monthly limits don't apply, and past the concurrent pending
+    // limit it waits for a slot instead of being refused. The new CSR is
+    // stored with the claim, so a queued renewal uses it when it starts.
+    const claimed = await this.claimRenewal(cert.id, {
       ...(newCsr
         ? {
             rawCsr: newCsr.raw,
@@ -671,20 +683,19 @@ export class TlsService {
             parsedCsr: newCsr.parsed as QueryDeepPartialEntity<ParsedCsr>,
           }
         : {}),
-      status: CertStatus.RENEWING,
     });
+    if (!claimed) {
+      throw new ConflictException(
+        'A renewal of this certificate is already in progress',
+      );
+    }
 
-    // Queue renewal job (separate from initial issuance)
-    const jobPayload: TlsCertJobPayload = { certId: cert.id };
-    await this.tlsCertQueue.add('tlsCertRenewal', jobPayload, {
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 5000 },
-    });
-
+    const started = await this.startQueuedRenewalsSafely(cert.userId);
     return {
       id: cert.id,
       status: CertStatus.RENEWING,
       skipped: false,
+      queued: !started.includes(cert.id),
     };
   }
 
@@ -859,12 +870,17 @@ export class TlsService {
   /**
    * @internal
    * SYSTEM USE ONLY. Do not use this in Controllers.
-   * Queues a renewal job for a certificate without an ownership check.
-   * Intended for automated monitoring (CertMonitorService) only.
-   * Silently skips certificates that are not in 'issued' state or missing CSR data.
+   * Queues a renewal for a certificate without an ownership check.
+   * Intended for automated monitoring (CertMonitorService, AriMonitorService).
+   * Silently skips certificates that are not in 'issued' state, are missing
+   * CSR data, are managed by a connector, or that another caller claimed
+   * first (two API processes running the same job).
+   *
+   * Like a renewal through the API, it waits past the concurrent pending
+   * limit and starts as slots free up.
    */
   async renewInternal(id: number): Promise<void> {
-    const cert = await this.findOneInternal(id, { relations: ['user'] });
+    const cert = await this.findOneInternal(id);
     if (!cert || cert.status !== CertStatus.ISSUED || !cert.rawCsr) {
       return;
     }
@@ -877,17 +893,143 @@ export class TlsService {
       return;
     }
 
-    await this.TlsCrtRepository.update(cert.id, {
-      status: CertStatus.RENEWING,
-      renewalCount: cert.renewalCount + 1,
-      lastRenewalAttemptAt: new Date(),
-    });
+    const claimed = await this.claimRenewal(
+      cert.id,
+      {
+        renewalCount: () => '"renewalCount" + 1',
+        lastRenewalAttemptAt: new Date(),
+      },
+      { managedBy: IsNull() },
+    );
+    if (!claimed) {
+      this.logger.log(
+        `Auto-renewal skipped for cert #${id}: no longer issued (already claimed)`,
+      );
+      return;
+    }
 
-    const jobPayload: TlsCertJobPayload = { certId: cert.id };
-    await this.tlsCertQueue.add('tlsCertRenewal', jobPayload, {
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 5000 },
+    // Errors are logged; the renewal stays queued and the sweep starts it
+    await this.startQueuedRenewalsSafely(cert.userId);
+  }
+
+  // --- Renewal queue ---
+
+  /**
+   * Moves an issued certificate to 'renewing', queued, in one conditional
+   * UPDATE. Of two callers racing for the same certificate (two API
+   * processes running the same cron, or two renew requests) only one
+   * matches the row, so only one renewal and one ACME order are queued.
+   * Returns false when the certificate was no longer issued.
+   */
+  private async claimRenewal(
+    id: number,
+    changes: QueryDeepPartialEntity<TlsCrt>,
+    where: FindOptionsWhere<TlsCrt> = {},
+  ): Promise<boolean> {
+    const result = await this.TlsCrtRepository.update(
+      { ...where, id, status: CertStatus.ISSUED },
+      {
+        ...changes,
+        status: CertStatus.RENEWING,
+        renewalQueuedAt: new Date(),
+      },
+    );
+    return (result?.affected ?? 0) > 0;
+  }
+
+  /**
+   * Starts an account's queued renewals, oldest first, while it has room
+   * under its plan's concurrent pending limit. Counts are pooled across
+   * organization members, like the limit itself.
+   *
+   * Called after a renewal is queued, when an issuance or renewal job
+   * finishes, and every minute by RenewalQueueService. A Postgres advisory
+   * lock per account makes concurrent calls (several API processes, or a
+   * job finishing during a renew request) take turns, so the limit is never
+   * overshot; each started renewal's job id is derived from its claim, so a
+   * repeat can't queue a second ACME order for it.
+   *
+   * The jobs are added before the transaction commits: if Redis refuses
+   * them, the renewals stay queued for the next call. Returns the ids of
+   * the certificates started.
+   */
+  async startQueuedRenewals(userId: string): Promise<number[]> {
+    const memberIds = await this.billingService.getResourceCountUserIds(userId);
+    const plan = (await this.billingService.resolveUserTier(
+      userId,
+    )) as SubscriptionPlan;
+    const limit = (PLAN_LIMITS[plan] ?? PLAN_LIMITS.free).concurrentPending;
+    const accountKey = [...memberIds].sort()[0] ?? userId;
+
+    return this.TlsCrtRepository.manager.transaction(async (manager) => {
+      await manager.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+        `renewal-queue:${accountKey}`,
+      ]);
+      const repo = manager.getRepository(TlsCrt);
+
+      let room: number | undefined;
+      if (limit !== Infinity) {
+        room = limit - (await repo.count({ where: inFlight(memberIds) }));
+        if (room <= 0) return [];
+      }
+
+      const waiting = await repo.find({
+        select: { id: true, renewalQueuedAt: true },
+        where: {
+          userId: In(memberIds),
+          status: CertStatus.RENEWING,
+          renewalQueuedAt: Not(IsNull()),
+        },
+        order: { renewalQueuedAt: 'ASC', id: 'ASC' },
+        take: room,
+      });
+      if (waiting.length === 0) return [];
+
+      const ids = waiting.map((c) => c.id);
+      await repo.update(
+        { id: In(ids), status: CertStatus.RENEWING },
+        { renewalQueuedAt: null },
+      );
+      await this.tlsCertQueue.addBulk(
+        waiting.map((c) => ({
+          name: 'tlsCertRenewal',
+          data: { certId: c.id } satisfies TlsCertJobPayload,
+          opts: {
+            ...CERT_JOB_OPTS,
+            // One job per claim, even if a start is retried
+            jobId: `renewal-${c.id}-${c.renewalQueuedAt!.getTime()}`,
+          },
+        })),
+      );
+      this.logger.log(
+        `Started ${ids.length} queued renewal(s): ${ids.map((id) => `#${id}`).join(', ')}`,
+      );
+      return ids;
     });
+  }
+
+  /** startQueuedRenewals for callers that must not fail: logs and returns []. */
+  async startQueuedRenewalsSafely(userId: string): Promise<number[]> {
+    try {
+      return await this.startQueuedRenewals(userId);
+    } catch (err) {
+      this.logger.warn(
+        `Could not start queued renewals for user ${userId} now; the next sweep will: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return [];
+    }
+  }
+
+  /** Owners of certificates with a renewal waiting, for the periodic sweep. */
+  async findUsersWithQueuedRenewals(): Promise<string[]> {
+    const rows = await this.TlsCrtRepository.find({
+      select: { userId: true },
+      where: {
+        status: CertStatus.RENEWING,
+        renewalQueuedAt: Not(IsNull()),
+      },
+    });
+    return [...new Set(rows.map((r) => r.userId))];
   }
 
   // --- Plan Limit Helpers ---
@@ -900,15 +1042,15 @@ export class TlsService {
    * `concurrentPending: false` skips the concurrent pending check, for a
    * request that queues nothing. `excludeCertId` leaves a certificate out of
    * the total active and monthly counts, for one that is already counted.
-   * `renewal` skips both counts: a renewal replaces a certificate rather than
-   * adding one, so a user at their cap can still renew.
+   * Renewals don't come through here: they replace a certificate rather
+   * than adding one, and past the concurrent pending limit they wait (see
+   * startQueuedRenewals).
    */
   private async enforceCertLimits(
     userId: string,
     opts: {
       concurrentPending?: boolean;
       excludeCertId?: number;
-      renewal?: boolean;
     } = {},
   ): Promise<void> {
     const plan = (await this.billingService.resolveUserTier(
@@ -917,20 +1059,14 @@ export class TlsService {
     const limits = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
     const memberIds = await this.billingService.getResourceCountUserIds(userId);
 
-    // Concurrent pending check (awaiting_csr is not in flight, so not counted)
+    // Concurrent pending check (awaiting_csr and queued renewals are not in
+    // flight, so not counted)
     if (
       opts.concurrentPending !== false &&
       limits.concurrentPending !== Infinity
     ) {
       const pendingCount = await this.TlsCrtRepository.count({
-        where: {
-          userId: In(memberIds),
-          status: In([
-            CertStatus.PENDING,
-            CertStatus.ISSUING,
-            CertStatus.RENEWING,
-          ]),
-        },
+        where: inFlight(memberIds),
       });
       if (pendingCount >= limits.concurrentPending) {
         throw new HttpException(
@@ -947,7 +1083,7 @@ export class TlsService {
 
     // Total active certs check: issued, plus awaiting_csr, which hold a
     // place until the connector completes or the user deletes them
-    if (!opts.renewal && limits.totalActiveCerts !== Infinity) {
+    if (limits.totalActiveCerts !== Infinity) {
       const activeCount = await this.TlsCrtRepository.count({
         where: {
           userId: In(memberIds),
@@ -971,7 +1107,7 @@ export class TlsService {
     }
 
     // Monthly cert count check (new certificates only)
-    if (!opts.renewal && limits.certsPerMonth !== Infinity) {
+    if (limits.certsPerMonth !== Infinity) {
       const monthlyCount = await this.countCertsThisMonth(
         memberIds,
         opts.excludeCertId,
@@ -1019,4 +1155,23 @@ export class TlsService {
       },
     });
   }
+}
+
+/**
+ * Certificates holding one of an account's concurrent pending slots: new
+ * requests on their way to the CA, and renewals that have started. A
+ * renewal still waiting for a slot (renewalQueuedAt set) doesn't hold one.
+ */
+function inFlight(userIds: string[]): FindOptionsWhere<TlsCrt>[] {
+  return [
+    {
+      userId: In(userIds),
+      status: In([CertStatus.PENDING, CertStatus.ISSUING]),
+    },
+    {
+      userId: In(userIds),
+      status: CertStatus.RENEWING,
+      renewalQueuedAt: IsNull(),
+    },
+  ];
 }

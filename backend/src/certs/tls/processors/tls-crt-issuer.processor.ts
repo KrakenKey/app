@@ -133,7 +133,13 @@ export class CertIssuerConsumer extends WorkerHost {
 
       await this.tlsService.updateInternal(
         csrRecord.id,
-        { crtPem: null, chainPem: null, failureReason: null },
+        {
+          crtPem: null,
+          chainPem: null,
+          failureReason: null,
+          // A started renewal no longer waits for a slot
+          ...(isRenewal ? { renewalQueuedAt: null } : {}),
+        },
         statusDuringProcess,
       );
 
@@ -179,6 +185,7 @@ export class CertIssuerConsumer extends WorkerHost {
         updateData,
         CertStatus.ISSUED,
       );
+      await this.startWaitingRenewals(csrRecord);
 
       this.logger.log(
         `Certificate ${isRenewal ? 'renewed' : 'issued'} for ID: ${certId}, expires: ${expiresAt.toISOString()}`,
@@ -255,6 +262,7 @@ export class CertIssuerConsumer extends WorkerHost {
         },
         CertStatus.FAILED,
       );
+      await this.startWaitingRenewals(csrRecord);
       if (csrRecord.user) {
         await this.emailService.sendCertFailed({
           userId: csrRecord.user.id,
@@ -285,6 +293,16 @@ export class CertIssuerConsumer extends WorkerHost {
       }
       throw err instanceof Error ? err : new Error(message);
     }
+  }
+
+  /**
+   * This job's slot under the owner's concurrent pending limit just freed
+   * up: start the next queued renewal, if any. Never fails the job.
+   */
+  private async startWaitingRenewals(cert: TlsCrt): Promise<void> {
+    await this.tlsService.startQueuedRenewalsSafely(
+      cert.user?.id ?? cert.userId,
+    );
   }
 
   private isPermanentFailure(message: string): boolean {

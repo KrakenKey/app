@@ -18,6 +18,9 @@ import type { CertManagedBy, CertStatus, ParsedCsr } from '@krakenkey/shared';
   'autoRenew',
   'expiresAt',
 ])
+@Index('IDX_tls_crt_renewalQueuedAt', ['renewalQueuedAt'], {
+  where: '"renewalQueuedAt" IS NOT NULL',
+})
 export class TlsCrt {
   @PrimaryGeneratedColumn()
   id: number;
@@ -62,6 +65,14 @@ export class TlsCrt {
 
   @Column({ type: 'timestamp', nullable: true })
   lastRenewalAttemptAt: Date | null;
+
+  /**
+   * Set while a renewal waits for a free slot under the plan's concurrent
+   * pending limit (status 'renewing', nothing sent to the CA yet). Cleared
+   * when the renewal starts. See TlsService.startQueuedRenewals.
+   */
+  @Column({ type: 'timestamp', nullable: true })
+  renewalQueuedAt: Date | null;
 
   @Column({ type: 'int', nullable: true })
   revocationReason: number | null;

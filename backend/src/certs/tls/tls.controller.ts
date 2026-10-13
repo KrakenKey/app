@@ -257,7 +257,11 @@ export class TlsController {
       '(for example a new key) and it replaces the stored CSR. For an ' +
       '`awaiting_csr` certificate, { csrPem } is required and its names must ' +
       'equal `requestedNames`; the certificate is then issued like a new ' +
-      "request (status 'pending'), and ifDue always treats it as due.",
+      "request (status 'pending'), and ifDue always treats it as due. " +
+      'A renewal past the concurrent pending limit is not refused: it ' +
+      "waits (202, queued: true, status 'renewing', renewalQueuedAt set) " +
+      'and starts on its own, oldest first, as earlier requests finish. ' +
+      "Rate limited by the 'renewal' allowance, not 'expensive'.",
   })
   @ApiParam({ name: 'id', description: 'Certificate ID' })
   @ApiQuery({
@@ -274,7 +278,15 @@ export class TlsController {
   @ApiBody({ type: RenewTlsCrtDto, required: false })
   @ApiResponse({
     status: 201,
-    description: 'Certificate renewal initiated (skipped: false)',
+    description:
+      "Certificate renewal started (skipped: false, queued: false), or an awaiting_csr certificate's issuance started",
+  })
+  @ApiResponse({
+    status: 202,
+    description:
+      "Renewal accepted but waiting for a free slot under the plan's concurrent " +
+      "pending limit (skipped: false, queued: true, status 'renewing'); it " +
+      'starts on its own',
   })
   @ApiResponse({
     status: 200,
@@ -290,9 +302,16 @@ export class TlsController {
       "waiting for a CSR' (awaiting_csr without csrPem)",
   })
   @ApiResponse({
+    status: 402,
+    description:
+      'Completing an awaiting_csr certificate only: monthly or concurrent ' +
+      'pending limit reached. Renewals are never refused for plan limits.',
+  })
+  @ApiResponse({
     status: 409,
     description:
-      'The awaiting_csr certificate was completed by another request meanwhile',
+      'Another request renewed the certificate, or completed the ' +
+      'awaiting_csr certificate, meanwhile',
   })
   @ApiResponse({
     status: 403,
@@ -300,7 +319,7 @@ export class TlsController {
   })
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @Roles('owner', 'admin', 'member')
-  @RateLimitCategoryDecorator(RateLimitCategory.EXPENSIVE)
+  @RateLimitCategoryDecorator(RateLimitCategory.RENEWAL)
   async renew(
     @Request() req: RequestWithUser,
     @Param('id') id: string,
@@ -313,8 +332,10 @@ export class TlsController {
       ifDue: ifDue === 'true',
       csrPem: body?.csrPem,
     });
-    // Nothing was created, so a skip is a plain 200 rather than 201
+    // Nothing was created, so a skip is a plain 200 rather than 201; a
+    // renewal waiting for a slot is accepted but not started, so 202
     if (result.skipped) res.status(HttpStatus.OK);
+    else if (result.queued) res.status(HttpStatus.ACCEPTED);
     return result;
   }
 
