@@ -1,6 +1,6 @@
 # Billing & Subscriptions
 
-KrakenKey uses Stripe for subscription management with five plan tiers that control feature access and resource limits.
+KrakenKey uses Stripe for subscription management with five plan tiers that control feature access and resource limits. Starter, Team and Business can also be bought through Microsoft Marketplace (see [Microsoft Marketplace](#microsoft-marketplace)).
 
 ## Plan Tiers
 
@@ -171,6 +171,17 @@ If the record already points at a different subscription that Stripe still repor
 
 Every tier lookup goes through `effectivePlan()` in `src/billing/entitlement.ts` (SQL queries use `entitledSubscriptionSql()`), so active subscriptions and past_due ones inside the grace period resolve to their plan and everything else resolves to Free. Subscriptions that were already `past_due` before `pastDueSince` existed get no grace until the next Stripe event for them records the start.
 
+## Microsoft Marketplace
+
+Off unless `KK_MARKETPLACE_ENABLED=true`. A subscription row has a `source`: `stripe` (default) or `marketplace`. Setup, the landing page and the webhook are described in [Integrations](./INTEGRATIONS.md#microsoft-marketplace-billing).
+
+- **One live subscription per account across both sources.** `POST /billing/checkout` answers `409` while a Marketplace subscription is live (`active` or `past_due`), and the landing page refuses to activate a purchase for an account with a live Stripe subscription or another live Marketplace subscription. `POST /billing/portal`, `/billing/upgrade/preview` and `/billing/upgrade` answer `409` for a Marketplace subscription. If a Stripe checkout opened before the Marketplace purchase completes afterwards, the new Stripe subscription is canceled like any duplicate.
+- **Entitlement.** Microsoft's `Subscribed` is `active`. `Suspended` is stored as `past_due` with `pastDueSince`, and the paid limits stay for 30 days (`MARKETPLACE_SUSPENDED_GRACE_DAYS`), matching Microsoft's grace before it cancels. `Unsubscribed` drops the account to Free at once. No payment-failed email is sent; Microsoft notifies the purchaser.
+- **Billing page.** A live Marketplace subscription shows "Billed through Microsoft" and a link to the Azure portal instead of the Stripe portal and upgrade buttons.
+- A later Stripe checkout on an account whose Marketplace subscription ended clears the Marketplace fields and sets `source` back to `stripe`.
+
+`GET /billing/subscription` returns `source` and `marketplaceStatus` (Microsoft's status, `null` for Stripe).
+
 ## Organization Billing
 
 Organizations have their own billing relationship:
@@ -221,8 +232,14 @@ The error message names the owner, both subscription IDs and the organization, b
 | `id` | UUID | Primary key |
 | `plan` | varchar | Plan name (starter, team, business, enterprise) |
 | `status` | varchar | Subscription status |
-| `stripeCustomerId` | varchar | Stripe customer ID |
+| `stripeCustomerId` | varchar | Stripe customer ID; null for an account that only bought through Microsoft |
 | `stripeSubscriptionId` | varchar | Stripe subscription ID (unique, indexed) |
+| `source` | varchar | `stripe` (default) or `marketplace` |
+| `marketplaceSubscriptionId` | varchar | Microsoft SaaS subscription ID (unique when set) |
+| `marketplaceOfferId` | varchar | Marketplace offer ID |
+| `marketplacePlanId` | varchar | Marketplace plan ID; `plan` holds the KrakenKey plan it maps to |
+| `marketplaceStatus` | varchar | Microsoft's status: `Subscribed`, `Suspended` or `Unsubscribed` |
+| `marketplaceQuantity` | integer | Purchased quantity, if any |
 | `currentPeriodStart` | timestamp | Current billing period start |
 | `currentPeriodEnd` | timestamp | Current billing period end |
 | `userId` | varchar | Owner user ID (nullable, indexed) |

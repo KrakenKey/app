@@ -118,6 +118,21 @@ Set `KK_DNS_PROVIDER` to select which provider handles DNS-01 ACME challenges. O
 
 *Required only if billing features are enabled
 
+### Billing (Microsoft Marketplace)
+
+Sells plans through a transactable SaaS offer in Microsoft Marketplace (SaaS fulfillment API v2). See [Integrations](./INTEGRATIONS.md#microsoft-marketplace-billing).
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `KK_MARKETPLACE_ENABLED` | No | `false` | `true` turns on the `/marketplace` landing page and `POST /billing/marketplace/webhook`. While off, the landing page says the offer isn't available, the webhook and the landing routes answer `404`, and Stripe billing is unchanged |
+| `KK_MARKETPLACE_TENANT_ID` | Yes** | - | Entra tenant ID from the offer's technical configuration. Webhook tokens must be issued by it |
+| `KK_MARKETPLACE_CLIENT_ID` | Yes** | - | Entra app (client) ID from the offer's technical configuration. Webhook tokens must be issued for it; the API also uses it to call the fulfillment API |
+| `KK_MARKETPLACE_CLIENT_SECRET` | Yes** | - | Client secret of that app. Never logged |
+| `KK_MARKETPLACE_PLAN_MAP` | Yes** | - | Comma-separated `<marketplace plan id>=<plan>` pairs, where plan is `starter`, `team` or `business`, e.g. `kk-team-monthly=team,kk-team-yearly=team`. A purchase or plan change to a plan that isn't listed is refused |
+| `KK_MARKETPLACE_OFFER_IDS` | No | - | Comma-separated offer IDs to accept. When unset, any offer of the publisher is accepted |
+
+**Required when `KK_MARKETPLACE_ENABLED=true`. Missing values are logged by name at startup.
+
 ### Email Notifications
 
 | Variable | Required | Default | Description |
