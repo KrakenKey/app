@@ -78,6 +78,8 @@ export class BillingController {
         organizationId: null,
         pastDueSince: null,
         graceEndsAt: null,
+        source: 'stripe',
+        marketplaceStatus: null,
       };
     }
     return {
@@ -89,6 +91,9 @@ export class BillingController {
       organizationId: sub.organizationId ?? null,
       pastDueSince: sub.pastDueSince ?? null,
       graceEndsAt: graceEndsAt(sub),
+      source: sub.source ?? 'stripe',
+      marketplaceStatus:
+        sub.source === 'marketplace' ? sub.marketplaceStatus : null,
       createdAt: sub.createdAt,
     };
   }

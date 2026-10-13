@@ -86,7 +86,30 @@ describe('BillingController', () => {
         organizationId: null,
         pastDueSince: null,
         graceEndsAt: null,
+        source: 'stripe',
+        marketplaceStatus: null,
       });
+    });
+
+    it('says when Microsoft bills the subscription', async () => {
+      const pastDueSince = new Date('2026-10-01T12:00:00Z');
+      mockBillingService.getSubscription.mockResolvedValue({
+        id: 'sub-1',
+        plan: 'team',
+        status: 'past_due',
+        source: 'marketplace',
+        marketplaceStatus: 'Suspended',
+        pastDueSince,
+        currentPeriodEnd: new Date(),
+        cancelAtPeriodEnd: false,
+        createdAt: new Date(),
+      });
+
+      const result = await controller.getSubscription(mockReq);
+      expect(result.source).toBe('marketplace');
+      expect(result.marketplaceStatus).toBe('Suspended');
+      // Microsoft's 30-day grace, not Stripe's 14 days.
+      expect(result.graceEndsAt).toEqual(new Date('2026-10-31T12:00:00Z'));
     });
 
     it('returns when the grace period ends for a past_due subscription', async () => {

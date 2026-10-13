@@ -31,6 +31,9 @@ const OPEN_TO_VIEWERS: Record<string, string> = {
   'POST /auth/device/deny': "the caller's own credentials",
   'POST /auth/github-oidc/trusts': "the caller's own credentials",
   'POST /billing/checkout': 'BillingService allows only the org owner',
+  'POST /billing/marketplace/activate':
+    'MarketplaceService allows only the org owner',
+  'POST /billing/marketplace/resolve': 'read-only purchase lookup',
   'POST /billing/portal': 'BillingService allows only the org owner',
   'POST /billing/upgrade': 'BillingService allows only the org owner',
   'POST /billing/upgrade/preview': 'read-only price preview',

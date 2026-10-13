@@ -34,6 +34,7 @@ vi.mock('react-router-dom', async () => {
 describe('Callback', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    sessionStorage.clear();
     mockSearchParams = new URLSearchParams(
       'code=test-code-123&state=test-state-456',
     );
@@ -75,6 +76,19 @@ describe('Callback', () => {
       expect(mockNavigate).toHaveBeenCalledWith('/device?code=BCDF-GHJK');
     });
     expect(sessionStorage.getItem('kk_pending_device_code')).toBeNull();
+  });
+
+  it('returns to the Marketplace landing page with the purchase token', async () => {
+    sessionStorage.setItem('kk_pending_marketplace_token', 'ab+cd/ef==');
+    mockHandleCallback.mockResolvedValue(undefined);
+    render(<Callback />);
+
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith(
+        '/marketplace?token=ab%2Bcd%2Fef%3D%3D',
+      );
+    });
+    expect(sessionStorage.getItem('kk_pending_marketplace_token')).toBeNull();
   });
 
   it('navigates to home on callback error', async () => {

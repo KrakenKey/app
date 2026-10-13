@@ -1258,4 +1258,206 @@ describe('BillingService', () => {
       expect(manager.delete).not.toHaveBeenCalledWith(Organization, orgId);
     });
   });
+
+  describe('Microsoft Marketplace subscriptions (one live subscription across sources)', () => {
+    const marketplaceSub = (status: string): Partial<Subscription> => ({
+      ...mockSubscription,
+      source: 'marketplace',
+      stripeCustomerId: null,
+      stripeSubscriptionId: null,
+      marketplaceSubscriptionId: 'mp-sub-1',
+      marketplaceStatus: status === 'active' ? 'Subscribed' : 'Suspended',
+      plan: 'team',
+      status,
+    });
+
+    it.each(['active', 'past_due'])(
+      'refuses a Stripe checkout with 409 while a Marketplace subscription is %s',
+      async (status) => {
+        mockRepository.findOne.mockResolvedValue(marketplaceSub(status));
+
+        const err = await service
+          .createCheckoutSession(userId, 'test@example.com', 'team')
+          .catch((e: unknown) => e);
+
+        expect(err).toBeInstanceOf(ConflictException);
+        expect((err as ConflictException).message).toMatch(/Microsoft/);
+        expect(mockStripe.checkout.sessions.create).not.toHaveBeenCalled();
+        expect(mockStripe.customers.create).not.toHaveBeenCalled();
+      },
+    );
+
+    it('allows a Stripe checkout after the Marketplace subscription ended, creating the Stripe customer', async () => {
+      const ended = { ...marketplaceSub('canceled'), plan: 'free' };
+      mockRepository.findOne.mockResolvedValue(ended);
+      mockStripe.customers.create.mockResolvedValue({ id: 'cus_new' });
+      mockRepository.save.mockImplementation((d: any) => Promise.resolve(d));
+      mockStripe.checkout.sessions.create.mockResolvedValue({
+        url: 'https://checkout.stripe.com/session123',
+      });
+
+      await expect(
+        service.createCheckoutSession(userId, 'test@example.com', 'starter'),
+      ).resolves.toBe('https://checkout.stripe.com/session123');
+      // Only the customer column is written, so a Marketplace activation
+      // that changed the row meanwhile isn't undone.
+      expect(mockRepository.update).toHaveBeenCalledWith(
+        { id: ended.id, stripeCustomerId: expect.anything() },
+        { stripeCustomerId: 'cus_new' },
+      );
+      expect(mockRepository.save).not.toHaveBeenCalled();
+      expect(mockStripe.checkout.sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({ customer: 'cus_new' }),
+        expect.anything(),
+      );
+    });
+
+    it('refuses a Stripe checkout with 409 while a Marketplace purchase is being activated', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...marketplaceSub('incomplete'),
+        plan: 'free',
+        marketplaceStatus: 'PendingFulfillmentStart',
+        updatedAt: new Date(),
+      });
+      await expect(
+        service.createCheckoutSession(userId, 'test@example.com', 'starter'),
+      ).rejects.toThrow(/being activated/);
+      expect(mockStripe.customers.create).not.toHaveBeenCalled();
+    });
+
+    it('allows a Stripe checkout over a Marketplace claim that was abandoned', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...marketplaceSub('incomplete'),
+        plan: 'free',
+        stripeCustomerId: 'cus_1',
+        marketplaceStatus: 'PendingFulfillmentStart',
+        updatedAt: new Date(Date.now() - 60 * 60 * 1000),
+      });
+      mockStripe.checkout.sessions.create.mockResolvedValue({
+        url: 'https://checkout.stripe.com/session123',
+      });
+      await expect(
+        service.createCheckoutSession(userId, 'test@example.com', 'starter'),
+      ).resolves.toBe('https://checkout.stripe.com/session123');
+    });
+
+    it('refuses the Stripe portal with 409', async () => {
+      mockRepository.findOne.mockResolvedValue(marketplaceSub('active'));
+      await expect(service.createPortalSession(userId)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(mockStripe.billingPortal.sessions.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a Stripe upgrade with 409', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...marketplaceSub('active'),
+        plan: 'starter',
+      });
+      await expect(service.previewUpgrade(userId, 'team')).rejects.toThrow(
+        ConflictException,
+      );
+      await expect(service.upgradeSubscription(userId, 'team')).rejects.toThrow(
+        ConflictException,
+      );
+      expect(mockStripe.subscriptions.update).not.toHaveBeenCalled();
+    });
+
+    it('cancels a Stripe checkout that completes after Microsoft started billing', async () => {
+      mockRepository.findOne.mockResolvedValue(marketplaceSub('active'));
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        id: 'sub_new',
+        status: 'active',
+      });
+      jest
+        .spyOn((service as any).logger, 'error')
+        .mockImplementation(() => undefined);
+
+      await service.handleWebhookEvent({
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            id: 'cs_late',
+            metadata: { userId, plan: 'starter' },
+            subscription: 'sub_new',
+            customer: 'cus_test123',
+          },
+        },
+      } as any);
+
+      expect(mockStripe.subscriptions.cancel).toHaveBeenCalledWith('sub_new');
+      expect(mockRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('cancels the Stripe subscription when Microsoft started billing while checkout completed', async () => {
+      mockRepository.findOne
+        .mockResolvedValueOnce({
+          ...mockSubscription,
+          stripeSubscriptionId: null,
+          plan: 'free',
+        })
+        .mockResolvedValueOnce(marketplaceSub('active'));
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        id: 'sub_new',
+        status: 'active',
+        current_period_end: Math.floor(Date.now() / 1000) + 86400 * 30,
+        cancel_at_period_end: false,
+        cancel_at: null,
+      });
+      jest
+        .spyOn((service as any).logger, 'error')
+        .mockImplementation(() => undefined);
+
+      await service.handleWebhookEvent({
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            id: 'cs_race',
+            metadata: { userId, plan: 'starter' },
+            subscription: 'sub_new',
+            customer: 'cus_test123',
+          },
+        },
+      } as any);
+
+      expect(mockStripe.subscriptions.cancel).toHaveBeenCalledWith('sub_new');
+      expect(mockRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('clears the Marketplace fields when a Stripe checkout replaces an ended one', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...marketplaceSub('canceled'),
+        plan: 'free',
+      });
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        id: 'sub_new',
+        status: 'active',
+        current_period_end: Math.floor(Date.now() / 1000) + 86400 * 30,
+        cancel_at_period_end: false,
+        cancel_at: null,
+      });
+
+      await service.handleWebhookEvent({
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            id: 'cs_new',
+            metadata: { userId, plan: 'starter' },
+            subscription: 'sub_new',
+            customer: 'cus_test123',
+          },
+        },
+      } as any);
+
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: 'stripe',
+          stripeSubscriptionId: 'sub_new',
+          marketplaceSubscriptionId: null,
+          marketplaceStatus: null,
+          plan: 'starter',
+        }),
+      );
+    });
+  });
 });

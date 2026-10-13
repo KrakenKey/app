@@ -189,15 +189,21 @@ Key format: `kk_svc_` prefix. Can be revoked (soft delete via `revokedAt`).
 
 ### Subscription
 
-Stripe subscription records linked to users or organizations.
+Subscription records linked to users or organizations, billed by Stripe or by Microsoft Marketplace.
 
 ```sql
 CREATE TABLE "subscription" (
   "id" UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   "plan" VARCHAR NOT NULL,                        -- starter/team/business/enterprise
   "status" VARCHAR NOT NULL,                      -- active/past_due/unpaid/canceled/incomplete/trialing
-  "stripeCustomerId" VARCHAR,
+  "stripeCustomerId" VARCHAR,                    -- null for Marketplace-only accounts
   "stripeSubscriptionId" VARCHAR UNIQUE,
+  "source" VARCHAR NOT NULL DEFAULT 'stripe',     -- stripe/marketplace
+  "marketplaceSubscriptionId" VARCHAR,            -- unique when set
+  "marketplaceOfferId" VARCHAR,
+  "marketplacePlanId" VARCHAR,
+  "marketplaceStatus" VARCHAR,                    -- Subscribed/Suspended/Unsubscribed
+  "marketplaceQuantity" INTEGER,
   "currentPeriodStart" TIMESTAMP,
   "currentPeriodEnd" TIMESTAMP,
   "pastDueSince" TIMESTAMP,                       -- first failed payment while past_due; null otherwise
@@ -209,10 +215,32 @@ CREATE TABLE "subscription" (
 
 CREATE INDEX idx_subscription_user ON subscription("userId");
 CREATE INDEX idx_subscription_org ON subscription("organizationId");
+CREATE UNIQUE INDEX "UQ_subscription_marketplaceSubscriptionId"
+  ON subscription("marketplaceSubscriptionId") WHERE "marketplaceSubscriptionId" IS NOT NULL;
 ```
 
 **Relationships:**
 - Belongs to `User` (personal subscription) OR `Organization` (team subscription)
+
+---
+
+### Marketplace Operation
+
+Microsoft Marketplace webhook operations that were handled, so a redelivered webhook is acknowledged without being applied twice.
+
+```sql
+CREATE TABLE "marketplace_operation" (
+  "id" VARCHAR PRIMARY KEY,                       -- Microsoft operation ID
+  "subscriptionId" VARCHAR NOT NULL,              -- Microsoft SaaS subscription ID (indexed)
+  "action" VARCHAR NOT NULL,                      -- Subscribe/ChangePlan/ChangeQuantity/Suspend/Reinstate/Renew/Unsubscribe
+  "result" VARCHAR NOT NULL,                      -- applied/rejected/ignored
+  "detail" TEXT,
+  "ackStatus" VARCHAR,                            -- Success/Failure sent to Microsoft, if it waited on one
+  "dissolveOrganizationId" UUID,                  -- organization this operation dissolves, if any
+  "dissolveCancel" BOOLEAN,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT now()
+);
+```
 
 ---
 

@@ -19,6 +19,7 @@ import {
   previewUpgrade,
   upgradeSubscription,
 } from '../services/billingService';
+import { AZURE_PORTAL_SAAS_URL } from '../services/marketplaceService';
 import {
   formatLimit,
   planLimits,
@@ -209,6 +210,11 @@ export default function Billing() {
       : null;
   const inGrace = graceEndsAt !== null && graceEndsAt.getTime() > Date.now();
   const isCanceling = subscription?.cancelAtPeriodEnd === true;
+  // Microsoft bills Marketplace subscriptions: plan changes, payment and
+  // cancellation happen in the Azure portal, not in Stripe.
+  const billedByMicrosoft =
+    subscription?.source === 'marketplace' &&
+    (subscription.status === 'active' || subscription.status === 'past_due');
   // The API only lets the owner manage an org's subscription, so other
   // members get a read-only view instead of buttons that would return 403.
   const canManageBilling = !user?.organizationId || user.role === 'owner';
@@ -229,8 +235,9 @@ export default function Billing() {
       health && healthStatus.endpoints === 'loaded' ? health.endpoints : null,
   });
 
-  const upgradeTargets = canManageBilling ? (UPGRADE_TARGETS[plan] ?? []) : [];
-  const nextPlan = canManageBilling ? NEXT_PLAN[plan] : undefined;
+  const canChangePlanHere = canManageBilling && !billedByMicrosoft;
+  const upgradeTargets = canChangePlanHere ? (UPGRADE_TARGETS[plan] ?? []) : [];
+  const nextPlan = canChangePlanHere ? NEXT_PLAN[plan] : undefined;
 
   async function handleUpgrade(targetPlan: string) {
     setActionLoading(true);
@@ -329,9 +336,13 @@ export default function Billing() {
             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-400" />
             <div className="space-y-1 text-sm">
               <p className="font-medium text-red-200">
-                {inGrace && graceEndsAt
-                  ? `Your last payment failed. Update your payment method by ${formatDate(graceEndsAt.toISOString())} to keep ${planLabel} limits.`
-                  : `Your last payment failed. Your account is on Free limits until you update your payment method and the ${planLabel} payment goes through.`}
+                {billedByMicrosoft
+                  ? inGrace && graceEndsAt
+                    ? `Microsoft couldn't collect the payment for your subscription. Update the payment method in the Azure portal by ${formatDate(graceEndsAt.toISOString())} to keep ${planLabel} limits.`
+                    : `Microsoft couldn't collect the payment for your subscription. Your account is on Free limits until the payment goes through in the Azure portal.`
+                  : inGrace && graceEndsAt
+                    ? `Your last payment failed. Update your payment method by ${formatDate(graceEndsAt.toISOString())} to keep ${planLabel} limits.`
+                    : `Your last payment failed. Your account is on Free limits until you update your payment method and the ${planLabel} payment goes through.`}
               </p>
               {!canManageBilling && (
                 <p className="text-red-200/80">
@@ -340,7 +351,18 @@ export default function Billing() {
               )}
             </div>
           </div>
-          {canManageBilling && (
+          {canManageBilling && billedByMicrosoft && (
+            <a
+              href={AZURE_PORTAL_SAAS_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex h-9 shrink-0 items-center justify-center gap-2 self-start rounded-lg bg-accent px-3.5 text-sm font-semibold text-bg hover:bg-accent-hover sm:self-auto"
+            >
+              Open the Azure portal
+              <ExternalLink className="w-4 h-4" />
+            </a>
+          )}
+          {canManageBilling && !billedByMicrosoft && (
             <Button
               variant="primary"
               icon={<ExternalLink className="w-4 h-4" />}
@@ -365,7 +387,7 @@ export default function Billing() {
               <span className="text-lg font-semibold text-text">
                 {planLabel}
               </span>
-              {isPaid && PLAN_PRICES[plan] && (
+              {isPaid && !billedByMicrosoft && PLAN_PRICES[plan] && (
                 <span className="text-sm text-text-muted tabular-nums">
                   {PLAN_PRICES[plan]}
                 </span>
@@ -381,6 +403,12 @@ export default function Billing() {
                 </span>
               )}
             </div>
+            {billedByMicrosoft && (
+              <p className="text-sm text-text-secondary mt-2">
+                Billed through Microsoft. Change your plan, payment method or
+                cancel in the Azure portal.
+              </p>
+            )}
             {isPaid && subscription?.currentPeriodEnd && (
               <p className="text-sm text-text-muted mt-2">
                 Current period ends {formatDate(subscription.currentPeriodEnd)}
@@ -392,7 +420,18 @@ export default function Billing() {
               </p>
             )}
           </div>
-          {isPaid && canManageBilling && (
+          {billedByMicrosoft && canManageBilling && (
+            <a
+              href={AZURE_PORTAL_SAAS_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex h-9 items-center justify-center gap-2 self-start rounded-lg border border-border-strong bg-surface-elevated px-3.5 text-sm font-medium text-text transition-colors hover:border-[#4a5b78] hover:bg-[#2e3c55] sm:self-auto"
+            >
+              <ExternalLink className="w-4 h-4" />
+              Manage in Azure portal
+            </a>
+          )}
+          {isPaid && canManageBilling && !billedByMicrosoft && (
             <Button
               variant="secondary"
               icon={<ExternalLink className="w-4 h-4" />}

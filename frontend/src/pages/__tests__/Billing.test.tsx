@@ -378,4 +378,111 @@ describe('Billing', () => {
       expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
   });
+
+  describe('billed through Microsoft Marketplace', () => {
+    const marketplace = (plan: string, status = 'active') => ({
+      ...sub(plan),
+      status,
+      source: 'marketplace',
+      marketplaceStatus: status === 'active' ? 'Subscribed' : 'Suspended',
+    });
+
+    it('says Microsoft bills it and links to the Azure portal instead of Stripe', async () => {
+      mockFetchSubscription.mockResolvedValue(marketplace('starter'));
+      render(<Billing />);
+
+      expect(
+        await screen.findByText(/Billed through Microsoft/),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole('link', { name: /manage in azure portal/i }),
+      ).toHaveAttribute('href', expect.stringContaining('portal.azure.com'));
+      expect(
+        screen.queryByRole('button', { name: /manage subscription/i }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /upgrade to/i }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole('link', { name: /compare plans/i }),
+      ).not.toBeInTheDocument();
+      // The Stripe price doesn't apply to a Marketplace plan.
+      expect(screen.queryByText('$29/mo')).not.toBeInTheDocument();
+    });
+
+    it('sends a suspended subscription to the Azure portal to pay', async () => {
+      vi.useFakeTimers({
+        now: new Date('2026-10-12T12:00:00Z'),
+        toFake: ['Date'],
+      });
+      try {
+        mockFetchSubscription.mockResolvedValue({
+          ...marketplace('team', 'past_due'),
+          pastDueSince: '2026-10-05T12:00:00.000Z',
+          graceEndsAt: '2026-11-04T12:00:00.000Z',
+        });
+        render(<Billing />);
+
+        const banner = await screen.findByRole('alert');
+        expect(banner).toHaveTextContent(
+          /Microsoft couldn't collect the payment.*by November 4, 2026 to keep Team limits/,
+        );
+        expect(
+          screen.getByRole('link', { name: /open the azure portal/i }),
+        ).toHaveAttribute('href', expect.stringContaining('portal.azure.com'));
+        expect(
+          screen.queryByRole('button', { name: /update payment method/i }),
+        ).not.toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('hides the Azure portal link from org members', async () => {
+      authState.user = { organizationId: 'org_001', role: 'member' };
+      mockFetchSubscription.mockResolvedValue(marketplace('team'));
+      render(<Billing />);
+
+      expect(
+        await screen.findByText(/managed by its owner/i),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole('link', { name: /manage in azure portal/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('offers Stripe upgrades again after the Marketplace subscription ended', async () => {
+      mockFetchSubscription.mockResolvedValue({
+        ...marketplace('free', 'canceled'),
+        marketplaceStatus: 'Unsubscribed',
+      });
+      render(<Billing />);
+
+      expect(
+        await screen.findByRole('button', { name: 'Upgrade to Starter' }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText(/Billed through Microsoft/),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it('is unchanged for a Stripe subscription', async () => {
+    mockFetchSubscription.mockResolvedValue({
+      ...sub('starter'),
+      source: 'stripe',
+    });
+    render(<Billing />);
+
+    expect(
+      await screen.findByRole('button', { name: /manage subscription/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('$29/mo')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Upgrade to Team' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Billed through Microsoft/),
+    ).not.toBeInTheDocument();
+  });
 });

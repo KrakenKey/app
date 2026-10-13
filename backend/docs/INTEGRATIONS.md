@@ -271,6 +271,75 @@ stripe listen --forward-to localhost:8080/billing/webhook
 
 ---
 
+## Microsoft Marketplace (Billing)
+
+**Source:** `src/billing/marketplace/`
+
+Organizations can buy Starter, Team or Business on their Microsoft invoice through a transactable SaaS offer. Microsoft bills the customer; KrakenKey implements the [SaaS fulfillment API v2](https://learn.microsoft.com/partner-center/marketplace-offers/pc-saas-fulfillment-apis). Everything is off until `KK_MARKETPLACE_ENABLED=true` (see [Configuration](./CONFIGURATION.md#billing-microsoft-marketplace)).
+
+### Partner Center technical configuration
+
+| Field | Value |
+|-------|-------|
+| Landing page URL | `https://<app domain>/marketplace` (no `#`) |
+| Connection webhook | `https://<api domain>/billing/marketplace/webhook` |
+| Microsoft Entra tenant ID | `KK_MARKETPLACE_TENANT_ID` |
+| Microsoft Entra application ID | `KK_MARKETPLACE_CLIENT_ID` |
+
+The app registration needs a client secret (`KK_MARKETPLACE_CLIENT_SECRET`), and the Marketplace SaaS API's service principal (`20e940b3-4c77-4b0b-9a53-9e16a1b010a7`) must exist in the tenant. Plans are configured with manual activation in mind; auto-activation also works (the `Subscribe` webhook is handled), but the buyer still has to open the landing page once to link the purchase to a KrakenKey account.
+
+### Landing page
+
+1. Microsoft opens `/marketplace?token=...` after a purchase and again when the customer selects "Manage account" in the Azure portal or Microsoft 365 admin center.
+2. A signed-out buyer signs in (Microsoft sign-in, or email for an existing password account). The token is kept in session storage across the sign-in and the buyer comes back to the page.
+3. `POST /billing/marketplace/resolve` exchanges the token with Microsoft (Resolve) and returns the purchase and what can be done with it: activate it for this account, already active here (a "manage" visit), linked to another account, a conflict with an existing paid plan, not the organization owner, a Starter plan for an organization (organizations need Team or higher, as with Stripe), an unknown plan, suspended or canceled.
+4. `POST /billing/marketplace/activate` resolves the token again on the server, then:
+   1. claims the purchase on the user's row, or the organization's for an organization owner, as pending (`status` `incomplete`, Free limits). This is where a live subscription on the account is refused, before Microsoft bills anything;
+   2. calls Activate while the purchase is `PendingFulfillmentStart` (billing starts here). If Microsoft refuses, the pending claim stays and opening the page again retries;
+   3. reads the subscription from Microsoft again and applies what it reports (a suspension, cancellation or plan change that came in since Resolve is not lost). Right after Activate Microsoft may still report `PendingFulfillmentStart`; that counts as active. If the read fails, the claim stays pending and the next visit finishes it.
+
+While a claim is less than 15 minutes old, `POST /billing/checkout` answers `409` for that account.
+
+When the signed-in user's email is neither the purchaser's nor the beneficiary's, the page asks for an explicit confirmation before activating, so a purchase link sent by someone else isn't applied to an account by accident. Purchases in a status other than `PendingFulfillmentStart` or `Subscribed` are refused.
+
+Both routes need a dashboard session (API keys get `403`) and only the organization owner can activate for an organization.
+
+### Webhook
+
+`POST /billing/marketplace/webhook` checks every call before acting:
+
+1. The `Authorization` bearer token must be an RS256 Entra ID token signed with the tenant's published keys, issued by the tenant (`https://sts.windows.net/<tenant>/` or `https://login.microsoftonline.com/<tenant>/v2.0`, and `tid`), for the app (`aud` = client ID), on behalf of the Marketplace SaaS API (`appid` or `azp` = `20e940b3-4c77-4b0b-9a53-9e16a1b010a7`), and not expired. Otherwise `401`.
+2. Operations already handled (by operation ID, table `marketplace_operation`) are acknowledged with `200` and not applied again.
+3. `GET .../operations/{id}` must return the same subscription, action, offer, and for `ChangePlan` and `ChangeQuantity` the same plan or quantity. A mismatch or an unknown operation gets `400`; if Microsoft can't be reached the webhook answers `503` so Microsoft retries.
+4. The change is applied and the operation recorded in one transaction. Changes Microsoft waits on (`ChangePlan`, `ChangeQuantity`, `Reinstate` still `InProgress`) are applied from the operation. For everything else the API reads the subscription from Microsoft and copies its current status, plan, quantity and term, so a webhook that arrives late or out of order (Microsoft retries for hours) can't undo a newer change. If that read disagrees with what a completed `Subscribe`, `Suspend` or `Reinstate` implies, the read is stale or a newer change happened; the webhook answers `503` without recording anything and Microsoft retries. A completed `Unsubscribe` is applied regardless (it is final). A subscription that reached `Unsubscribed` ignores later operations, and answers `Failure` to ones Microsoft waits on.
+5. For `ChangePlan`, `ChangeQuantity` and `Reinstate` operations that are still `InProgress`, the API reports `Success` (or `Failure` for a plan that isn't in `KK_MARKETPLACE_PLAN_MAP`, or a subscription that already ended) with `PATCH .../operations/{id}`. Microsoft accepts plan and quantity changes on its own after 10 seconds without an answer, so all calls to Microsoft for one webhook share an 8-second budget (each request's timeout is cut to what is left).
+
+Subscription and operation ids are GUIDs and are stored and compared in lower case.
+
+| Microsoft status | Stored as |
+|------------------|-----------|
+| `Subscribed` | `active`, `pastDueSince` cleared |
+| `Suspended` | `past_due` with `pastDueSince`; paid limits stay for Microsoft's 30-day grace |
+| `Unsubscribed` | Free plan, `canceled`; an organization subscription dissolves the organization |
+
+A plan change that drops an organization below Team dissolves it, as with Stripe. `ChangeQuantity` only stores the quantity (plans are not per seat). Calls for a purchase that isn't linked to an account yet are recorded and acknowledged. A redelivered operation re-sends the recorded answer while Microsoft still shows the operation `InProgress`, and re-queues the organization dissolution the first delivery recorded (if the organization still exists), in case that delivery failed after recording the operation. A purchase that is still being activated never dissolves an organization.
+
+The tenant's signing keys are downloaded once and kept for a day. A token with an unknown key id triggers at most one download every 5 minutes, and tokens for another tenant or audience never trigger one.
+
+### Fulfillment API client
+
+Client credentials against `https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token` with scope `20e940b3-4c77-4b0b-9a53-9e16a1b010a7/.default`. The access token is cached until 5 minutes before it expires and fetched again once on a `401`. Requests time out after 4 seconds. Tokens, the client secret and purchase tokens are never logged.
+
+### Metered billing
+
+Not implemented. If plans gain a metered dimension (for example connector-managed certificates), the usage report belongs in a scheduled job next to `MarketplaceService`: post to the Marketplace metering API at most hourly, deduplicated by subscription, dimension and hour, with retries and a record of what Microsoft accepted.
+
+### Testing
+
+Use a separate DEV offer in Partner Center with a preview audience and never take it live. Purchases are real charges; cancel test purchases within 72 hours.
+
+---
+
 ## Probe Service (Internal)
 
 ### Overview

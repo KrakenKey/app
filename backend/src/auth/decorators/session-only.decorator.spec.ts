@@ -5,6 +5,7 @@ import { AuthController } from '../auth.controller';
 import { UsersController } from '../../users/users.controller';
 import { OrganizationsController } from '../../organizations/organizations.controller';
 import { BillingController } from '../../billing/billing.controller';
+import { MarketplaceController } from '../../billing/marketplace/marketplace.controller';
 import { DomainsController } from '../../domains/domains.controller';
 import { TlsController } from '../../certs/tls/tls.controller';
 import { EndpointsController } from '../../endpoints/endpoints.controller';
@@ -18,6 +19,7 @@ const controllers = [
   UsersController,
   OrganizationsController,
   BillingController,
+  MarketplaceController,
   DomainsController,
   TlsController,
   EndpointsController,
@@ -59,6 +61,8 @@ describe('@SessionOnly routes', () => {
         'POST /billing/checkout',
         'POST /billing/portal',
         'POST /billing/upgrade',
+        'POST /billing/marketplace/resolve',
+        'POST /billing/marketplace/activate',
         'POST /auth/github-oidc/trusts',
         'DELETE /auth/github-oidc/trusts/:id',
         'POST /connectors',
