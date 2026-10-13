@@ -6,11 +6,14 @@ import { AuthentikHealthIndicator } from './authentik.health';
 describe('AuthentikHealthIndicator', () => {
   let indicator: AuthentikHealthIndicator;
   let mockConfigGet: jest.Mock;
+  let env: Record<string, string | undefined>;
 
   beforeEach(async () => {
-    mockConfigGet = jest
-      .fn()
-      .mockReturnValue('https://auth.example.com/application/o/krakenkey/');
+    env = {
+      KK_AUTHENTIK_ISSUER_URL:
+        'https://auth.example.com/application/o/krakenkey/',
+    };
+    mockConfigGet = jest.fn((name: string) => env[name]);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -67,7 +70,7 @@ describe('AuthentikHealthIndicator', () => {
   });
 
   it('returns down when KK_AUTHENTIK_ISSUER_URL is not configured', async () => {
-    mockConfigGet.mockReturnValue(undefined);
+    env.KK_AUTHENTIK_ISSUER_URL = undefined;
     global.fetch = jest.fn();
 
     const result = await indicator.isHealthy('auth');
@@ -91,9 +94,8 @@ describe('AuthentikHealthIndicator', () => {
   });
 
   it('handles an issuer URL without a trailing slash', async () => {
-    mockConfigGet.mockReturnValue(
-      'https://auth.example.com/application/o/krakenkey',
-    );
+    env.KK_AUTHENTIK_ISSUER_URL =
+      'https://auth.example.com/application/o/krakenkey';
     global.fetch = jest.fn().mockResolvedValue({ ok: true });
 
     await indicator.isHealthy('auth');
@@ -111,5 +113,51 @@ describe('AuthentikHealthIndicator', () => {
     await indicator.isHealthy('auth');
 
     expect(clearSpy).toHaveBeenCalled();
+  });
+  it('fetches KK_AUTHENTIK_HEALTH_URL as is when it is set', async () => {
+    env.KK_AUTHENTIK_HEALTH_URL =
+      'http://authentik-server:9000/-/health/ready/';
+    global.fetch = jest.fn().mockResolvedValue({ ok: true });
+
+    const result = await indicator.isHealthy('auth');
+
+    expect(result['auth'].status).toBe('up');
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    const [url] = (global.fetch as jest.Mock).mock.calls[0] as [string];
+    expect(url).toBe('http://authentik-server:9000/-/health/ready/');
+  });
+
+  it('reports down with the status from KK_AUTHENTIK_HEALTH_URL', async () => {
+    env.KK_AUTHENTIK_HEALTH_URL =
+      'http://authentik-server:9000/-/health/ready/';
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 503 });
+
+    const result = await indicator.isHealthy('auth');
+
+    expect(result['auth'].status).toBe('down');
+    expect((result['auth'] as { message?: string }).message).toContain('503');
+  });
+
+  it('uses KK_AUTHENTIK_HEALTH_URL even without an issuer URL', async () => {
+    env.KK_AUTHENTIK_ISSUER_URL = undefined;
+    env.KK_AUTHENTIK_HEALTH_URL =
+      'http://authentik-server:9000/-/health/ready/';
+    global.fetch = jest.fn().mockResolvedValue({ ok: true });
+
+    const result = await indicator.isHealthy('auth');
+
+    expect(result['auth'].status).toBe('up');
+  });
+
+  it('falls back to OIDC discovery when KK_AUTHENTIK_HEALTH_URL is blank', async () => {
+    env.KK_AUTHENTIK_HEALTH_URL = '  ';
+    global.fetch = jest.fn().mockResolvedValue({ ok: true });
+
+    await indicator.isHealthy('auth');
+
+    const [url] = (global.fetch as jest.Mock).mock.calls[0] as [string];
+    expect(url).toBe(
+      'https://auth.example.com/application/o/krakenkey/.well-known/openid-configuration',
+    );
   });
 });
