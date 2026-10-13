@@ -23,6 +23,11 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { BillingService } from '../billing/billing.service';
 import { PLAN_LIMITS } from '../billing/constants/plan-limits';
 import { EmailService } from '../notifications/email.service';
+import {
+  AUTHENTIK_LOGIN_FLOW,
+  LOGIN_SOURCE_CONFIG,
+  type LoginSource,
+} from './login-sources';
 import { ApiKeySecurityService } from './services/api-key-security.service';
 import { ipAllowed, parseIpEntry } from './api-key-restrictions';
 import type {
@@ -181,8 +186,13 @@ export class AuthService implements OnModuleInit {
 
   /**
    * Generates redirect URL for standard OIDC login flow.
+   *
+   * With a `source`, the user starts at that source's Authentik login flow
+   * instead of the login page, so one click goes straight to the provider
+   * (sign-in and sign-up are the same there). The flow then continues to the
+   * same OAuth authorization request.
    */
-  getLoginRedirect() {
+  getLoginRedirect(source?: LoginSource) {
     const domain = this.config.get<string>('KK_AUTHENTIK_DOMAIN');
     const clientId = this.config.get<string>(
       'KK_AUTHENTIK_CLIENT_ID',
@@ -200,7 +210,36 @@ export class AuthService implements OnModuleInit {
     url.searchParams.set('scope', 'openid email profile');
     url.searchParams.set('state', state);
 
+    if (source) {
+      // Relative 'next', as for registration: Authentik only follows
+      // relative targets.
+      const flow = LOGIN_SOURCE_CONFIG[source].loginFlow;
+      const nextTarget = encodeURIComponent(url.pathname + url.search);
+      return {
+        url: `https://${domain}/if/flow/${flow}/?next=${nextTarget}`,
+        state,
+        statusCode: 302,
+      };
+    }
+
     return { url: url.toString(), state, statusCode: 302 };
+  }
+
+  /**
+   * Generates the redirect URL that connects an external account to an
+   * existing user.
+   *
+   * The user signs in to the existing account first (password and MFA, or
+   * the Authentik session they already have), then goes to the source.
+   * Authentik links a source login to the signed-in user, so the external
+   * account can only be linked by someone who proved they own the account.
+   */
+  getConnectRedirect(source: LoginSource) {
+    const domain = this.config.get<string>('KK_AUTHENTIK_DOMAIN');
+    const { sourceSlug } = LOGIN_SOURCE_CONFIG[source];
+    const nextTarget = encodeURIComponent(`/source/oauth/login/${sourceSlug}/`);
+    const url = `https://${domain}/if/flow/${AUTHENTIK_LOGIN_FLOW}/?next=${nextTarget}`;
+    return { url, statusCode: 302 };
   }
 
   /**

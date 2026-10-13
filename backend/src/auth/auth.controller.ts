@@ -26,6 +26,7 @@ import { AuthService } from './auth.service';
 import type { RequestWithUser } from './interfaces/request-with-user.interface';
 import { JwtOrApiKeyGuard } from './guards/jwt-or-api-key.guard';
 import { CreateApiKeyDto } from './dto/create-api-key.dto';
+import { ConnectQueryDto, LoginQueryDto } from './dto/login-query.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import {
   CreateDeviceCodeDto,
@@ -73,10 +74,12 @@ export class AuthController {
   @ApiOperation({ summary: 'Redirect to SSO login' })
   @ApiResponse({
     status: 302,
-    description: 'Redirects to Authentik login flow',
+    description:
+      'Redirects to Authentik login flow, or straight to the chosen external account provider',
   })
-  login(@Res() res: Response) {
-    const { url, state } = this.authService.getLoginRedirect();
+  @ApiResponse({ status: 400, description: 'Unknown source' })
+  login(@Res() res: Response, @Query() query: LoginQueryDto) {
+    const { url, state } = this.authService.getLoginRedirect(query.source);
     res.cookie(OAUTH_STATE_COOKIE, state, {
       httpOnly: true,
       sameSite: 'lax',
@@ -84,6 +87,24 @@ export class AuthController {
       maxAge: OAUTH_STATE_MAX_AGE_MS,
       path: '/auth/callback',
     });
+    res.redirect(302, url);
+  }
+
+  @Get('connect')
+  @ApiOperation({
+    summary: 'Redirect to connect an external account',
+    description:
+      'Asks the user to sign in to their existing account (or uses their current SSO session), ' +
+      'then sends them to the provider and links that external account to the signed-in user. ' +
+      'Afterwards they can sign in with either.',
+  })
+  @ApiResponse({
+    status: 302,
+    description: 'Redirects to Authentik login, then to the provider',
+  })
+  @ApiResponse({ status: 400, description: 'Unknown source' })
+  connect(@Res() res: Response, @Query() query: ConnectQueryDto) {
+    const { url } = this.authService.getConnectRedirect(query.source);
     res.redirect(302, url);
   }
 

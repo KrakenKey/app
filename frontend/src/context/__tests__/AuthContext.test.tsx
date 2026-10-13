@@ -176,6 +176,42 @@ describe('AuthContext', () => {
     ).rejects.toThrow();
   });
 
+  describe('sign-in redirects', () => {
+    const originalLocation = window.location;
+    let location: { href: string };
+
+    beforeEach(() => {
+      location = { href: 'http://localhost/' };
+      Object.defineProperty(window, 'location', {
+        configurable: true,
+        value: location,
+      });
+    });
+
+    afterEach(() => {
+      Object.defineProperty(window, 'location', {
+        configurable: true,
+        value: originalLocation,
+      });
+    });
+
+    it('loginWithMicrosoft goes to the API login with source=microsoft', async () => {
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+      act(() => result.current.loginWithMicrosoft());
+      expect(location.href).toBe(`${API_URL}/auth/login?source=microsoft`);
+    });
+
+    it('connectMicrosoft goes to the API connect endpoint', async () => {
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+      act(() => result.current.connectMicrosoft());
+      expect(location.href).toBe(`${API_URL}/auth/connect?source=microsoft`);
+    });
+  });
+
   describe('logout', () => {
     const originalLocation = window.location;
     let assign: ReturnType<typeof vi.fn>;

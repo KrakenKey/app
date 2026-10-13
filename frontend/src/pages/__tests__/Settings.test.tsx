@@ -4,11 +4,13 @@ import { render } from '../../test/test-utils';
 import { mockUser } from '../../test/mocks/data';
 import Settings from '../Settings';
 
-const { mockDeleteAccount, mockApi, mockToast } = vi.hoisted(() => ({
-  mockDeleteAccount: vi.fn(),
-  mockApi: { get: vi.fn(), patch: vi.fn() },
-  mockToast: { success: vi.fn(), error: vi.fn() },
-}));
+const { mockDeleteAccount, mockConnectMicrosoft, mockApi, mockToast } =
+  vi.hoisted(() => ({
+    mockDeleteAccount: vi.fn(),
+    mockConnectMicrosoft: vi.fn(),
+    mockApi: { get: vi.fn(), patch: vi.fn() },
+    mockToast: { success: vi.fn(), error: vi.fn() },
+  }));
 
 const stableUser = { ...mockUser };
 
@@ -25,6 +27,7 @@ vi.mock('../../hooks/useAuth', async () => {
       register: vi.fn(),
       handleCallback: vi.fn(),
       deleteAccount: mockDeleteAccount,
+      connectMicrosoft: mockConnectMicrosoft,
     }),
   };
 });
@@ -142,6 +145,35 @@ describe('Settings', () => {
     expect(
       screen.queryByPlaceholderText('Enter display name'),
     ).not.toBeInTheDocument();
+  });
+
+  describe('Microsoft sign-in', () => {
+    afterEach(() => {
+      delete window.__env__;
+    });
+
+    it('hides the sign-in methods card until Microsoft sign-in is turned on', async () => {
+      render(<Settings />);
+      await waitFor(() => {
+        expect(screen.getByText(mockProfile.username)).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Sign-in methods')).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /connect microsoft/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('connects a Microsoft account when turned on', async () => {
+      window.__env__ = { KK_MICROSOFT_LOGIN_ENABLED: 'true' };
+      const user = userEvent.setup();
+      render(<Settings />);
+
+      await user.click(
+        await screen.findByRole('button', { name: /connect microsoft/i }),
+      );
+      expect(screen.getByText('Sign-in methods')).toBeInTheDocument();
+      expect(mockConnectMicrosoft).toHaveBeenCalledOnce();
+    });
   });
 
   it('shows error when profile fails to load', async () => {

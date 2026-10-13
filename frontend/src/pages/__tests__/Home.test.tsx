@@ -6,6 +6,7 @@ import Home from '../Home';
 // Mock useAuth to control auth state in tests
 const mockLogin = vi.fn();
 const mockRegister = vi.fn();
+const mockLoginWithMicrosoft = vi.fn();
 
 vi.mock('../../hooks/useAuth', async () => {
   const actual = await vi.importActual('../../hooks/useAuth');
@@ -14,6 +15,7 @@ vi.mock('../../hooks/useAuth', async () => {
     useAuth: () => ({
       login: mockLogin,
       register: mockRegister,
+      loginWithMicrosoft: mockLoginWithMicrosoft,
       isAuthenticated: false,
       user: null,
       isLoading: false,
@@ -26,6 +28,10 @@ vi.mock('../../hooks/useAuth', async () => {
 describe('Home', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    delete window.__env__;
   });
 
   it('renders KrakenKey heading', () => {
@@ -53,6 +59,36 @@ describe('Home', () => {
 
     await user.click(screen.getByText('Sign Up'));
     expect(mockRegister).toHaveBeenCalledOnce();
+  });
+
+  describe('Continue with Microsoft', () => {
+    it('is hidden until Microsoft sign-in is turned on', () => {
+      render(<Home />);
+      expect(
+        screen.queryByRole('button', { name: /continue with microsoft/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('is hidden for any value other than "true"', () => {
+      window.__env__ = { KK_MICROSOFT_LOGIN_ENABLED: 'false' };
+      render(<Home />);
+      expect(
+        screen.queryByRole('button', { name: /continue with microsoft/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('starts a Microsoft sign-in when turned on', async () => {
+      window.__env__ = { KK_MICROSOFT_LOGIN_ENABLED: 'true' };
+      const user = userEvent.setup();
+      render(<Home />);
+
+      await user.click(
+        screen.getByRole('button', { name: /continue with microsoft/i }),
+      );
+      expect(mockLoginWithMicrosoft).toHaveBeenCalledOnce();
+      expect(mockLogin).not.toHaveBeenCalled();
+      expect(mockRegister).not.toHaveBeenCalled();
+    });
   });
 
   it('renders tagline text', () => {

@@ -2,6 +2,7 @@ export const API_ROUTES = {
   AUTH: {
     LOGIN: '/auth/login',
     REGISTER: '/auth/register',
+    CONNECT: '/auth/connect',
     PROFILE: '/auth/profile',
     CALLBACK: '/auth/callback',
     LOGOUT_URL: '/auth/logout-url',

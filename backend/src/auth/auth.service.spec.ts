@@ -160,6 +160,53 @@ describe('AuthService', () => {
       const { state: s2 } = service.getLoginRedirect();
       expect(s1).not.toBe(s2);
     });
+
+    describe('with source=microsoft', () => {
+      it('starts at the Microsoft login flow on the Authentik domain', () => {
+        const parsed = new URL(service.getLoginRedirect('microsoft').url);
+        expect(parsed.origin).toBe('https://auth.example.com');
+        expect(parsed.pathname).toBe('/if/flow/krakenkey-microsoft-login/');
+      });
+
+      it('continues to the same OAuth authorize request as a relative next', () => {
+        const result = service.getLoginRedirect('microsoft');
+        const next = new URL(result.url).searchParams.get('next') as string;
+        expect(next.startsWith('/application/o/authorize/?')).toBe(true);
+        const authorize = new URL(next, 'https://auth.example.com');
+        expect(authorize.searchParams.get('client_id')).toBe(
+          'krakenkey-backend',
+        );
+        expect(authorize.searchParams.get('redirect_uri')).toBe(
+          'https://api.example.com/auth/callback',
+        );
+        expect(authorize.searchParams.get('response_type')).toBe('code');
+        expect(authorize.searchParams.get('state')).toBe(result.state);
+      });
+
+      it('returns a fresh state and a 302', () => {
+        const a = service.getLoginRedirect('microsoft');
+        const b = service.getLoginRedirect('microsoft');
+        expect(a.statusCode).toBe(302);
+        expect(a.state).toHaveLength(64);
+        expect(a.state).not.toBe(b.state);
+      });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // getConnectRedirect
+  // ---------------------------------------------------------------------------
+  describe('getConnectRedirect', () => {
+    it('asks for the existing account first, then goes to the Microsoft source', () => {
+      const result = service.getConnectRedirect('microsoft');
+      const parsed = new URL(result.url);
+      expect(result.statusCode).toBe(302);
+      expect(parsed.origin).toBe('https://auth.example.com');
+      expect(parsed.pathname).toBe('/if/flow/krakenkey-authentication/');
+      expect(parsed.searchParams.get('next')).toBe(
+        '/source/oauth/login/microsoft/',
+      );
+    });
   });
 
   // ---------------------------------------------------------------------------
