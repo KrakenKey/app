@@ -1,6 +1,10 @@
 import { HttpException } from '@nestjs/common';
 import { FindOperator } from 'typeorm';
-import { PlanLimitsService } from './plan-limits.service';
+import { PLAN_LIMITS } from '@krakenkey/shared';
+import {
+  PLAN_LIMIT_LOCK_NAMESPACE,
+  PlanLimitsService,
+} from './plan-limits.service';
 import { planLimitMessage } from './plan-limit-error';
 
 function countRepo(n: number) {
@@ -12,7 +16,14 @@ describe('PlanLimitsService', () => {
     resolveUserTier: jest.Mock;
     getResourceCountUserIds: jest.Mock;
   };
-  let users: { count: jest.Mock; findOne: jest.Mock };
+  let users: {
+    count: jest.Mock;
+    findOne: jest.Mock;
+    manager: { transaction: jest.Mock };
+  };
+  // What runs inside the transaction: the lock, then counts and saves
+  let calls: string[];
+  let manager: { query: jest.Mock; getRepository: jest.Mock };
   let connectors: { count: jest.Mock };
   let channels: { count: jest.Mock };
   let trusts: { count: jest.Mock };
@@ -32,10 +43,37 @@ describe('PlanLimitsService', () => {
       resolveUserTier: jest.fn().mockResolvedValue('free'),
       getResourceCountUserIds: jest.fn().mockResolvedValue(['u1']),
     };
-    users = { count: jest.fn(), findOne: jest.fn() };
+    calls = [];
     connectors = countRepo(0);
     channels = countRepo(0);
     trusts = countRepo(0);
+    users = {
+      count: jest.fn().mockResolvedValue(0),
+      findOne: jest.fn().mockResolvedValue({ id: 'u1', organizationId: null }),
+      manager: { transaction: jest.fn() },
+    };
+    manager = {
+      query: jest.fn(async (_sql: string, params: unknown[]) => {
+        calls.push(`lock ${String(params[1])}`);
+      }),
+      getRepository: jest.fn((entity: { name: string }) => {
+        const repo = {
+          Connector: connectors,
+          NotificationChannel: channels,
+          GithubOidcTrust: trusts,
+          User: users,
+        }[entity.name];
+        return {
+          count: (...args: unknown[]) => {
+            calls.push(`count ${entity.name}`);
+            return (repo as { count: jest.Mock }).count(...args);
+          },
+        };
+      }),
+    };
+    users.manager.transaction.mockImplementation(
+      (cb: (m: typeof manager) => unknown) => cb(manager),
+    );
     svc = build();
   });
 
@@ -78,11 +116,42 @@ describe('PlanLimitsService', () => {
       expect(body.current).toBe(free + 3);
     });
 
-    it('never counts on Enterprise', async () => {
+    it('has a high backstop on Enterprise', async () => {
       billing.resolveUserTier.mockResolvedValue('enterprise');
-      repo().count.mockResolvedValue(10_000);
+      const max = PLAN_LIMITS.enterprise[limit];
+      expect(Number.isFinite(max)).toBe(true);
+      expect(max).toBeGreaterThanOrEqual(500);
+      repo().count.mockResolvedValue(max - 1);
       await expect(svc.assertCanAdd('u1', limit)).resolves.toBeUndefined();
-      expect(repo().count).not.toHaveBeenCalled();
+      repo().count.mockResolvedValue(max);
+      await refusal(svc.assertCanAdd('u1', limit));
+    });
+
+    it('saves under the account lock only while there is room', async () => {
+      const save = jest.fn(async () => {
+        calls.push('save');
+        return 'saved';
+      });
+      repo().count.mockResolvedValue(free - 1);
+      await expect(svc.addWithinLimit('u1', limit, save)).resolves.toBe(
+        'saved',
+      );
+      expect(save).toHaveBeenCalledWith(manager);
+      // Lock first, then count, then insert, all in one transaction
+      expect(calls).toEqual([
+        'lock user:u1',
+        expect.stringMatching(/^count /),
+        'save',
+      ]);
+      expect(manager.query).toHaveBeenCalledWith(
+        'SELECT pg_advisory_xact_lock($1, hashtext($2))',
+        [PLAN_LIMIT_LOCK_NAMESPACE, 'user:u1'],
+      );
+
+      save.mockClear();
+      repo().count.mockResolvedValue(free);
+      await refusal(svc.addWithinLimit('u1', limit, save));
+      expect(save).not.toHaveBeenCalled();
     });
 
     it('counts across every member of the organization', async () => {
@@ -103,18 +172,31 @@ describe('PlanLimitsService', () => {
     expect(where.revokedAt.type).toBe('isNull');
   });
 
+  it('locks the whole organization for a member of one', async () => {
+    users.findOne.mockResolvedValue({ id: 'u2', organizationId: 'org-1' });
+    await svc.addWithinLimit('u2', 'connectors', async () => undefined);
+    expect(calls[0]).toBe('lock org:org-1');
+  });
+
   describe('organization members', () => {
+    const save = jest.fn(async () => 'added');
+
     it('allows a third member on Pro and refuses a fourth', async () => {
       billing.resolveUserTier.mockResolvedValue('pro');
       users.count.mockResolvedValue(2);
       await expect(
-        svc.assertCanAddMember('org-1', 'owner'),
-      ).resolves.toBeUndefined();
+        svc.addMemberWithinLimit('org-1', 'owner', save),
+      ).resolves.toBe('added');
       expect(users.count).toHaveBeenCalledWith({
         where: { organizationId: 'org-1' },
       });
+      expect(calls[0]).toBe('lock org:org-1');
       users.count.mockResolvedValue(3);
-      const body = await refusal(svc.assertCanAddMember('org-1', 'owner'));
+      save.mockClear();
+      const body = await refusal(
+        svc.addMemberWithinLimit('org-1', 'owner', save),
+      );
+      expect(save).not.toHaveBeenCalled();
       expect(body).toMatchObject({
         limit: 3,
         current: 3,
@@ -128,8 +210,8 @@ describe('PlanLimitsService', () => {
       async (plan) => {
         billing.resolveUserTier.mockResolvedValue(plan);
         await expect(
-          svc.assertCanAddMember('org-1', 'owner'),
-        ).resolves.toBeUndefined();
+          svc.addMemberWithinLimit('org-1', 'owner', save),
+        ).resolves.toBe('added');
         expect(users.count).not.toHaveBeenCalled();
       },
     );

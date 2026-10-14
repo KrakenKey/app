@@ -22,9 +22,9 @@ Plan ids are `free`, `pro`, `business` and `enterprise`. The free plan is called
 | **Scan result retention** | 7 days | 30 days | 90 days | 90 days |
 | **Auto-Renewal Window** | 10 days | 30 days | 30 days | 30 days |
 | **Organizations** | No | Up to 3 members | Unlimited members | Unlimited members |
-| **Connectors** | 1 | 5 | 50 | Custom |
-| **Alert channels** | 1 | 5 | 25 | Custom |
-| **GitHub OIDC trust policies** | 2 | 10 | 50 | Custom |
+| **Connectors** | 1 | 5 | 50 | 1,000 |
+| **Alert channels** | 1 | 5 | 25 | 500 |
+| **GitHub OIDC trust policies** | 2 | 10 | 50 | 1,000 |
 
 "Custom" limits are unlimited in code (`Infinity`) until per-account limits exist. A report takes at most 1,000 hosts on any plan (`CreateReportDto`).
 
@@ -33,6 +33,8 @@ Plan ids are `free`, `pro`, `business` and `enterprise`. The free plan is called
 Connectors (active, not revoked), alert channels, GitHub OIDC trust policies and organization members are limited by plan (`connectors`, `alertChannels`, `githubOidcTrusts` and `orgMembers` in `PLAN_LIMITS`). `PlanLimitsService` (`src/billing/limits/`) checks them:
 
 - **Pooled like domains.** Connectors, channels and trust policies are counted across every member of the user's organization (`getResourceCountUserIds`), or the user alone. Members are counted per organization, owner included.
+- **Enterprise has backstops, not unlimited:** 1,000 connectors, 500 alert channels and 1,000 trust policies, far above any real account, so a runaway script can't create resources without end.
+- **No race past a limit.** The count and the insert run in one transaction under a per-account advisory lock (`pg_advisory_xact_lock`, namespace `PLAN_LIMIT_LOCK_NAMESPACE`, keyed by the organization or the user), so two concurrent requests can't both take the last slot. Member invites lock the organization the same way.
 - **Only new resources are refused.** An account already over a limit (for example a free account with three alert channels from before the limits) keeps everything working; creating another returns `402`. Deleting down below the limit frees a slot.
 - **The error names the next plan.** `402` with `code: "plan_limit_exceeded"`, `limit`, `current`, `plan` and `upgradeTo`, and a message such as `Connector limit reached: the Starter plan includes 1. Upgrade to Pro for 5.` (`Contact us about Enterprise for a higher limit.` on Business). The global exception filter passes these fields on for every plan limit error, so clients no longer only see `message`. Domains, API keys and certificate limits now carry `code: "plan_limit_exceeded"` too.
 - **Organization members** are checked when an owner or admin invites someone who isn't a member yet (`POST /organizations/:id/members`); changing an existing member's role isn't. Invites add the member directly; there is no separate accept step. A Business organization that moves to Pro keeps its members, and can't add more until it is under 3.

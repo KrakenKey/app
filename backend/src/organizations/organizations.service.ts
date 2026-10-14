@@ -146,12 +146,18 @@ export class OrganizationsService {
     }
 
     // Re-inviting a member only changes their role; a new member needs a
-    // free seat on the organization's plan.
-    if (target.organizationId !== orgId) {
-      await this.planLimits.assertCanAddMember(orgId, actorId);
+    // free seat on the organization's plan, checked under a lock with the
+    // update so two invites can't both take the last seat.
+    if (target.organizationId === orgId) {
+      await this.userRepo.update(target.id, { organizationId: orgId, role });
+      return;
     }
-
-    await this.userRepo.update(target.id, { organizationId: orgId, role });
+    await this.planLimits.addMemberWithinLimit(orgId, actorId, (manager) =>
+      manager.getRepository(User).update(target.id, {
+        organizationId: orgId,
+        role,
+      }),
+    );
   }
 
   /**

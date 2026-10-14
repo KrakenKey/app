@@ -121,9 +121,17 @@ describe('ConnectorsService', () => {
     };
     nonces = { claim: jest.fn().mockResolvedValue(true) };
     // The real limit check, counting through the connector repository
+    const users = {
+      findOne: jest.fn().mockResolvedValue({ id: 'u1', organizationId: null }),
+      manager: {
+        // The counted insert, through the same connector repo
+        transaction: (cb: (m: unknown) => unknown) =>
+          cb({ query: jest.fn(), getRepository: () => repo }),
+      },
+    };
     const planLimits = new PlanLimitsService(
       billing as any,
-      {} as any,
+      users as any,
       repo as any,
       {} as any,
       {} as any,
