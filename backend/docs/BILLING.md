@@ -42,7 +42,7 @@ Connectors (active, not revoked), alert channels, GitHub OIDC trust policies and
 
 ### Plan ids before the rename
 
-`starter` and `team` were renamed to `pro` and `business` by migration `RenamePlansToProAndBusiness1791600000000`. For the short overlap with the previous release during a deploy, and for Stripe checkouts opened before it, the API still reads the old ids: `normalizePlan()` maps them on every plan lookup, Stripe webhooks rewrite them, `POST /billing/checkout` and `/billing/upgrade` accept them, and `KK_MARKETPLACE_PLAN_MAP` accepts `starter` and `team` as names for `pro` and `business`. `KK_STRIPE_PRICE_STARTER` and `KK_STRIPE_PRICE_TEAM` are read as the monthly Pro and Business prices when the new price variables are unset (see [Prices and annual billing](#prices-and-annual-billing)).
+`starter` and `team` were renamed to `pro` and `business` by migration `RenamePlansToProAndBusiness1791600000000`. For the short overlap with the previous release during a deploy, and for Stripe checkouts opened before it, the API still reads the old ids: `normalizePlan()` maps them on every plan lookup, Stripe webhooks rewrite them, `POST /billing/checkout` and `/billing/upgrade` accept them, and `KK_MARKETPLACE_PLAN_MAP` accepts `starter` and `team` as names for `pro` and `business`. `KK_STRIPE_PRICE_STARTER` and `KK_STRIPE_PRICE_TEAM` are no longer read (see [Prices and annual billing](#prices-and-annual-billing)).
 
 ## Prices and annual billing
 
@@ -52,13 +52,13 @@ The API reads one Stripe price per plan and interval (`src/billing/stripe-prices
 
 | Variable | Price |
 |----------|-------|
-| `KK_STRIPE_PRICE_PRO_MONTHLY` | Pro, monthly. Falls back to `KK_STRIPE_PRICE_STARTER` when unset |
+| `KK_STRIPE_PRICE_PRO_MONTHLY` | Pro, monthly |
 | `KK_STRIPE_PRICE_PRO_YEARLY` | Pro, yearly |
-| `KK_STRIPE_PRICE_BUSINESS_MONTHLY` | Business, monthly. Falls back to `KK_STRIPE_PRICE_TEAM` when unset |
+| `KK_STRIPE_PRICE_BUSINESS_MONTHLY` | Business, monthly |
 | `KK_STRIPE_PRICE_BUSINESS_YEARLY` | Business, yearly |
 | `KK_STRIPE_PORTAL_CONFIGURATION_ID` | Optional. The billing portal configuration to open; Stripe's default configuration when unset |
 
-The fallbacks let a release deploy before the new variables are set: the monthly prices keep working, and yearly billing stays hidden (`GET /billing/plans` only lists intervals that have a price) until the yearly variables are set. A warning at startup names each fallback in use. The old prices also stay in the webhook's price lookup after the new variables are set, so subscriptions still on them keep mapping to Pro and Business, monthly.
+There are no fallbacks to the old `KK_STRIPE_PRICE_STARTER` and `KK_STRIPE_PRICE_TEAM`: Team cost less than Business, and Starter's price isn't known to match Pro. A plan and interval without its own variable isn't sold: `GET /billing/plans` leaves it out, the dashboard doesn't offer it, and checkout answers `400`. A warning at startup lists the unset variables. Webhooks only recognize the configured prices; any other price leaves the row's plan as it is.
 
 The billing portal configuration (Stripe dashboard, Settings, Billing, Customer portal) must let customers switch plans and list the four prices, for the monthly/yearly switch below.
 
@@ -193,7 +193,7 @@ POST /billing/upgrade/preview
 }
 ```
 
-Keeping the interval, the amount is the flat difference between the two prices (not day-based proration) and the billing date stays. Changing the interval starts a new billing period today: the amount is Stripe's prorated preview (`invoices.createPreview`: the new price less a credit for the unused time) and `currentPeriodEnd` is one new interval from now.
+The amount is Stripe's preview (`invoices.createPreview`) of exactly the change the upgrade makes, so it is what will be charged. Keeping the interval, it is the new price for the rest of the period less the unused time on the current one, and the billing date stays. Changing the interval starts a new billing period today and `currentPeriodEnd` is one new interval from now.
 
 ### Execute Upgrade
 
@@ -209,7 +209,7 @@ POST /billing/upgrade
 }
 ```
 
-Keeping the interval, it switches the price without proration and charges the flat difference at once. Changing the interval, it updates the subscription with `proration_behavior: always_invoice`, `billing_cycle_anchor: now` and `payment_behavior: error_if_incomplete`, so Stripe charges at once and nothing changes if the payment fails. The response includes the new `plan` and `interval`.
+Every upgrade is one Stripe subscription update with `proration_behavior: always_invoice` and `payment_behavior: error_if_incomplete` (plus `billing_cycle_anchor: now` when the interval changes), under a new idempotency key per request. Stripe invoices the prorated amount at once, and nothing changes, in Stripe or here, unless that payment succeeds: a declined card answers `402` and the plan stays, and trying again is a new attempt. The response includes the new `plan` and `interval`.
 
 ### Stripe Webhook
 

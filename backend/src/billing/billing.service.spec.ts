@@ -109,12 +109,13 @@ describe('BillingService', () => {
               const config: Record<string, string> = {
                 KK_STRIPE_SECRET_KEY: 'sk_test_123',
                 KK_STRIPE_WEBHOOK_SECRET: 'whsec_test',
-                // Monthly prices from the old variables (fallback), yearly
-                // prices from the new ones
+                KK_STRIPE_PRICE_PRO_MONTHLY: 'price_pro_month',
+                KK_STRIPE_PRICE_PRO_YEARLY: 'price_pro_year',
+                KK_STRIPE_PRICE_BUSINESS_MONTHLY: 'price_business_month',
+                KK_STRIPE_PRICE_BUSINESS_YEARLY: 'price_business_year',
+                // Old prices: never used for Pro or Business
                 KK_STRIPE_PRICE_STARTER: 'price_starter_123',
                 KK_STRIPE_PRICE_TEAM: 'price_team_456',
-                KK_STRIPE_PRICE_PRO_YEARLY: 'price_pro_year',
-                KK_STRIPE_PRICE_BUSINESS_YEARLY: 'price_business_year',
                 KK_APP_DOMAIN: 'app.krakenkey.io',
               };
               return config[key] ?? defaultValue ?? '';
@@ -659,7 +660,7 @@ describe('BillingService', () => {
                 {
                   current_period_end:
                     Math.floor(Date.now() / 1000) + 86400 * 30,
-                  price: { id: 'price_team_456' },
+                  price: { id: 'price_business_month' },
                 },
               ],
             },
@@ -739,9 +740,9 @@ describe('BillingService', () => {
         },
       }) as any;
 
-    it('maps the Starter price to pro', async () => {
+    it('maps the Pro price to pro', async () => {
       mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
-      await service.handleWebhookEvent(updated('price_starter_123'));
+      await service.handleWebhookEvent(updated('price_pro_month'));
       expect(mockRepository.save).toHaveBeenCalledWith(
         expect.objectContaining({ plan: 'pro' }),
       );
@@ -1129,7 +1130,7 @@ describe('BillingService', () => {
     const monthlyPro = {
       id: 'si_item1',
       price: {
-        id: 'price_starter_123',
+        id: 'price_pro_month',
         unit_amount: 2900,
         recurring: { interval: 'month' },
       },
@@ -1143,26 +1144,32 @@ describe('BillingService', () => {
       },
     };
 
-    it('charges the flat difference when the interval stays', async () => {
+    it('previews the prorated amount Stripe will charge, keeping the interval', async () => {
       mockRepository.findOne.mockResolvedValue(mockSubscription);
       mockStripe.subscriptions.retrieve.mockResolvedValue({
         items: { data: [monthlyPro] },
       });
-      mockStripe.prices.retrieve.mockResolvedValue({
-        unit_amount: 14900,
+      mockStripe.invoices.createPreview.mockResolvedValue({
+        amount_due: 6000,
         currency: 'usd',
       });
 
       const result = await service.previewUpgrade(userId, 'business');
       expect(result).toEqual({
-        immediateAmountCents: 12000,
+        immediateAmountCents: 6000,
         currency: 'usd',
         targetPlan: 'business',
         targetInterval: 'month',
         currentPeriodEnd: mockSubscription.currentPeriodEnd!.toISOString(),
       });
-      expect(mockStripe.prices.retrieve).toHaveBeenCalledWith('price_team_456');
-      expect(mockStripe.invoices.createPreview).not.toHaveBeenCalled();
+      expect(mockStripe.invoices.createPreview).toHaveBeenCalledWith({
+        customer: 'cus_test123',
+        subscription: 'sub_test123',
+        subscription_details: {
+          items: [{ id: 'si_item1', price: 'price_business_month' }],
+          proration_behavior: 'always_invoice',
+        },
+      });
     });
 
     it('keeps a yearly subscription yearly', async () => {
@@ -1170,19 +1177,20 @@ describe('BillingService', () => {
       mockStripe.subscriptions.retrieve.mockResolvedValue({
         items: { data: [yearlyPro] },
       });
-      mockStripe.prices.retrieve.mockResolvedValue({
-        unit_amount: 149000,
+      mockStripe.invoices.createPreview.mockResolvedValue({
+        amount_due: 60000,
         currency: 'usd',
       });
 
       const result = await service.previewUpgrade(userId, 'business');
       expect(result).toMatchObject({
-        immediateAmountCents: 120000,
+        immediateAmountCents: 60000,
         targetInterval: 'year',
       });
-      expect(mockStripe.prices.retrieve).toHaveBeenCalledWith(
-        'price_business_year',
-      );
+      expect(
+        mockStripe.invoices.createPreview.mock.calls[0][0].subscription_details
+          .items[0].price,
+      ).toBe('price_business_year');
     });
 
     it('asks Stripe for the prorated amount when the interval changes', async () => {
@@ -1231,77 +1239,106 @@ describe('BillingService', () => {
       );
     });
 
-    it('upgrades subscription with flat difference', async () => {
-      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
-      mockStripe.prices.retrieve.mockResolvedValue({
-        unit_amount: 14900,
-        currency: 'usd',
-      });
-      mockStripe.subscriptions.retrieve.mockResolvedValue({
-        items: {
-          data: [
-            {
-              id: 'si_item1',
-              price: {
-                id: 'price_starter_123',
-                unit_amount: 2900,
-                recurring: { interval: 'month' },
-              },
+    const monthlyItem = {
+      items: {
+        data: [
+          {
+            id: 'si_item1',
+            price: {
+              id: 'price_pro_month',
+              unit_amount: 2900,
+              recurring: { interval: 'month' },
             },
-          ],
-        },
-      });
-      mockStripe.subscriptions.update.mockResolvedValue({});
-      mockStripe.invoiceItems.create.mockResolvedValue({});
-      mockStripe.invoices.create.mockResolvedValue({ id: 'inv_123' });
-      mockStripe.invoices.pay.mockResolvedValue({});
-      mockRepository.save.mockResolvedValue({
-        ...mockSubscription,
-        plan: 'business',
+          },
+        ],
+      },
+    };
+
+    it('upgrades through Stripe proration, paid before anything changes', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+      mockStripe.subscriptions.retrieve.mockResolvedValue(monthlyItem);
+      const periodEnd = Math.floor(Date.now() / 1000) + 20 * 86400;
+      mockStripe.subscriptions.update.mockResolvedValue({
+        items: { data: [{ current_period_end: periodEnd }] },
       });
 
       const result = await service.upgradeSubscription(userId, 'business');
-      expect(result.plan).toBe('business');
-      expect(result.interval).toBe('month');
+
+      expect(result).toMatchObject({ plan: 'business', interval: 'month' });
       expect(mockStripe.subscriptions.update).toHaveBeenCalledWith(
         'sub_test123',
         {
-          items: [{ id: 'si_item1', price: 'price_team_456' }],
-          proration_behavior: 'none',
+          items: [{ id: 'si_item1', price: 'price_business_month' }],
+          proration_behavior: 'always_invoice',
+          payment_behavior: 'error_if_incomplete',
+        },
+        {
+          idempotencyKey: expect.stringMatching(
+            /^upgrade-sub-uuid-1-[0-9a-f-]{36}$/,
+          ),
         },
       );
-      expect(mockStripe.invoiceItems.create).toHaveBeenCalledWith({
-        customer: 'cus_test123',
-        amount: 12000,
-        currency: 'usd',
-        description: 'Plan upgrade: Pro → Business',
-      });
-      expect(mockStripe.invoices.create).toHaveBeenCalledWith({
-        customer: 'cus_test123',
-        auto_advance: true,
-      });
-      expect(mockStripe.invoices.pay).toHaveBeenCalledWith('inv_123');
+      // No separate charge: Stripe's prorated invoice is the payment
+      expect(mockStripe.invoiceItems.create).not.toHaveBeenCalled();
+      expect(mockStripe.invoices.create).not.toHaveBeenCalled();
       expect(mockRepository.save).toHaveBeenCalledWith(
         expect.objectContaining({ plan: 'business', billingInterval: 'month' }),
       );
     });
 
-    it('lets Stripe prorate and charge when moving to yearly', async () => {
+    it('leaves the plan and price unchanged when the card is declined', async () => {
       mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
-      mockStripe.subscriptions.retrieve.mockResolvedValue({
-        items: {
-          data: [
-            {
-              id: 'si_item1',
-              price: {
-                id: 'price_starter_123',
-                unit_amount: 2900,
-                recurring: { interval: 'month' },
-              },
-            },
-          ],
-        },
-      });
+      mockStripe.subscriptions.retrieve.mockResolvedValue(monthlyItem);
+      mockStripe.subscriptions.update.mockRejectedValue(
+        Object.assign(new Error('Your card was declined.'), {
+          type: 'StripeCardError',
+          code: 'card_declined',
+        }),
+      );
+
+      const err = await service
+        .upgradeSubscription(userId, 'business')
+        .catch((e) => e);
+
+      expect(err.getStatus()).toBe(402);
+      expect(err.getResponse().message).toBe(
+        "The payment for the upgrade didn't go through: Your card was declined. Your plan hasn't changed.",
+      );
+      // error_if_incomplete: Stripe applied nothing, and neither do we
+      expect(mockRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('charges correctly when retried after a declined card', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+      mockStripe.subscriptions.retrieve.mockResolvedValue(monthlyItem);
+      mockStripe.subscriptions.update
+        .mockRejectedValueOnce(
+          Object.assign(new Error('Your card was declined.'), {
+            type: 'StripeCardError',
+          }),
+        )
+        .mockResolvedValueOnce({
+          items: { data: [{ current_period_end: 2_000_000_000 }] },
+        });
+
+      await expect(
+        service.upgradeSubscription(userId, 'business'),
+      ).rejects.toMatchObject({ status: 402 });
+      await expect(
+        service.upgradeSubscription(userId, 'business'),
+      ).resolves.toMatchObject({ plan: 'business' });
+
+      const [first, second] = mockStripe.subscriptions.update.mock.calls;
+      // The same change, under a new idempotency key, so Stripe doesn't
+      // replay the declined attempt
+      expect(second[1]).toEqual(first[1]);
+      expect(second[2].idempotencyKey).not.toBe(first[2].idempotencyKey);
+      expect(mockRepository.save).toHaveBeenCalledTimes(1);
+    });
+
+    it('starts a new period when moving to yearly', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+      mockStripe.subscriptions.retrieve.mockResolvedValue(monthlyItem);
       const periodEnd = Math.floor(Date.now() / 1000) + 365 * 86400;
       mockStripe.subscriptions.update.mockResolvedValue({
         current_period_end: periodEnd,
@@ -1322,9 +1359,8 @@ describe('BillingService', () => {
           billing_cycle_anchor: 'now',
           payment_behavior: 'error_if_incomplete',
         },
+        { idempotencyKey: expect.any(String) },
       );
-      // No separate flat-difference charge on top of Stripe's invoice
-      expect(mockStripe.invoiceItems.create).not.toHaveBeenCalled();
       expect(result).toMatchObject({ plan: 'business', interval: 'year' });
       expect(result.currentPeriodEnd).toBe(
         new Date(periodEnd * 1000).toISOString(),
@@ -1338,13 +1374,50 @@ describe('BillingService', () => {
       mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
       mockStripe.subscriptions.retrieve.mockResolvedValue({
         items: {
-          data: [{ id: 'si_item1', price: { id: 'price_starter_123' } }],
+          data: [{ id: 'si_item1', price: { id: 'price_pro_month' } }],
         },
       });
       // Enterprise has no Stripe price at all
       await expect(
         service.upgradeSubscription(userId, 'enterprise', 'year'),
       ).rejects.toThrow('The Enterprise plan is not available for purchase');
+    });
+  });
+
+  describe('plans without their own price', () => {
+    const withPrices = (env: Record<string, string>) =>
+      new BillingService(
+        mockRepository as any,
+        mockUserRepo as any,
+        mockOrgRepo as any,
+        {} as any,
+        {
+          get: (key: string, d?: string) =>
+            ({ KK_STRIPE_SECRET_KEY: 'sk_test_123', ...env })[key] ?? d,
+        } as any,
+        mockEmailService as any,
+      );
+
+    it('does not sell Business at the old Team price', async () => {
+      const svc = withPrices({
+        KK_STRIPE_PRICE_PRO_MONTHLY: 'price_pro_month',
+        KK_STRIPE_PRICE_TEAM: 'price_team_456',
+      });
+      await expect(
+        svc.createCheckoutSession(userId, 'a@example.com', 'business'),
+      ).rejects.toThrow('The Business plan is not available for purchase');
+      expect(svc.purchasablePlans()).toEqual([
+        { plan: 'pro', intervals: ['month'] },
+      ]);
+    });
+
+    it('answers a clear 400 for a yearly checkout without a yearly price', async () => {
+      const svc = withPrices({
+        KK_STRIPE_PRICE_PRO_MONTHLY: 'price_pro_month',
+      });
+      await expect(
+        svc.createCheckoutSession(userId, 'a@example.com', 'pro', 'year'),
+      ).rejects.toThrow('Yearly billing for the Pro plan is not available yet');
     });
   });
 
@@ -1447,7 +1520,7 @@ describe('BillingService', () => {
       mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
       mockStripe.subscriptions.retrieve.mockResolvedValue({
         items: {
-          data: [{ id: 'si_item1', price: { id: 'price_starter_123' } }],
+          data: [{ id: 'si_item1', price: { id: 'price_pro_month' } }],
         },
       });
       mockStripe.billingPortal.sessions.create.mockResolvedValue({
@@ -1486,7 +1559,7 @@ describe('BillingService', () => {
       await service.createPortalSession(userId, 'switch_interval');
       const params = mockStripe.billingPortal.sessions.create.mock.calls[0][0];
       expect(params.flow_data.subscription_update_confirm.items[0].price).toBe(
-        'price_starter_123',
+        'price_pro_month',
       );
     });
 

@@ -12,52 +12,37 @@ export interface PlanPrice {
 }
 
 /**
- * Environment variables for each price. The monthly prices fall back to the
- * variables from before annual billing, so a deploy works before the new
- * ones are set.
+ * Environment variable for each price. There are no fallbacks to the old
+ * Starter and Team prices: Team cost less than Business, and Starter's
+ * price can't be confirmed to match Pro, so a plan and interval without
+ * its own variable simply isn't sold.
  */
-export const PRICE_ENV: Record<
-  StripePlan,
-  Record<BillingInterval, { name: string; fallback?: string }>
-> = {
+export const PRICE_ENV: Record<StripePlan, Record<BillingInterval, string>> = {
   pro: {
-    month: {
-      name: 'KK_STRIPE_PRICE_PRO_MONTHLY',
-      fallback: 'KK_STRIPE_PRICE_STARTER',
-    },
-    year: { name: 'KK_STRIPE_PRICE_PRO_YEARLY' },
+    month: 'KK_STRIPE_PRICE_PRO_MONTHLY',
+    year: 'KK_STRIPE_PRICE_PRO_YEARLY',
   },
   business: {
-    month: {
-      name: 'KK_STRIPE_PRICE_BUSINESS_MONTHLY',
-      fallback: 'KK_STRIPE_PRICE_TEAM',
-    },
-    year: { name: 'KK_STRIPE_PRICE_BUSINESS_YEARLY' },
+    month: 'KK_STRIPE_PRICE_BUSINESS_MONTHLY',
+    year: 'KK_STRIPE_PRICE_BUSINESS_YEARLY',
   },
 };
 
 /**
  * Stripe prices by plan and interval, read once from the environment, and
- * the reverse lookup the webhooks use. The legacy variables stay in the
- * reverse lookup even once the new ones are set, so subscriptions still on
- * the old monthly prices keep mapping to Pro and Business.
+ * the reverse lookup the webhooks use. Only the configured prices are
+ * known; any other price (the old Starter and Team ones included) maps to
+ * no plan.
  */
 export class StripePriceMap {
   private readonly prices = new Map<string, string>();
   private readonly byPriceId = new Map<string, PlanPrice>();
-  /** Fallbacks in use, for a startup warning. Never includes values. */
-  readonly usingFallback: string[] = [];
 
   constructor(get: (name: string) => string | undefined) {
     for (const plan of STRIPE_PLANS) {
       for (const interval of ['month', 'year'] as const) {
-        const { name, fallback } = PRICE_ENV[plan][interval];
-        const own = get(name)?.trim();
-        const old = fallback ? get(fallback)?.trim() : undefined;
-        const priceId = own || old;
-        if (old) this.byPriceId.set(old, { plan, interval });
+        const priceId = get(PRICE_ENV[plan][interval])?.trim();
         if (!priceId) continue;
-        if (!own && old) this.usingFallback.push(`${name} (using ${fallback})`);
         this.prices.set(`${plan}:${interval}`, priceId);
         this.byPriceId.set(priceId, { plan, interval });
       }
@@ -85,5 +70,14 @@ export class StripePriceMap {
         this.prices.has(`${plan}:${i}`),
       ),
     })).filter((p) => p.intervals.length > 0);
+  }
+
+  /** Price variables that are unset, for a startup note. Never values. */
+  missing(): string[] {
+    return STRIPE_PLANS.flatMap((plan) =>
+      (['month', 'year'] as const)
+        .filter((i) => !this.prices.has(`${plan}:${i}`))
+        .map((i) => PRICE_ENV[plan][i]),
+    );
   }
 }

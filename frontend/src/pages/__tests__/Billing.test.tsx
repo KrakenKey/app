@@ -96,6 +96,19 @@ describe('Billing', () => {
   });
 
   describe('annual billing', () => {
+    it('offers only plans that have a Stripe price', async () => {
+      mockFetchPlans.mockResolvedValue({
+        plans: [{ plan: 'pro', intervals: ['month'] }],
+      });
+      mockFetchSubscription.mockResolvedValue(sub('free'));
+      render(<Billing />);
+
+      await screen.findByRole('button', { name: 'Upgrade to Pro' });
+      expect(
+        screen.queryByRole('button', { name: 'Upgrade to Business' }),
+      ).not.toBeInTheDocument();
+    });
+
     it('hides the interval toggle until yearly prices exist', async () => {
       mockFetchSubscription.mockResolvedValue(sub('free'));
       render(<Billing />);

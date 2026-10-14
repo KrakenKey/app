@@ -21,7 +21,12 @@ export class AddSubscriptionBillingInterval1791700000000 implements MigrationInt
     `);
   }
 
+  /**
+   * Not safe once yearly subscriptions exist: the previous release has no
+   * yearly prices, so it maps them to no plan.
+   */
   public async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(`SET LOCAL lock_timeout = '5s'`);
     await queryRunner.query(`
       ALTER TABLE "subscription" DROP COLUMN IF EXISTS "billingInterval"
     `);

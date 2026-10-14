@@ -224,4 +224,14 @@ describe('AddSubscriptionBillingInterval migration', () => {
     expect(sql).toContain('ADD COLUMN IF NOT EXISTS "billingInterval"');
     expect(sql).not.toMatch(/NOT NULL|DEFAULT|UPDATE/);
   });
+
+  it('reverts under a lock timeout too', async () => {
+    const queries: string[] = [];
+    await new AddSubscriptionBillingInterval1791700000000().down({
+      query: jest.fn(async (sql: string) => {
+        queries.push(sql);
+      }),
+    } as any);
+    expect(queries[0]).toBe(`SET LOCAL lock_timeout = '5s'`);
+  });
 });

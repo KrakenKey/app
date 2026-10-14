@@ -4,8 +4,10 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
   NotFoundException,
 } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, IsNull, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
@@ -52,6 +54,19 @@ interface UpgradeChange {
   targetInterval: BillingInterval;
   /** Monthly to yearly or back: Stripe starts a new period. */
   intervalChanges: boolean;
+}
+
+/**
+ * Stripe proration settings for an upgrade: always invoice the prorated
+ * amount now, and start a new period when the interval changes.
+ */
+function upgradeProration(change: UpgradeChange): {
+  proration_behavior: 'always_invoice';
+  billing_cycle_anchor?: 'now';
+} {
+  return change.intervalChanges
+    ? { proration_behavior: 'always_invoice', billing_cycle_anchor: 'now' }
+    : { proration_behavior: 'always_invoice' };
 }
 
 /** One billing interval after `from`. */
@@ -149,9 +164,10 @@ export class BillingService {
     this.prices = new StripePriceMap((name) =>
       this.configService.get<string>(name),
     );
-    if (this.prices.usingFallback.length > 0) {
+    const missing = this.prices.missing();
+    if (missing.length > 0) {
       this.logger.warn(
-        `Stripe price variables not set, using the old ones: ${this.prices.usingFallback.join(', ')}`,
+        `Stripe prices not set, so these plans and intervals can't be bought: ${missing.join(', ')}`,
       );
     }
   }
@@ -473,27 +489,15 @@ export class BillingService {
     await this.assertBillingAccess(userId);
     const change = await this.planUpgrade(userId, newPlan, interval);
 
-    if (!change.intervalChanges) {
-      const { currentPriceCents, newPriceCents, currency } =
-        await this.getPriceDifference(change);
-      return {
-        immediateAmountCents: newPriceCents - currentPriceCents,
-        currency,
-        targetPlan: newPlan,
-        targetInterval: change.targetInterval,
-        currentPeriodEnd: change.sub.currentPeriodEnd!.toISOString(),
-      };
-    }
-
-    // A new interval starts a new billing period today: Stripe credits the
-    // unused time on the current price and charges the new one in full.
+    // The same change the upgrade makes, so the amount shown is the amount
+    // charged: the new price for the rest of the period less the unused
+    // time on the current one, or a new period when the interval changes.
     const preview = await this.stripe.invoices.createPreview({
       customer: change.sub.stripeCustomerId!,
       subscription: change.sub.stripeSubscriptionId!,
       subscription_details: {
         items: [{ id: change.item.id, price: change.newPriceId }],
-        proration_behavior: 'always_invoice',
-        billing_cycle_anchor: 'now',
+        ...upgradeProration(change),
       },
     });
     return {
@@ -501,10 +505,9 @@ export class BillingService {
       currency: preview.currency,
       targetPlan: newPlan,
       targetInterval: change.targetInterval,
-      currentPeriodEnd: addInterval(
-        new Date(),
-        change.targetInterval,
-      ).toISOString(),
+      currentPeriodEnd: change.intervalChanges
+        ? addInterval(new Date(), change.targetInterval).toISOString()
+        : change.sub.currentPeriodEnd!.toISOString(),
     };
   }
 
@@ -523,47 +526,41 @@ export class BillingService {
     const change = await this.planUpgrade(userId, newPlan, interval);
     const { sub } = change;
 
-    if (change.intervalChanges) {
-      // Stripe starts the new period now, credits the unused time and
-      // charges the rest at once; a failed payment leaves the plan as it was.
-      const updated = await this.stripe.subscriptions.update(
+    // One path for every upgrade: Stripe prorates (the customer pays for
+    // the remaining time only), invoices at once, and with
+    // error_if_incomplete changes nothing unless that payment succeeds. A
+    // fresh idempotency key per request makes a network retry safe and
+    // lets the customer try again after a declined card.
+    let updated: Stripe.Subscription;
+    try {
+      updated = await this.stripe.subscriptions.update(
         sub.stripeSubscriptionId!,
         {
           items: [{ id: change.item.id, price: change.newPriceId }],
-          proration_behavior: 'always_invoice',
-          billing_cycle_anchor: 'now',
+          ...upgradeProration(change),
           payment_behavior: 'error_if_incomplete',
         },
+        { idempotencyKey: `upgrade-${sub.id}-${randomUUID()}` },
       );
-      sub.currentPeriodEnd = new Date(this.extractPeriodEnd(updated) * 1000);
-    } else {
-      const { currentPriceCents, newPriceCents, currency } =
-        await this.getPriceDifference(change);
-      const differenceCents = newPriceCents - currentPriceCents;
-
-      // Switch the plan without Stripe's day-based proration.
-      await this.stripe.subscriptions.update(sub.stripeSubscriptionId!, {
-        items: [{ id: change.item.id, price: change.newPriceId }],
-        proration_behavior: 'none',
-      });
-
-      // Charge the flat price difference immediately.
-      await this.stripe.invoiceItems.create({
-        customer: sub.stripeCustomerId!,
-        amount: differenceCents,
-        currency,
-        description: `Plan upgrade: ${planLabel(sub.plan)} \u2192 ${planLabel(newPlan)}`,
-      });
-
-      const invoice = await this.stripe.invoices.create({
-        customer: sub.stripeCustomerId!,
-        auto_advance: true,
-      });
-      await this.stripe.invoices.pay(invoice.id);
+    } catch (err) {
+      if (isStripeError(err, 'StripeCardError')) {
+        const reason = (err as { message?: string }).message?.replace(
+          /\.+$/,
+          '',
+        );
+        throw new HttpException(
+          {
+            message: `The payment for the upgrade didn't go through${reason ? `: ${reason}` : ''}. Your plan hasn't changed.`,
+          },
+          402,
+        );
+      }
+      throw err;
     }
 
     sub.plan = newPlan;
     sub.billingInterval = change.targetInterval;
+    sub.currentPeriodEnd = new Date(this.extractPeriodEnd(updated) * 1000);
     await this.subscriptionRepository.save(sub);
 
     this.logger.log(
@@ -619,19 +616,6 @@ export class BillingService {
       newPriceId,
       targetInterval,
       intervalChanges: targetInterval !== currentInterval,
-    };
-  }
-
-  private async getPriceDifference(change: UpgradeChange): Promise<{
-    currentPriceCents: number;
-    newPriceCents: number;
-    currency: string;
-  }> {
-    const newPrice = await this.stripe.prices.retrieve(change.newPriceId);
-    return {
-      currentPriceCents: change.item.price?.unit_amount ?? 0,
-      newPriceCents: newPrice.unit_amount ?? 0,
-      currency: newPrice.currency,
     };
   }
 

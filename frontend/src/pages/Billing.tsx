@@ -276,7 +276,12 @@ export default function Billing() {
   });
 
   const canChangePlanHere = canManageBilling && !billedByMicrosoft;
-  const upgradeTargets = canChangePlanHere ? (UPGRADE_TARGETS[plan] ?? []) : [];
+  // Only plans with a Stripe price here: a plan without one can't be bought
+  const upgradeTargets = canChangePlanHere
+    ? (UPGRADE_TARGETS[plan] ?? []).filter((p) =>
+        purchasable.some((x) => x.plan === p),
+      )
+    : [];
   const currentInterval: BillingInterval = subscription?.interval ?? 'month';
   const sellsYearly = (p: string) =>
     purchasable.some((x) => x.plan === p && x.intervals.includes('year'));

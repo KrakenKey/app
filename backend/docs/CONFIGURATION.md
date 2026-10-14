@@ -111,12 +111,10 @@ Set `KK_DNS_PROVIDER` to select which provider handles DNS-01 ACME challenges. O
 |----------|----------|---------|-------------|
 | `KK_STRIPE_SECRET_KEY` | Yes* | — | Stripe secret API key |
 | `KK_STRIPE_WEBHOOK_SECRET` | Yes* | — | Stripe webhook signing secret for verifying webhook payloads |
-| `KK_STRIPE_PRICE_PRO_MONTHLY` | Yes* | `KK_STRIPE_PRICE_STARTER` | Stripe Price ID for Pro, billed monthly |
+| `KK_STRIPE_PRICE_PRO_MONTHLY` | Yes* | - | Stripe Price ID for Pro, billed monthly. Pro monthly isn't sold without it |
 | `KK_STRIPE_PRICE_PRO_YEARLY` | No | - | Stripe Price ID for Pro, billed yearly. Yearly billing for Pro is offered only when set |
-| `KK_STRIPE_PRICE_BUSINESS_MONTHLY` | Yes* | `KK_STRIPE_PRICE_TEAM` | Stripe Price ID for Business, billed monthly |
+| `KK_STRIPE_PRICE_BUSINESS_MONTHLY` | Yes* | - | Stripe Price ID for Business, billed monthly. Business monthly isn't sold without it |
 | `KK_STRIPE_PRICE_BUSINESS_YEARLY` | No | - | Stripe Price ID for Business, billed yearly. Yearly billing for Business is offered only when set |
-| `KK_STRIPE_PRICE_STARTER` | No | - | Old name for the Pro monthly price; read when `KK_STRIPE_PRICE_PRO_MONTHLY` is unset, and always recognized in webhooks |
-| `KK_STRIPE_PRICE_TEAM` | No | - | Old name for the Business monthly price; read when `KK_STRIPE_PRICE_BUSINESS_MONTHLY` is unset, and always recognized in webhooks |
 | `KK_STRIPE_PORTAL_CONFIGURATION_ID` | No | Stripe's default | Billing portal configuration (`bpc_...`) to open; it should let customers switch between the plans' monthly and yearly prices |
 
 *Required only if billing features are enabled
