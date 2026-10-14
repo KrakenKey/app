@@ -111,10 +111,10 @@ Set `KK_DNS_PROVIDER` to select which provider handles DNS-01 ACME challenges. O
 |----------|----------|---------|-------------|
 | `KK_STRIPE_SECRET_KEY` | Yes* | — | Stripe secret API key |
 | `KK_STRIPE_WEBHOOK_SECRET` | Yes* | — | Stripe webhook signing secret for verifying webhook payloads |
-| `KK_STRIPE_PRICE_STARTER` | Yes* | — | Stripe Price ID for the Pro plan (old variable name, kept) |
-| `KK_STRIPE_PRICE_TEAM` | Yes* | — | Stripe Price ID for the Business plan (old variable name, kept) |
-| `KK_STRIPE_PRICE_BUSINESS` | Yes* | — | Stripe Price ID for the Business plan |
-| `KK_STRIPE_PRICE_ENTERPRISE` | Yes* | — | Stripe Price ID for the Enterprise plan |
+| `KK_STRIPE_PRICE_PRO_MONTHLY` | Yes* | - | Stripe Price ID for the Pro plan, monthly. Pro can't be bought without it |
+| `KK_STRIPE_PRICE_BUSINESS_MONTHLY` | Yes* | - | Stripe Price ID for the Business plan, monthly. Business can't be bought without it |
+
+`KK_STRIPE_PRICE_STARTER` and `KK_STRIPE_PRICE_TEAM` (Starter and Team) are no longer read.
 
 *Required only if billing features are enabled
 

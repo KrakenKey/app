@@ -1,10 +1,5 @@
-import { PLAN_LIMITS } from '@krakenkey/shared';
-import type {
-  Endpoint,
-  PlanLimits,
-  SubscriptionPlan,
-  TlsCert,
-} from '@krakenkey/shared';
+import { PLAN_LIMITS, normalizePlan } from '@krakenkey/shared';
+import type { Endpoint, PlanLimits, TlsCert } from '@krakenkey/shared';
 
 export type UsageLevel = 'normal' | 'high' | 'full';
 
@@ -20,7 +15,8 @@ export interface UsageRow {
 
 /** The plan's limits, falling back to Free for an unknown plan name. */
 export function planLimits(plan?: string | null): PlanLimits {
-  return PLAN_LIMITS[(plan ?? 'free') as SubscriptionPlan] ?? PLAN_LIMITS.free;
+  // Legacy ids (starter, team) read as their replacement, unknown as free
+  return PLAN_LIMITS[normalizePlan(plan)];
 }
 
 /** Neutral below 80% of the limit, amber from 80%, red at or over the limit. */

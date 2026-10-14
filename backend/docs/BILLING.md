@@ -27,7 +27,7 @@ Plan ids are `free`, `pro`, `business` and `enterprise`. The free plan is called
 
 ### Plan ids before the rename
 
-`starter` and `team` were renamed to `pro` and `business` by migration `RenamePlansToProAndBusiness1791600000000`. For the short overlap with the previous release during a deploy, and for Stripe checkouts opened before it, the API still reads the old ids: `normalizePlan()` maps them on every plan lookup, Stripe webhooks rewrite them, `POST /billing/checkout` and `/billing/upgrade` accept them, and `KK_MARKETPLACE_PLAN_MAP` accepts `starter` and `team` as names for `pro` and `business`. `KK_STRIPE_PRICE_STARTER` and `KK_STRIPE_PRICE_TEAM` hold the Pro and Business prices.
+`starter` and `team` were renamed to `pro` and `business` by migration `RenamePlansToProAndBusiness1791600000000`. For the short overlap with the previous release during a deploy, and for Stripe checkouts opened before it, the API still reads the old ids: `normalizePlan()` maps them on every plan lookup, Stripe webhooks rewrite them, `POST /billing/checkout` and `/billing/upgrade` accept them, and `KK_MARKETPLACE_PLAN_MAP` accepts `starter` and `team` as names for `pro` and `business`. Pro and Business are priced by `KK_STRIPE_PRICE_PRO_MONTHLY` and `KK_STRIPE_PRICE_BUSINESS_MONTHLY`. The old `KK_STRIPE_PRICE_STARTER` and `KK_STRIPE_PRICE_TEAM` are no longer read: Team cost less than Business, so its price must not sell Business, and a plan without its own variable can't be bought (checkout answers `400`).
 
 ## API Endpoints
 
