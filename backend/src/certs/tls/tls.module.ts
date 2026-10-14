@@ -18,6 +18,7 @@ import { BillingModule } from '../../billing/billing.module';
 import { AriService } from './services/ari.service';
 import { AriMonitorService } from './services/ari-monitor.service';
 import { CertMonitorService } from './services/cert-monitor.service';
+import { RenewalQueueService } from './services/renewal-queue.service';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { CertMonitorService } from './services/cert-monitor.service';
   providers: [
     TlsService,
     CertMonitorService,
+    RenewalQueueService,
     AriService,
     AriMonitorService,
     CsrUtilService,

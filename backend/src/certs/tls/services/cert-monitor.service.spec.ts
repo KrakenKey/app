@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { In } from 'typeorm';
 import { CertMonitorService } from './cert-monitor.service';
 import { TlsService } from '../tls.service';
 import { TlsCrt } from '../entities/tls-crt.entity';
@@ -9,6 +10,11 @@ import { MetricsService } from '../../../metrics/metrics.service';
 import { EmailService } from '../../../notifications/email.service';
 import { AlertsService } from '../../../notifications/channels/alerts.service';
 import { BillingService } from '../../../billing/billing.service';
+import { ScheduledJobLock } from '../../../common/scheduling/scheduled-job-lock.service';
+import {
+  InMemoryLockStore,
+  inMemoryJobLock,
+} from '../../../common/scheduling/scheduled-job-lock.testing';
 
 describe('CertMonitorService', () => {
   const mockAlerts = { emit: jest.fn().mockResolvedValue(0) };
@@ -16,6 +22,8 @@ describe('CertMonitorService', () => {
   let mockRepository: Record<string, jest.Mock>;
   let mockUserRepository: Record<string, jest.Mock>;
   let mockTlsService: Record<string, jest.Mock>;
+  let module: TestingModule;
+  let lockStore: InMemoryLockStore;
 
   const mockUser: User = {
     id: 'user-123',
@@ -62,9 +70,13 @@ describe('CertMonitorService', () => {
       renewInternal: jest.fn(),
     };
 
-    const module: TestingModule = await Test.createTestingModule({
+    const { lock, store } = inMemoryJobLock();
+    lockStore = store;
+
+    module = await Test.createTestingModule({
       providers: [
         CertMonitorService,
+        { provide: ScheduledJobLock, useValue: lock },
         {
           provide: getRepositoryToken(TlsCrt),
           useValue: mockRepository,
@@ -107,6 +119,53 @@ describe('CertMonitorService', () => {
   });
 
   describe('checkExpiringCertificates', () => {
+    describe('with two API processes', () => {
+      beforeEach(() => {
+        jest.useFakeTimers({ now: new Date('2026-10-13T06:00:00.030Z') });
+      });
+      afterEach(() => jest.useRealTimers());
+
+      const otherProcess = () =>
+        new CertMonitorService(
+          mockRepository as any,
+          mockUserRepository as any,
+          mockTlsService as any,
+          module.get(MetricsService),
+          module.get(EmailService),
+          module.get(BillingService),
+          mockAlerts as any,
+          inMemoryJobLock(lockStore).lock,
+        );
+
+      it('warns and queues a renewal once per certificate', async () => {
+        mockAlerts.emit.mockClear();
+        mockRepository.find.mockResolvedValue([
+          { ...expiringCert, expiresAt: new Date('2026-10-16T00:00:00Z') },
+        ]);
+
+        await Promise.all([
+          service.checkExpiringCertificates(),
+          otherProcess().checkExpiringCertificates(),
+        ]);
+
+        const email = module.get<Record<string, jest.Mock>>(EmailService);
+        expect(email.sendCertExpiryWarning).toHaveBeenCalledTimes(1);
+        expect(mockAlerts.emit).toHaveBeenCalledTimes(1);
+        expect(mockTlsService.renewInternal).toHaveBeenCalledTimes(1);
+      });
+
+      it('runs again the next day', async () => {
+        mockRepository.find.mockResolvedValue([]);
+        await service.checkExpiringCertificates();
+        await otherProcess().checkExpiringCertificates();
+        expect(mockRepository.find).toHaveBeenCalledTimes(1);
+
+        jest.setSystemTime(new Date('2026-10-14T06:00:00.030Z'));
+        await otherProcess().checkExpiringCertificates();
+        expect(mockRepository.find).toHaveBeenCalledTimes(2);
+      });
+    });
+
     it('queues renewal for expiring certs', async () => {
       mockRepository.find.mockResolvedValue([expiringCert]);
       mockTlsService.renewInternal.mockResolvedValue(undefined);
@@ -116,7 +175,7 @@ describe('CertMonitorService', () => {
       expect(mockTlsService.renewInternal).toHaveBeenCalledWith(1);
     });
 
-    it('queries for issued auto-renew or connector-managed certs expiring within 30 days', async () => {
+    it('queries for issued or renewing auto-renew or connector-managed certs expiring within 30 days', async () => {
       mockRepository.find.mockResolvedValue([]);
 
       await service.checkExpiringCertificates();
@@ -124,18 +183,43 @@ describe('CertMonitorService', () => {
       expect(mockRepository.find).toHaveBeenCalledWith({
         where: [
           {
-            status: CertStatus.ISSUED,
+            status: In([CertStatus.ISSUED, CertStatus.RENEWING]),
             autoRenew: true,
             expiresAt: expect.any(Object), // LessThan(threshold)
           },
           {
-            status: CertStatus.ISSUED,
+            status: In([CertStatus.ISSUED, CertStatus.RENEWING]),
             managedBy: 'connector',
             expiresAt: expect.any(Object),
           },
         ],
         relations: ['user'],
       });
+    });
+
+    it('still warns about a certificate whose renewal is running or waiting, without queuing another', async () => {
+      mockAlerts.emit.mockClear();
+      mockRepository.find.mockResolvedValue([
+        { ...expiringCert, status: CertStatus.RENEWING },
+        {
+          ...expiringCert,
+          id: 2,
+          status: CertStatus.RENEWING,
+          renewalQueuedAt: new Date(),
+        },
+      ]);
+
+      await service.checkExpiringCertificates();
+
+      const email = module.get<Record<string, jest.Mock>>(EmailService);
+      expect(email.sendCertExpiryWarning).toHaveBeenCalledTimes(2);
+      expect(mockAlerts.emit).toHaveBeenCalledTimes(2);
+      expect(mockAlerts.emit).toHaveBeenCalledWith(
+        'user-123',
+        'cert.expiring',
+        expect.anything(),
+      );
+      expect(mockTlsService.renewInternal).not.toHaveBeenCalled();
     });
 
     describe('connector-managed certs', () => {

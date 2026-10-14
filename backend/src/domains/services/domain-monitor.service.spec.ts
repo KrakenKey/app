@@ -5,6 +5,11 @@ import { DomainsService } from '../domains.service';
 import { Domain } from '../entities/domain.entity';
 import { EmailService } from '../../notifications/email.service';
 import { AlertsService } from '../../notifications/channels/alerts.service';
+import { ScheduledJobLock } from '../../common/scheduling/scheduled-job-lock.service';
+import {
+  InMemoryLockStore,
+  inMemoryJobLock,
+} from '../../common/scheduling/scheduled-job-lock.testing';
 
 describe('DomainMonitorService', () => {
   const mockAlerts = { emit: jest.fn().mockResolvedValue(0) };
@@ -12,6 +17,7 @@ describe('DomainMonitorService', () => {
   let mockRepository: Record<string, jest.Mock>;
   let mockDomainsService: Record<string, jest.Mock>;
   let mockEmailService: Record<string, jest.Mock>;
+  let lockStore: InMemoryLockStore;
 
   const verifiedDomain: Domain = {
     id: 'd1',
@@ -56,9 +62,13 @@ describe('DomainMonitorService', () => {
       sendDomainVerificationFailed: jest.fn().mockResolvedValue(undefined),
     };
 
+    const { lock, store } = inMemoryJobLock();
+    lockStore = store;
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DomainMonitorService,
+        { provide: ScheduledJobLock, useValue: lock },
         {
           provide: getRepositoryToken(Domain),
           useValue: mockRepository,
@@ -83,6 +93,45 @@ describe('DomainMonitorService', () => {
   });
 
   describe('checkVerifiedDomains', () => {
+    describe('with two API processes', () => {
+      beforeEach(() => {
+        jest.useFakeTimers({ now: new Date('2026-10-13T02:00:00.020Z') });
+      });
+      afterEach(() => jest.useRealTimers());
+
+      it('sends one email and one alert for a domain failing that night', async () => {
+        mockAlerts.emit.mockClear();
+        mockRepository.find.mockResolvedValue([verifiedDomain]);
+        mockDomainsService.checkVerificationRecord.mockResolvedValue(false);
+        const other = new DomainMonitorService(
+          mockRepository as any,
+          mockDomainsService as any,
+          mockEmailService as any,
+          mockAlerts as any,
+          inMemoryJobLock(lockStore).lock,
+        );
+
+        await Promise.all([
+          service.checkVerifiedDomains(),
+          other.checkVerifiedDomains(),
+        ]);
+
+        expect(mockRepository.find).toHaveBeenCalledTimes(1);
+        expect(
+          mockEmailService.sendDomainVerificationFailed,
+        ).toHaveBeenCalledTimes(1);
+        expect(mockAlerts.emit).toHaveBeenCalledTimes(1);
+      });
+
+      it('runs again the next night', async () => {
+        mockRepository.find.mockResolvedValue([]);
+        await service.checkVerifiedDomains();
+        jest.setSystemTime(new Date('2026-10-14T02:00:00.020Z'));
+        await service.checkVerifiedDomains();
+        expect(mockRepository.find).toHaveBeenCalledTimes(2);
+      });
+    });
+
     it('does nothing when TXT records are still present', async () => {
       mockRepository.find.mockResolvedValue([verifiedDomain]);
       mockDomainsService.checkVerificationRecord.mockResolvedValue(true);

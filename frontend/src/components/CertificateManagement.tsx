@@ -220,7 +220,11 @@ export default function CertificateManagement() {
     try {
       renewing.add(cert.id);
       const response = await certService.renewCertificate(cert.id);
-      toast.success(`Certificate #${cert.id} renewal initiated!`);
+      toast.success(
+        response.queued
+          ? `Certificate #${cert.id} renewal queued. It starts when one of your other requests finishes.`
+          : `Certificate #${cert.id} renewal initiated!`,
+      );
       setCerts((prev) =>
         prev.map((c) =>
           c.id === cert.id

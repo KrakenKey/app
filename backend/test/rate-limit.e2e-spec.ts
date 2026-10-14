@@ -62,7 +62,9 @@ describe('Rate Limiting (e2e)', () => {
             update: jest.fn().mockResolvedValue({}),
             remove: jest.fn().mockResolvedValue({}),
             revoke: jest.fn().mockResolvedValue({}),
-            renew: jest.fn().mockResolvedValue({}),
+            renew: jest
+              .fn()
+              .mockResolvedValue({ id: 1, status: 'renewing', skipped: false }),
             retry: jest.fn().mockResolvedValue({}),
             toResponses: jest.fn((certs: unknown[]) => Promise.resolve(certs)),
             toResponse: jest.fn((cert: unknown) => Promise.resolve(cert)),
@@ -118,5 +120,55 @@ describe('Rate Limiting (e2e)', () => {
       .set('Authorization', `Bearer ${fakeJwt}`)
       .send(body);
     expect(res.status).toBe(429);
+  });
+
+  it('POST /certs/tls/:id/renew has its own, larger renewal allowance', async () => {
+    const server = app.getHttpServer();
+    const payload = Buffer.from(
+      JSON.stringify({ sub: 'renewing-user-456' }),
+    ).toString('base64url');
+    const fakeJwt = `eyJhbGciOiJSUzI1NiJ9.${payload}.fake`;
+    const renew = () =>
+      request(server)
+        .post('/certs/tls/1/renew')
+        .set('Authorization', `Bearer ${fakeJwt}`);
+
+    // Free tier renewal limit: 10 per hour, twice the expensive allowance
+    for (let i = 0; i < 10; i++) {
+      expect((await renew()).status).toBe(201);
+    }
+    const res = await renew();
+    expect(res.status).toBe(429);
+    expect(res.headers['retry-after']).toBeDefined();
+
+    // Issuance keeps the expensive allowance, untouched by renewals
+    const issue = await request(server)
+      .post('/certs/tls')
+      .set('Authorization', `Bearer ${fakeJwt}`)
+      .send({
+        csrPem:
+          '-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----',
+      });
+    expect(issue.status).toBe(201);
+  });
+
+  it('POST /certs/tls/:id/renew answers 202 for a renewal that waits for a slot', async () => {
+    const tls = app.get<{ renew: jest.Mock }>(TlsService);
+    tls.renew.mockResolvedValueOnce({
+      id: 1,
+      status: 'renewing',
+      skipped: false,
+      queued: true,
+    });
+    const payload = Buffer.from(
+      JSON.stringify({ sub: 'queued-user-789' }),
+    ).toString('base64url');
+
+    const res = await request(app.getHttpServer())
+      .post('/certs/tls/1/renew')
+      .set('Authorization', `Bearer eyJhbGciOiJSUzI1NiJ9.${payload}.fake`);
+
+    expect(res.status).toBe(202);
+    expect(res.body).toMatchObject({ status: 'renewing', queued: true });
   });
 });

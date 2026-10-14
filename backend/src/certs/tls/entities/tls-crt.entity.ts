@@ -18,6 +18,12 @@ import type { CertManagedBy, CertStatus, ParsedCsr } from '@krakenkey/shared';
   'autoRenew',
   'expiresAt',
 ])
+@Index('IDX_tls_crt_renewalQueuedAt', ['renewalQueuedAt'], {
+  where: '"renewalQueuedAt" IS NOT NULL',
+})
+@Index('IDX_tls_crt_inFlight', ['inFlightSince'], {
+  where: `"status" IN ('pending', 'issuing', 'renewing') AND "renewalQueuedAt" IS NULL`,
+})
 export class TlsCrt {
   @PrimaryGeneratedColumn()
   id: number;
@@ -62,6 +68,31 @@ export class TlsCrt {
 
   @Column({ type: 'timestamp', nullable: true })
   lastRenewalAttemptAt: Date | null;
+
+  /**
+   * Set while a renewal waits for a free slot under the plan's concurrent
+   * pending limit (status 'renewing', nothing sent to the CA yet). Cleared
+   * when the renewal starts. See TlsService.startQueuedRenewals.
+   */
+  @Column({ type: 'timestamp', nullable: true })
+  renewalQueuedAt: Date | null;
+
+  /**
+   * When the current issuance or renewal was handed to the worker (status
+   * pending, issuing, or renewing without renewalQueuedAt); null otherwise.
+   * Jobs carry it as a fencing token, and RenewalQueueService recovers
+   * requests that stay in flight with no live job (see recoverStuck).
+   */
+  @Column({ type: 'timestamp', nullable: true })
+  inFlightSince: Date | null;
+
+  /**
+   * How many times the current request was recovered after losing its job
+   * (see TlsService.recoverStuck). Reset when a certificate is issued or a
+   * failed one is retried.
+   */
+  @Column({ type: 'int', default: 0 })
+  recoveryCount: number;
 
   @Column({ type: 'int', nullable: true })
   revocationReason: number | null;

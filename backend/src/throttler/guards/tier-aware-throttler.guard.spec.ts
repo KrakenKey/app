@@ -4,6 +4,7 @@ import { RateLimitCategory } from '../interfaces/rate-limit-category.enum';
 import {
   RATE_LIMIT_TIERS,
   DEFAULT_TIER,
+  RENEWAL_LIMITS_PER_HOUR,
 } from '../config/rate-limit-tiers.config';
 import {
   ApiKeyUserResolverService,
@@ -236,6 +237,50 @@ describe('TierAwareThrottlerGuard', () => {
         }),
       );
     });
+
+    it.each([
+      ['free', 10, 5],
+      ['starter', 30, 10],
+      ['team', 120, 30],
+      ['business', 300, 60],
+      ['enterprise', 600, 100],
+    ])(
+      'gives %s renewals %i an hour, apart from the expensive %i',
+      async (tier, renewals, expensive) => {
+        const payload = Buffer.from(JSON.stringify({ sub: 'u1' })).toString(
+          'base64',
+        );
+        const context = {
+          switchToHttp: () => ({
+            getRequest: () => ({
+              method: 'POST',
+              headers: { authorization: `Bearer h.${payload}.s` },
+              ip: '1.2.3.4',
+            }),
+            getResponse: () => ({}),
+          }),
+          getHandler: () => () => {},
+          getClass: () => class {},
+        } as any;
+        mockTierResolver.resolve.mockResolvedValue(tier);
+        const category = jest.spyOn(mockReflector, 'getAllAndOverride');
+
+        category.mockReturnValue(RateLimitCategory.RENEWAL);
+        await (guard as any).handleRequest({ context });
+        category.mockReturnValue(RateLimitCategory.EXPENSIVE);
+        await (guard as any).handleRequest({ context });
+
+        expect(RENEWAL_LIMITS_PER_HOUR[tier]).toBe(renewals);
+        expect(parentHandleRequest).toHaveBeenNthCalledWith(
+          1,
+          expect.objectContaining({ limit: renewals, ttl: 3_600_000 }),
+        );
+        expect(parentHandleRequest).toHaveBeenNthCalledWith(
+          2,
+          expect.objectContaining({ limit: expensive, ttl: 3_600_000 }),
+        );
+      },
+    );
 
     it('should default to free tier if tier resolution fails', async () => {
       const payload = Buffer.from(JSON.stringify({ sub: 'user-err' })).toString(

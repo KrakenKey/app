@@ -64,7 +64,7 @@ End-to-end walkthrough of how KrakenKey processes certificate requests, from CSR
 | `issuing` | ACME workflow actively running (order created, challenges in progress) |
 | `issued` | Certificate successfully issued and stored |
 | `failed` | Issuance failed after 3 retry attempts |
-| `renewing` | Renewal job in progress for an expiring certificate |
+| `renewing` | Renewal in progress, or waiting for a free concurrent pending slot (`renewalQueuedAt` set) |
 | `revoking` | Revocation request sent to ACME CA |
 | `revoked` | Certificate successfully revoked |
 
@@ -311,7 +311,20 @@ KrakenKey automatically monitors and renews certificates.
 - Finds all `issued` certificates with `autoRenew: true` that are expiring within the renewal window
 - Queues renewal jobs to the `tlsCertRenewal` BullMQ queue
 - Sends expiry warning emails for certificates approaching expiration
+- Runs once even when two API processes are up (a blue/green deploy, or more than one replica): the first to claim `cron-lock:cert-monitor:<hour>` in Redis runs it. The ARI, domain re-verification and activation reminder jobs use the same lock. A run that crashes is not repeated in the same hour; the next scheduled run picks up what it missed
 - Connector-managed certificates (`managedBy: "connector"`) get the warning but are never renewed here; see [Connector-Managed Certificates](#connector-managed-certificates)
+
+### Renewal Queue
+
+Each renewal, automatic or through the API, first claims the certificate with one conditional update (`issued` -> `renewing`). Two callers racing for the same certificate can't both win, so only one renewal and one ACME order are queued.
+
+A renewal never fails because of a plan limit. It does take one of the account's concurrent pending slots while it runs, the same slots new requests use (pooled across an organization). When they are all in use, the renewal waits with `renewalQueuedAt` set and nothing sent to the CA, and a waiting renewal doesn't hold a slot. Waiting renewals start oldest first: when an issuance or renewal job finishes, and from a sweep that runs every minute. A Postgres advisory lock per account keeps two API processes from starting more than the account has room for.
+
+So an account with many certificates due at once, for example after a CA asks for early replacement through ARI, renews all of them, a few at a time.
+
+While a renewal runs or waits, `POST /certs/tls/:id/renew` answers `409`, or `200` with `"skipped": true, "reason": "in_progress"` when called with `?ifDue=true`, so a daily timer doesn't fail. A certificate whose renewal is still waiting can be revoked; the waiting renewal is dropped. The daily expiry check keeps sending the expiry warning and `cert.expiring` alert for a certificate that is renewing or waiting inside its warning window, since the renewal may not finish in time.
+
+**Lost jobs.** Each request handed to the worker records `inFlightSince`, and its job carries that value as a fencing token: the worker only acts on a job whose token still matches the certificate and whose certificate is in the state the job was queued for, and drops any other (a duplicate, or a job left over from a start that was rolled back). The sweep that starts waiting renewals also looks, every minute, for certificates in flight for more than 30 minutes with no waiting, active or delayed job (BullMQ fails a job that stalls too often without telling the worker, and Redis can lose its data). A renewal goes back to `issued` if its current certificate is still there, otherwise back into the queue; a new certificate goes to `failed` with a `failureReason` saying it was interrupted (and a `cert.failed` alert), so it can be retried. Certificates already in flight before this was added have no `inFlightSince`; the first sweep gives them one and judges them 30 minutes later. A job's final failure that couldn't record itself (for example the database was down) is cleaned up the same way from the worker's `failed` event. A recovered request that ends `failed` gets the usual failure email, alert and metric. A renewal recovered three times (`recoveryCount`) is marked `failed` rather than queued again, so a request that keeps crashing its worker doesn't send an order every half hour. The job's final write is conditional too: it only lands while the certificate still has the job's processing status and token, so a job that stalled and was replaced can't overwrite the newer result.
 
 ### Renewal Windows
 
@@ -378,7 +391,7 @@ curl -X POST https://api.example.com/certs/tls/42/renew \
   -H "Authorization: Bearer $API_KEY"
 ```
 
-A manual renewal always runs and counts against the monthly certificate limit. Without a body it reuses the stored CSR (the same key); send `{"csrPem": "..."}` to renew with a new CSR for the same names. To renew from a scheduled job without re-issuing every day, add `?ifDue=true`: the request only renews once the certificate is inside the renewal window above, and otherwise returns `200` with `"skipped": true` and queues nothing. See [API_REFERENCE.md](API_REFERENCE.md#post-certstlsidrenew).
+A manual renewal always runs. It doesn't count toward the total active or monthly certificate limits, and past the concurrent pending limit it waits (`202`, `"queued": true`) instead of failing; see [Renewal Queue](#renewal-queue). Without a body it reuses the stored CSR (the same key); send `{"csrPem": "..."}` to renew with a new CSR for the same names. To renew from a scheduled job without re-issuing every day, add `?ifDue=true`: the request only renews once the certificate is inside the renewal window above, and otherwise returns `200` with `"skipped": true` and queues nothing. See [API_REFERENCE.md](API_REFERENCE.md#post-certstlsidrenew).
 
 ### Disabling Auto-Renewal
 

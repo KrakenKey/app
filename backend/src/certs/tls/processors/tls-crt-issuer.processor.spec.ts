@@ -31,6 +31,10 @@ describe('CertIssuerConsumer', () => {
     mockTlsService = {
       findOneInternal: jest.fn().mockResolvedValue(mockCsrRecord),
       updateInternal: jest.fn().mockResolvedValue({}),
+      startQueuedRenewalsSafely: jest.fn().mockResolvedValue([]),
+      beginProcessing: jest.fn().mockResolvedValue(true),
+      finishProcessing: jest.fn().mockResolvedValue(true),
+      recoverAfterFailedJob: jest.fn().mockResolvedValue(undefined),
     };
     mockAcme = {
       issue: jest
@@ -88,14 +92,15 @@ describe('CertIssuerConsumer', () => {
       expect(mockTlsService.findOneInternal).toHaveBeenCalledWith(1, {
         relations: ['user'],
       });
-      expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
-        1,
-        { crtPem: null, chainPem: null, failureReason: null },
-        'issuing',
-      );
+      expect(mockTlsService.beginProcessing).toHaveBeenCalledWith(1, {
+        renewal: false,
+        token: undefined,
+        status: 'issuing',
+      });
       expect(mockAcme.issue).toHaveBeenCalled();
-      expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
+      expect(mockTlsService.finishProcessing).toHaveBeenCalledWith(
         1,
+        expect.anything(),
         expect.objectContaining({
           crtPem: expect.any(String),
           expiresAt: expect.any(Date),
@@ -112,12 +117,67 @@ describe('CertIssuerConsumer', () => {
 
       await processor.process(job);
 
-      expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
+      expect(mockTlsService.finishProcessing).toHaveBeenCalledWith(
         1,
+        expect.anything(),
         expect.objectContaining({
           lastRenewedAt: expect.any(Date),
         }),
         'issued',
+      );
+    });
+
+    it('starts a renewal only from the state and token it was queued with', async () => {
+      await processor.process({
+        name: 'tlsCertRenewal',
+        data: { certId: 1, inFlightSince: 1791928512378 },
+      } as any);
+      expect(mockTlsService.beginProcessing).toHaveBeenCalledWith(1, {
+        renewal: true,
+        token: 1791928512378,
+        status: 'renewing',
+      });
+    });
+
+    it('drops a stale or duplicate job without touching the certificate', async () => {
+      mockTlsService.beginProcessing.mockResolvedValue(false);
+
+      const result = await processor.process({
+        name: 'tlsCertRenewal',
+        data: { certId: 1, inFlightSince: 1 },
+      } as any);
+
+      expect(result).toEqual({ success: false });
+      expect(mockAcme.issue).not.toHaveBeenCalled();
+      expect(mockTlsService.finishProcessing).not.toHaveBeenCalled();
+      expect(mockTlsService.startQueuedRenewalsSafely).not.toHaveBeenCalled();
+    });
+
+    it('clears inFlightSince when the certificate is issued', async () => {
+      await processor.process({
+        name: 'tlsCertIssuance',
+        data: { certId: 1 },
+      } as any);
+      expect(mockTlsService.finishProcessing).toHaveBeenCalledWith(
+        1,
+        expect.anything(),
+        expect.objectContaining({ inFlightSince: null }),
+        'issued',
+      );
+    });
+
+    it("starts the owner's next queued renewal once a job succeeds", async () => {
+      mockTlsService.findOneInternal.mockResolvedValue({
+        ...mockCsrRecord,
+        userId: 'owner-1',
+      });
+      await processor.process({
+        name: 'tlsCertIssuance',
+        data: { certId: 1 },
+      } as any);
+      expect(mockTlsService.startQueuedRenewalsSafely).toHaveBeenCalledTimes(1);
+      expect(mockTlsService.startQueuedRenewalsSafely).toHaveBeenCalledWith(
+        'owner-1',
       );
     });
 
@@ -158,8 +218,9 @@ describe('CertIssuerConsumer', () => {
         name: 'tlsCertRenewal',
         data: { certId: 1 },
       } as any);
-      expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
+      expect(mockTlsService.finishProcessing).toHaveBeenCalledWith(
         1,
+        expect.anything(),
         expect.objectContaining({
           ariWindowStart: null,
           ariWindowEnd: null,
@@ -190,8 +251,9 @@ describe('CertIssuerConsumer', () => {
       expect(mockCertUtil.splitChain).toHaveBeenCalledWith(
         '-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nintermediate\n-----END CERTIFICATE-----',
       );
-      expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
+      expect(mockTlsService.finishProcessing).toHaveBeenCalledWith(
         1,
+        expect.anything(),
         expect.objectContaining({
           crtPem:
             '-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----',
@@ -232,7 +294,7 @@ describe('CertIssuerConsumer', () => {
 
       expect(result).toEqual({ success: false });
       expect(mockAcme.issue).not.toHaveBeenCalled();
-      expect(mockTlsService.updateInternal).not.toHaveBeenCalled();
+      expect(mockTlsService.finishProcessing).not.toHaveBeenCalled();
       expect(mockEmailService.sendCertFailed).not.toHaveBeenCalled();
     });
 
@@ -288,8 +350,9 @@ describe('CertIssuerConsumer', () => {
       await expect(processor.process(job)).rejects.toThrow(
         'CSR appears to be invalid',
       );
-      expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
+      expect(mockTlsService.finishProcessing).toHaveBeenCalledWith(
         1,
+        expect.anything(),
         expect.objectContaining({
           crtPem: null,
           chainPem: null,
@@ -308,8 +371,9 @@ describe('CertIssuerConsumer', () => {
       } as any;
 
       await expect(processor.process(job)).rejects.toThrow('ACME timeout');
-      expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
+      expect(mockTlsService.finishProcessing).toHaveBeenCalledWith(
         1,
+        expect.anything(),
         expect.objectContaining({
           crtPem: null,
           chainPem: null,
@@ -330,9 +394,15 @@ describe('CertIssuerConsumer', () => {
       } as any;
 
       await expect(processor.process(job)).rejects.toThrow(reason);
-      expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
+      expect(mockTlsService.finishProcessing).toHaveBeenCalledWith(
         1,
-        { crtPem: null, chainPem: null, failureReason: reason },
+        expect.anything(),
+        {
+          crtPem: null,
+          chainPem: null,
+          failureReason: reason,
+          inFlightSince: null,
+        },
         'failed',
       );
     });
@@ -346,10 +416,10 @@ describe('CertIssuerConsumer', () => {
       } as any;
 
       await expect(processor.process(job)).rejects.toThrow();
-      const failedCall = mockTlsService.updateInternal.mock.calls.find(
-        (c: unknown[]) => c[2] === 'failed',
+      const failedCall = mockTlsService.finishProcessing.mock.calls.find(
+        (c: unknown[]) => c[3] === 'failed',
       );
-      expect(failedCall[1].failureReason).toHaveLength(2000);
+      expect(failedCall[2].failureReason).toHaveLength(2000);
     });
 
     it('handles non-Error ACME failures', async () => {
@@ -361,8 +431,9 @@ describe('CertIssuerConsumer', () => {
       } as any;
 
       await expect(processor.process(job)).rejects.toThrow('string error');
-      expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
+      expect(mockTlsService.finishProcessing).toHaveBeenCalledWith(
         1,
+        expect.anything(),
         expect.objectContaining({
           crtPem: null,
           chainPem: null,
@@ -394,7 +465,7 @@ describe('CertIssuerConsumer', () => {
         'DNS propagation timeout',
       );
       // No failure bookkeeping mid-retry:
-      expect(mockTlsService.updateInternal).not.toHaveBeenCalledWith(
+      expect(mockTlsService.finishProcessing).not.toHaveBeenCalledWith(
         1,
         expect.anything(),
         'failed',
@@ -422,8 +493,9 @@ describe('CertIssuerConsumer', () => {
       );
       expect((err as Error).message).toBe('DNS propagation timeout');
       expect((err as Error).name).not.toBe('UnrecoverableError');
-      expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
+      expect(mockTlsService.finishProcessing).toHaveBeenCalledWith(
         1,
+        expect.anything(),
         expect.objectContaining({
           crtPem: null,
           chainPem: null,
@@ -432,6 +504,23 @@ describe('CertIssuerConsumer', () => {
         'failed',
       );
       expect(mockEmailService.sendCertFailed).toHaveBeenCalledTimes(1);
+      // The slot is free again: the next queued renewal can start
+      expect(mockTlsService.startQueuedRenewalsSafely).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the slot while a retry will follow', async () => {
+      mockTlsService.findOneInternal.mockResolvedValue(userRecord);
+      mockAcme.issue.mockRejectedValue(new Error('DNS propagation timeout'));
+
+      await expect(
+        processor.process({
+          name: 'tlsCertRenewal',
+          data: { certId: 1 },
+          attemptsMade: 0,
+          opts: { attempts: 3 },
+        } as any),
+      ).rejects.toThrow('DNS propagation timeout');
+      expect(mockTlsService.startQueuedRenewalsSafely).not.toHaveBeenCalled();
     });
 
     it('aborts retries via UnrecoverableError for permanent ACME rejections', async () => {
@@ -454,8 +543,9 @@ describe('CertIssuerConsumer', () => {
         (e: unknown) => e,
       );
       expect((err as Error).name).toBe('UnrecoverableError');
-      expect(mockTlsService.updateInternal).toHaveBeenCalledWith(
+      expect(mockTlsService.finishProcessing).toHaveBeenCalledWith(
         1,
+        expect.anything(),
         expect.objectContaining({
           crtPem: null,
           chainPem: null,
@@ -525,6 +615,98 @@ describe('CertIssuerConsumer', () => {
       expect((err as Error).name).toBe('UnrecoverableError');
       expect((err as Error).message).toMatch(/CSR appears to be invalid/);
       expect(mockEmailService.sendCertFailed).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('a job that was taken over (stalled and replaced)', () => {
+    it('records its result only while the certificate is still its own', async () => {
+      await processor.process({
+        name: 'tlsCertRenewal',
+        data: { certId: 1, inFlightSince: 42 },
+      } as any);
+      expect(mockTlsService.finishProcessing).toHaveBeenCalledWith(
+        1,
+        { status: 'renewing', token: 42 },
+        expect.objectContaining({ recoveryCount: 0, inFlightSince: null }),
+        'issued',
+      );
+    });
+
+    it('sends nothing when its success no longer matches the certificate', async () => {
+      mockTlsService.finishProcessing.mockResolvedValue(false);
+
+      const result = await processor.process({
+        name: 'tlsCertRenewal',
+        data: { certId: 1, inFlightSince: 42 },
+      } as any);
+
+      expect(result).toEqual({ success: false });
+      expect(mockEmailService.sendCertRenewed).not.toHaveBeenCalled();
+      expect(mockAlerts.emit).not.toHaveBeenCalled();
+      expect(mockTlsService.startQueuedRenewalsSafely).not.toHaveBeenCalled();
+    });
+
+    it("can't overwrite the new job's result with its failure", async () => {
+      mockTlsService.finishProcessing.mockResolvedValue(false);
+      mockAcme.issue.mockRejectedValue(new Error('CAA record forbids'));
+
+      await expect(
+        processor.process({
+          name: 'tlsCertRenewal',
+          data: { certId: 1, inFlightSince: 42 },
+          attemptsMade: 2,
+          opts: { attempts: 3 },
+        } as any),
+      ).rejects.toThrow('CAA record forbids');
+
+      expect(mockTlsService.finishProcessing).toHaveBeenCalledWith(
+        1,
+        { status: 'renewing', token: 42 },
+        expect.objectContaining({ crtPem: null }),
+        'failed',
+      );
+      expect(mockEmailService.sendCertFailed).not.toHaveBeenCalled();
+      expect(mockAlerts.emit).not.toHaveBeenCalled();
+      expect(mockMetricsService.certIssuanceTotal.inc).not.toHaveBeenCalledWith(
+        {
+          status: 'failed',
+        },
+      );
+    });
+  });
+
+  describe('failed event', () => {
+    it('cleans up after a final failure, with the job token', async () => {
+      await processor.onFailed(
+        {
+          data: { certId: 7, inFlightSince: 123 },
+          finishedOn: Date.now(),
+        } as any,
+        new Error('database unreachable'),
+      );
+      expect(mockTlsService.recoverAfterFailedJob).toHaveBeenCalledWith(
+        7,
+        123,
+        'database unreachable',
+      );
+    });
+
+    it('does nothing when a retry follows', async () => {
+      await processor.onFailed(
+        { data: { certId: 7 }, finishedOn: undefined } as any,
+        new Error('DNS propagation timeout'),
+      );
+      expect(mockTlsService.recoverAfterFailedJob).not.toHaveBeenCalled();
+    });
+
+    it('never throws from the event handler', async () => {
+      mockTlsService.recoverAfterFailedJob.mockRejectedValue(new Error('db'));
+      await expect(
+        processor.onFailed(
+          { data: { certId: 7 }, finishedOn: 1 } as any,
+          new Error('x'),
+        ),
+      ).resolves.toBeUndefined();
     });
   });
 });

@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { LessThan, Repository } from 'typeorm';
+import { In, LessThan, Repository } from 'typeorm';
 import { TlsCrt } from '../entities/tls-crt.entity';
 import { TlsService } from '../tls.service';
 import { CertStatus } from '@krakenkey/shared';
@@ -13,6 +13,9 @@ import { BillingService } from '../../../billing/billing.service';
 import { daysUntilExpiry, renewalWindowDays } from '../util/renewal-window';
 import { User } from '../../../users/entities/user.entity';
 import { certDisplayName } from '../util/cert-names';
+import { ScheduledJobLock } from '../../../common/scheduling/scheduled-job-lock.service';
+
+const WARNED_STATUSES = [CertStatus.ISSUED, CertStatus.RENEWING];
 
 @Injectable()
 export class CertMonitorService {
@@ -28,6 +31,7 @@ export class CertMonitorService {
     private readonly emailService: EmailService,
     private readonly billingService: BillingService,
     private readonly alerts: AlertsService,
+    private readonly jobLock: ScheduledJobLock,
   ) {}
 
   /**
@@ -39,9 +43,16 @@ export class CertMonitorService {
    * renewed here: the connector renews them with its own keys. They are
    * checked whatever their autoRenew flag, which only controls server-side
    * renewal.
+   *
+   * Runs once across API processes (see ScheduledJobLock), so each expiry
+   * warning goes out once.
    */
   @Cron(CronExpression.EVERY_DAY_AT_6AM)
   async checkExpiringCertificates(): Promise<void> {
+    await this.jobLock.runOnce('cert-monitor', () => this.checkExpiring());
+  }
+
+  private async checkExpiring(): Promise<void> {
     // Use max window (30 days) for the DB query, then filter per-user by tier
     const threshold = new Date();
     threshold.setDate(threshold.getDate() + 30);
@@ -52,15 +63,17 @@ export class CertMonitorService {
     });
     this.metricsService.activeCertificatesTotal.set(activeCount);
 
+    // Renewing certificates (started or waiting for a slot) still get the
+    // warning: the renewal may not finish before expiry
     const expiring = await this.tlsCrtRepository.find({
       where: [
         {
-          status: CertStatus.ISSUED,
+          status: In(WARNED_STATUSES),
           autoRenew: true,
           expiresAt: LessThan(threshold),
         },
         {
-          status: CertStatus.ISSUED,
+          status: In(WARNED_STATUSES),
           managedBy: 'connector',
           expiresAt: LessThan(threshold),
         },
@@ -149,6 +162,13 @@ export class CertMonitorService {
             daysUntilExpiry: daysLeft,
           },
         });
+      }
+
+      if (cert.status !== CertStatus.ISSUED) {
+        this.logger.log(
+          `Not queuing renewal for certificate #${cert.id}: already renewing`,
+        );
+        continue;
       }
 
       if (connector) {

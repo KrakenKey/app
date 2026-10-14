@@ -551,7 +551,11 @@ Other fields are ignored and never stored, the same as on every other route. In 
 
 ### POST /certs/tls/:id/renew
 
-Manually queue a renewal for an `issued` certificate. Creates a new ACME order using the stored CSR, or a new one from the request body. By default the renewal always runs, whatever the expiry date, so it can be used to replace a certificate right away (for example after a key compromise). Each renewal counts against the monthly certificate limit.
+Manually queue a renewal for an `issued` certificate. Creates a new ACME order using the stored CSR, or a new one from the request body. By default the renewal always runs, whatever the expiry date, so it can be used to replace a certificate right away (for example after a key compromise).
+
+A renewal replaces a certificate rather than adding one, so it doesn't count toward the total active or monthly certificate limits, and it is never refused for a plan limit. It does take one of the account's concurrent pending slots while it runs (pooled across an organization, shared with new requests). When they are all in use, the renewal waits: the response is `202` with `"queued": true`, the status is `renewing` and `renewalQueuedAt` is set on the certificate. Waiting renewals start on their own, oldest first, as earlier requests finish (within a minute of a slot freeing up), and `renewalQueuedAt` goes back to `null` when one starts. Nothing is sent to the CA while a renewal waits.
+
+Rate limit category: `renewal`, its own allowance per tier (Free 10 an hour, Starter 30, Team 120, Business 300, Enterprise 600), separate from the `expensive` one used for issuance. `ifDue=true` requests count even when nothing is due. See [RATE_LIMITING.md](../../docs/RATE_LIMITING.md).
 
 **Request body (optional):**
 ```json
@@ -564,11 +568,11 @@ Without a body, the CSR stored at first issuance is used again, so the key stays
 
 - The CSR gets the same checks as [POST /certs/tls](#post-certstls): PEM format, at most 10,000 characters, a valid signature, and an RSA (2048 bits or more) or ECDSA (P-256, P-384) key. A CSR that fails returns `400`. Domain verification is not checked again, the same as any renewal; the name rule below keeps the certificate on the names it already had.
 - Its names (CN plus DNS SANs, lowercased, without duplicates, in any order) must equal the certificate's names. Otherwise the response is `400` with the message `CSR names must match the certificate`. To change names, request a new certificate.
-- Once the renewal is queued, the new CSR replaces the stored one, so later renewals (and a retry after a failed renewal) use it. When `ifDue=true` skips the renewal, or a plan limit refuses it, the stored CSR is left unchanged.
+- Once the renewal is accepted (started or waiting), the new CSR replaces the stored one, so the renewal, later renewals and a retry after a failed renewal use it. When `ifDue=true` skips the renewal, the stored CSR is left unchanged.
 
 Scope (`certs:renew`), roles, API key limits and rate limit category are the same with or without a body.
 
-**Completing a pending certificate.** For an `awaiting_csr` certificate (see [pending certificates](#pending-certificates)) the body is required: without `csrPem` the response is `400` `This certificate is waiting for a CSR`. The CSR gets the checks above, its names must equal `requestedNames` (same comparison, `400` `CSR names must match the certificate` otherwise), and they must still be under the account's verified domains. Then it is issued like a new request: the CSR is stored, the status goes `pending` -> `issuing` -> `issued`, a `cert.issued` alert is sent, and the concurrent pending and monthly limits apply (the certificate itself already holds its place in the total active and monthly counts). `ifDue=true` always treats it as due. `certs:renew` is enough, so an API key limited to that certificate (`allowedCertIds`) can complete it. If two requests race, one gets `409`.
+**Completing a pending certificate.** For an `awaiting_csr` certificate (see [pending certificates](#pending-certificates)) the body is required: without `csrPem` the response is `400` `This certificate is waiting for a CSR`. The CSR gets the checks above, its names must equal `requestedNames` (same comparison, `400` `CSR names must match the certificate` otherwise), and they must still be under the account's verified domains. Then it is issued like a new request: the CSR is stored, the status goes `pending` -> `issuing` -> `issued`, a `cert.issued` alert is sent, and the concurrent pending and monthly limits apply, so a full account gets `402` here rather than a queued request (the certificate itself already holds its place in the total active and monthly counts). `ifDue=true` always treats it as due. `certs:renew` is enough, so an API key limited to that certificate (`allowedCertIds`) can complete it. If two requests race, one gets `409`.
 
 ```json
 {
@@ -588,14 +592,27 @@ A certificate the CA has asked to replace early (`ariReplacementRequestedAt` set
 
 Use `ifDue=true` when calling renew on a schedule (cron, systemd timer, CI): it renews once the certificate is due and does nothing on the other days, so no quota is used. A certificate with no recorded expiry is always renewed. The status and CSR checks run first either way, so a certificate that is not `issued` still returns `400`.
 
-**Response `201` (renewal queued):**
+**Response `201` (renewal started):**
 ```json
 {
   "id": 42,
   "status": "renewing",
-  "skipped": false
+  "skipped": false,
+  "queued": false
 }
 ```
+
+**Response `202` (renewal accepted, waiting for a free concurrent pending slot):**
+```json
+{
+  "id": 42,
+  "status": "renewing",
+  "skipped": false,
+  "queued": true
+}
+```
+
+Poll `GET /certs/tls/:id` either way: the status goes `renewing` -> `issued` (or `failed`).
 
 **Response `200` (`ifDue=true`, not due yet; nothing queued, status unchanged):**
 ```json
@@ -608,6 +625,22 @@ Use `ifDue=true` when calling renew on a schedule (cron, systemd timer, CI): it 
   "renewalWindowDays": 30
 }
 ```
+
+
+**Response `200` (`ifDue=true`, a renewal is already running or waiting; nothing changed):**
+```json
+{
+  "id": 42,
+  "status": "renewing",
+  "skipped": true,
+  "reason": "in_progress",
+  "queued": true
+}
+```
+
+**Errors:** `400` when the certificate is `pending`, `issuing`, `failed`, `revoking` or `revoked`, has no stored CSR and none was sent, or the CSR is invalid or has other names; `404` when it doesn't exist or the API key can't see it; `409` when a renewal of it is already running or waiting (status `renewing`, without `ifDue`), when another request started one at the same moment, or when another request completed the `awaiting_csr` certificate; `402` only when completing an `awaiting_csr` certificate; `429` past the `renewal` rate limit.
+
+A request whose job is lost (for example Redis lost its data, or the job stalled more often than the worker allows) doesn't stay in flight for good. After 30 minutes with no waiting, active or delayed job, a renewal goes back to `issued` when its current certificate is still there (otherwise it is queued again, at most until it has been recovered three times), and a new certificate goes to `failed` with a `failureReason` saying it was interrupted and the usual failure email, so `POST /certs/tls/:id/retry` works.
 
 ### POST /certs/tls/:id/retry
 
@@ -625,6 +658,8 @@ Revoke an issued certificate via ACME.
 ```
 
 `reason` is an optional RFC 5280 revocation code (0–10). Default: 0 (unspecified).
+
+A certificate whose renewal is still waiting for a slot (status `renewing`, `renewalQueuedAt` set) can be revoked too: its current certificate is revoked and the waiting renewal is dropped. If the CA refuses the revocation (`500`), the waiting renewal stays queued at its place. Once a renewal has started, revoke returns `400` until it finishes. If the certificate changes state while the request runs (for example its waiting renewal starts, or another revoke wins), the response is `409`.
 
 ### DELETE /certs/tls/:id
 

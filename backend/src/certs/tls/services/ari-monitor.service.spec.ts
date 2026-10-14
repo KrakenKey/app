@@ -2,6 +2,10 @@ import * as x509 from '@peculiar/x509';
 import { webcrypto } from 'node:crypto';
 import { AriMonitorService } from './ari-monitor.service';
 import { ariCertId } from '../util/ari';
+import {
+  InMemoryLockStore,
+  inMemoryJobLock,
+} from '../../../common/scheduling/scheduled-job-lock.testing';
 
 const DAY = 86_400_000;
 const NOT_BEFORE = new Date('2026-10-01T00:00:00Z');
@@ -46,6 +50,18 @@ describe('AriMonitorService', () => {
   let metrics: { ariChecksTotal: { inc: jest.Mock } };
   let alerts: { emit: jest.Mock };
   let svc: AriMonitorService;
+  let lockStore: InMemoryLockStore;
+  const newService = (lock = inMemoryJobLock(lockStore).lock) =>
+    new AriMonitorService(
+      repo as any,
+      users as any,
+      tls as any,
+      ari as any,
+      billing as any,
+      metrics as any,
+      alerts as any,
+      lock,
+    );
 
   const cert = (over: Record<string, unknown> = {}) => ({
     id: 7,
@@ -77,15 +93,8 @@ describe('AriMonitorService', () => {
     billing = { resolveUserTier: jest.fn().mockResolvedValue('starter') };
     metrics = { ariChecksTotal: { inc: jest.fn() } };
     alerts = { emit: jest.fn().mockResolvedValue(0) };
-    svc = new AriMonitorService(
-      repo as any,
-      users as any,
-      tls as any,
-      ari as any,
-      billing as any,
-      metrics as any,
-      alerts as any,
-    );
+    lockStore = new InMemoryLockStore();
+    svc = newService();
   });
 
   it('does nothing when ARI is disabled', async () => {
@@ -237,10 +246,12 @@ describe('AriMonitorService', () => {
     await svc.checkRenewalInfo(NOW);
     expect(saved().ariNextCheckAt).toEqual(new Date(NOW.getTime() + DAY));
 
+    // The next hourly run
+    const later = new Date(NOW.getTime() + 3600 * 1000);
     ari.getRenewalInfo.mockRejectedValueOnce(new Error('503'));
-    await svc.checkRenewalInfo(NOW);
+    await svc.checkRenewalInfo(later);
     expect(saved().ariNextCheckAt).toEqual(
-      new Date(NOW.getTime() + 6 * 3600 * 1000),
+      new Date(later.getTime() + 6 * 3600 * 1000),
     );
     expect(metrics.ariChecksTotal.inc).toHaveBeenCalledWith({
       result: 'error',
@@ -252,5 +263,37 @@ describe('AriMonitorService', () => {
     await svc.checkRenewalInfo(NOW);
     expect(ari.getRenewalInfo).not.toHaveBeenCalled();
     expect(saved().ariNextCheckAt).toEqual(new Date(NOW.getTime() + DAY));
+  });
+
+  it('alerts and renews once when two API processes run the same hour', async () => {
+    repo.find.mockResolvedValue([cert({ ariWindowStart: at(60) })]);
+    ari.getRenewalInfo.mockResolvedValue(window(38, 39));
+
+    await Promise.all([
+      svc.checkRenewalInfo(NOW),
+      newService().checkRenewalInfo(new Date(NOW.getTime() + 500)),
+    ]);
+
+    expect(repo.find).toHaveBeenCalledTimes(1);
+    expect(alerts.emit).toHaveBeenCalledTimes(1);
+    expect(tls.renewInternal).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips an hourly run while the previous one is still going', async () => {
+    let release!: () => void;
+    repo.find.mockReturnValue(
+      new Promise((resolve) => (release = () => resolve([]))),
+    );
+
+    const first = svc.checkRenewalInfo(NOW);
+    await new Promise((r) => setImmediate(r));
+    // The next hour fires while the first run is still waiting
+    await svc.checkRenewalInfo(new Date(NOW.getTime() + 3600 * 1000));
+    expect(repo.find).toHaveBeenCalledTimes(1);
+
+    release();
+    await first;
+    await svc.checkRenewalInfo(new Date(NOW.getTime() + 2 * 3600 * 1000));
+    expect(repo.find).toHaveBeenCalledTimes(2);
   });
 });
