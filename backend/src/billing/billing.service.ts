@@ -28,6 +28,7 @@ import {
   normalizePlan,
   planLabel,
   type BillingInterval,
+  type ScheduledPlanChange,
   type SubscriptionPlan,
 } from '@krakenkey/shared';
 import {
@@ -101,6 +102,12 @@ function addInterval(from: Date, interval: BillingInterval): Date {
 }
 
 const ENDED_STRIPE_STATUSES = new Set(['canceled', 'incomplete_expired']);
+
+/**
+ * How long GET /billing/subscription waits for Stripe when it looks up a
+ * scheduled plan change, so a slow Stripe doesn't hold up the billing page.
+ */
+const SCHEDULE_LOOKUP_TIMEOUT_MS = 5000;
 
 /**
  * The Stripe subscription an invoice belongs to, or null for one-off
@@ -625,6 +632,74 @@ export class BillingService {
       status: sub.status,
       currentPeriodEnd: sub.currentPeriodEnd?.toISOString() ?? null,
       cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+    };
+  }
+
+  /**
+   * The plan or interval change Stripe will apply later, read from the
+   * subscription schedule the billing portal attaches when a downgrade or
+   * a yearly-to-monthly switch waits for the end of the period. Null when
+   * nothing is scheduled, for Marketplace and ended subscriptions, when a
+   * cancellation is pending (cancelAtPeriodEnd says so), and when the next
+   * phase's price isn't one of ours. Read live rather than stored, so it
+   * needs no webhook for schedule events; a Stripe error is logged and
+   * reported as no change, so the billing page still loads.
+   */
+  async scheduledChange(
+    sub: Subscription | null,
+  ): Promise<ScheduledPlanChange | null> {
+    if (
+      !sub ||
+      sub.source === 'marketplace' ||
+      !isBillingLive(sub) ||
+      sub.cancelAtPeriodEnd
+    ) {
+      return null;
+    }
+    let stripeSub: Stripe.Subscription;
+    try {
+      stripeSub = await this.stripe.subscriptions.retrieve(
+        sub.stripeSubscriptionId!,
+        { expand: ['schedule'] },
+        { timeout: SCHEDULE_LOOKUP_TIMEOUT_MS, maxNetworkRetries: 0 },
+      );
+    } catch (err) {
+      // The error type only: messages can echo request details
+      const type = (err as { type?: unknown } | null)?.type;
+      this.logger.warn(
+        `Couldn't read scheduled changes for subscription ${sub.stripeSubscriptionId} (${typeof type === 'string' ? type : 'unknown error'}); reporting none`,
+      );
+      return null;
+    }
+
+    const schedule = stripeSub.schedule;
+    if (!schedule || typeof schedule === 'string') return null;
+    if (schedule.status !== 'active') return null;
+
+    // The first phase after the current one
+    const from =
+      schedule.current_phase?.end_date ?? Math.floor(Date.now() / 1000);
+    const next = schedule.phases
+      .filter((phase) => phase.start_date >= from)
+      .sort((a, b) => a.start_date - b.start_date)[0];
+    // Plans are a single price; anything else isn't a plan change we know
+    if (!next || next.items.length !== 1) return null;
+    const price = next.items[0].price;
+    const target = this.prices.lookup(
+      typeof price === 'string' ? price : price?.id,
+    );
+    if (!target) return null;
+
+    const current = this.prices.lookup(stripeSub.items?.data?.[0]?.price?.id);
+    const currentPlan = current?.plan ?? normalizePlan(sub.plan);
+    const currentInterval = current?.interval ?? sub.billingInterval ?? 'month';
+    if (target.plan === currentPlan && target.interval === currentInterval) {
+      return null;
+    }
+    return {
+      plan: target.plan,
+      interval: target.interval,
+      effectiveAt: new Date(next.start_date * 1000).toISOString(),
     };
   }
 

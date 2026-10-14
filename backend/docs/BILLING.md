@@ -132,11 +132,18 @@ GET /billing/subscription
   "graceEndsAt": null,
   "source": "stripe",
   "marketplaceStatus": null,
+  "scheduledChange": {
+    "plan": "pro",
+    "interval": "month",
+    "effectiveAt": "2027-04-01T00:00:00.000Z"
+  },
   "createdAt": "2026-03-01T00:00:00.000Z"
 }
 ```
 
 Accounts without a subscription get the same shape with `plan: "free"`. `interval` is `month` or `year` for a Stripe subscription (rows from before annual billing read as `month` until their next Stripe event records it) and `null` on the free plan and for Microsoft Marketplace subscriptions.
+
+`scheduledChange` is a plan or interval change Stripe will make later, usually at the end of the current period: a downgrade or a switch from yearly to monthly made in the billing portal, which the portal schedules by attaching a subscription schedule to the subscription. It is read from Stripe on each request (the subscription with its schedule expanded, a 5 second timeout and no retries), not stored, so it needs no webhook for schedule events. It comes from the first schedule phase after the current one, and is `null` when there is no active schedule, when that phase's price isn't one of the configured prices or keeps the current plan and interval, on the free plan, for Marketplace subscriptions, for ended subscriptions and while `cancelAtPeriodEnd` is `true` (a cancellation is reported there). If Stripe can't be reached, the error type is logged and `scheduledChange` is `null`; the rest of the response is unaffected. A `pending_update` (an update waiting for its payment, which this API never creates) isn't reported. When the new phase starts, Stripe sends `customer.subscription.updated` and the webhook records the new plan and interval as usual.
 
 While a payment has failed, `status` is `past_due`, `pastDueSince` is the time of the first failure and `graceEndsAt` is when the paid limits stop applying unless the payment goes through. Both are `null` otherwise.
 

@@ -27,6 +27,18 @@ export type MarketplaceSaasStatus =
   | 'Suspended'
   | 'Unsubscribed';
 
+/**
+ * A plan or billing interval change Stripe will apply at a later date,
+ * usually the end of the current period (a downgrade or a switch from
+ * yearly to monthly made in the billing portal).
+ */
+export interface ScheduledPlanChange {
+  plan: SubscriptionPlan;
+  interval: BillingInterval;
+  /** When the change takes effect (ISO 8601). */
+  effectiveAt: string;
+}
+
 export interface Subscription {
   id: string;
   plan: SubscriptionPlan;
@@ -50,6 +62,12 @@ export interface Subscription {
    * Marketplace subscriptions and for rows from before annual billing.
    */
   interval?: BillingInterval | null;
+  /**
+   * A change Stripe has scheduled for a later date, or null when there is
+   * none, for Marketplace and free subscriptions, and when Stripe couldn't
+   * be reached. Cancellation is reported by `cancelAtPeriodEnd` instead.
+   */
+  scheduledChange?: ScheduledPlanChange | null;
   createdAt: string;
 }
 

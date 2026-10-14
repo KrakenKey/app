@@ -97,6 +97,7 @@ export class BillingController {
         source: 'stripe',
         marketplaceStatus: null,
         interval: null,
+        scheduledChange: null,
       };
     }
     return {
@@ -115,6 +116,7 @@ export class BillingController {
         sub.source !== 'marketplace' && sub.stripeSubscriptionId
           ? (sub.billingInterval ?? 'month')
           : null,
+      scheduledChange: await this.billingService.scheduledChange(sub),
       createdAt: sub.createdAt,
     };
   }

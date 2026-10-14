@@ -271,6 +271,63 @@ describe('Billing', () => {
       vi.unstubAllGlobals();
     });
 
+    it('shows a downgrade scheduled for the end of the period', async () => {
+      mockFetchPlans.mockResolvedValue(withYearly);
+      mockFetchSubscription.mockResolvedValue({
+        ...sub('business'),
+        interval: 'year',
+        currentPeriodEnd: '2027-10-14T12:00:00.000Z',
+        scheduledChange: {
+          plan: 'pro',
+          interval: 'month',
+          effectiveAt: '2027-10-14T12:00:00.000Z',
+        },
+      });
+      render(<Billing />);
+
+      const effective = new Date('2027-10-14T12:00:00.000Z').toLocaleDateString(
+        undefined,
+        { year: 'numeric', month: 'long', day: 'numeric' },
+      );
+      expect(
+        await screen.findByText(`Changes to Pro, monthly on ${effective}`),
+      ).toBeInTheDocument();
+      // The scheduled change replaces the interval switch
+      expect(
+        screen.queryByRole('button', { name: /switch to monthly/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('shows no scheduled change without one, or while canceling', async () => {
+      mockFetchPlans.mockResolvedValue(withYearly);
+      mockFetchSubscription.mockResolvedValue({
+        ...sub('pro'),
+        interval: 'year',
+        cancelAtPeriodEnd: true,
+        scheduledChange: {
+          plan: 'pro',
+          interval: 'month',
+          effectiveAt: '2027-10-14T12:00:00.000Z',
+        },
+      });
+      const { unmount } = render(<Billing />);
+      await screen.findByText('Cancels at period end');
+      expect(screen.queryByText(/^Changes to/)).not.toBeInTheDocument();
+      unmount();
+
+      mockFetchSubscription.mockResolvedValue({
+        ...sub('pro'),
+        interval: 'year',
+        scheduledChange: null,
+      });
+      render(<Billing />);
+      await screen.findByText(/Billed yearly\./);
+      expect(screen.queryByText(/^Changes to/)).not.toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Switch to monthly billing' }),
+      ).toBeInTheDocument();
+    });
+
     it('offers no switch without a yearly price', async () => {
       mockFetchSubscription.mockResolvedValue({
         ...sub('business'),
