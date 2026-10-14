@@ -10,6 +10,7 @@ import { Endpoint } from '../endpoints/entities/endpoint.entity';
 import { EndpointHostedRegion } from '../endpoints/entities/endpoint-hosted-region.entity';
 import { EndpointProbeAssignment } from '../endpoints/entities/endpoint-probe-assignment.entity';
 import { AuthModule } from '../auth/auth.module';
+import { BillingModule } from '../billing/billing.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { AuthModule } from '../auth/auth.module';
       EndpointProbeAssignment,
     ]),
     AuthModule,
+    BillingModule,
   ],
   controllers: [ProbesController],
   providers: [ProbesService, ProbeMonitorService, ScanResultCleanupService],

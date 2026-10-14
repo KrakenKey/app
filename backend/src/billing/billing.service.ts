@@ -27,7 +27,12 @@ import {
   planLabel,
   type SubscriptionPlan,
 } from '@krakenkey/shared';
-import { effectivePlan, graceEndsAt } from './entitlement';
+import {
+  effectivePlan,
+  entitledSubscriptionSql,
+  entitlementSqlParams,
+  graceEndsAt,
+} from './entitlement';
 import {
   BILLED_BY_MICROSOFT_MESSAGE,
   LIVE_STRIPE_STATUSES,
@@ -149,6 +154,41 @@ export class BillingService {
    */
   async resolveUserTier(userId: string): Promise<SubscriptionPlan> {
     return effectivePlan(await this.getSubscription(userId));
+  }
+
+  /**
+   * resolveUserTier for many users in one query: the organization's plan
+   * for an org member, otherwise the user's own. Users that don't exist are
+   * left out of the map.
+   */
+  async resolveTiers(
+    userIds: string[],
+  ): Promise<Map<string, SubscriptionPlan>> {
+    const ids = [...new Set(userIds)];
+    const tiers = new Map<string, SubscriptionPlan>();
+    if (ids.length === 0) return tiers;
+    const rows = await this.userRepository
+      .createQueryBuilder('u')
+      .leftJoin(
+        Subscription,
+        's_personal',
+        `s_personal."userId" = u.id AND ${entitledSubscriptionSql('s_personal')}`,
+      )
+      .leftJoin(
+        Subscription,
+        's_org',
+        `u."organizationId" IS NOT NULL AND s_org."organizationId" = u."organizationId" AND ${entitledSubscriptionSql('s_org')}`,
+      )
+      .select('u.id', 'id')
+      .addSelect(
+        `CASE WHEN u."organizationId" IS NOT NULL THEN s_org.plan ELSE s_personal.plan END`,
+        'plan',
+      )
+      .where('u.id IN (:...ids)', { ids })
+      .setParameters(entitlementSqlParams())
+      .getRawMany<{ id: string; plan: string | null }>();
+    for (const row of rows) tiers.set(row.id, normalizePlan(row.plan));
+    return tiers;
   }
 
   async getSubscription(userId: string): Promise<Subscription | null> {

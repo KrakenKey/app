@@ -672,6 +672,47 @@ describe('BillingService', () => {
     });
   });
 
+  describe('resolveTiers', () => {
+    it('resolves many owners in one query, org plan first, legacy ids mapped', async () => {
+      const qb = {
+        leftJoin: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        addSelect: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        setParameters: jest.fn().mockReturnThis(),
+        getRawMany: jest.fn().mockResolvedValue([
+          { id: 'a', plan: 'business' },
+          { id: 'b', plan: null },
+          { id: 'c', plan: 'starter' },
+        ]),
+      };
+      mockUserRepo.createQueryBuilder = jest.fn(() => qb);
+
+      const tiers = await service.resolveTiers(['a', 'b', 'c', 'a']);
+
+      expect(tiers).toEqual(
+        new Map([
+          ['a', 'business'],
+          ['b', 'free'],
+          ['c', 'pro'],
+        ]),
+      );
+      expect(mockUserRepo.createQueryBuilder).toHaveBeenCalledTimes(1);
+      expect(qb.where).toHaveBeenCalledWith('u.id IN (:...ids)', {
+        ids: ['a', 'b', 'c'],
+      });
+      expect(qb.addSelect.mock.calls[0][0]).toContain(
+        'CASE WHEN u."organizationId" IS NOT NULL THEN s_org.plan',
+      );
+    });
+
+    it('skips the query for no users', async () => {
+      mockUserRepo.createQueryBuilder = jest.fn();
+      await expect(service.resolveTiers([])).resolves.toEqual(new Map());
+      expect(mockUserRepo.createQueryBuilder).not.toHaveBeenCalled();
+    });
+  });
+
   describe('legacy plan ids (starter, team)', () => {
     const updated = (priceId?: string) =>
       ({

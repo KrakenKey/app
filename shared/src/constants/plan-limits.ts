@@ -16,11 +16,13 @@ export interface PlanLimits {
   concurrentPending: number;
   renewalWindowDays: number;
   monitoredEndpoints: number;
-  minScanInterval: number; // minutes
+  /** Shortest scan interval a connected probe may use, in minutes. */
+  minScanInterval: number;
   /** Distinct hosted regions in use; Infinity means every region that runs. */
   hostedProbeRegions: number;
   hostedMonitoredEndpoints: number;
-  hostedScanInterval: number; // minutes
+  /** How often hosted probes scan an endpoint, in minutes. */
+  hostedScanInterval: number;
   scanResultRetentionDays: number;
   /** Most hosts in one portfolio report (shared REPORT_HOST_LIMITS) */
   reportHosts: number;
@@ -115,3 +117,19 @@ export const PLAN_LIMITS: Record<SubscriptionPlan, PlanLimits> = {
     orgMembers: Infinity,
   },
 } as const;
+
+/** Probe modes that scan endpoints for an account. */
+export type ScanMode = 'hosted' | 'connected';
+
+/**
+ * Scan interval for an endpoint on this plan, in minutes: how often hosted
+ * probes scan it, or the shortest interval the API accepts from a connected
+ * probe.
+ */
+export function scanIntervalMinutes(
+  plan: SubscriptionPlan,
+  mode: ScanMode,
+): number {
+  const limits = PLAN_LIMITS[plan];
+  return mode === 'hosted' ? limits.hostedScanInterval : limits.minScanInterval;
+}

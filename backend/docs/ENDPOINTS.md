@@ -24,6 +24,28 @@ KrakenKey can monitor TLS endpoints (servers) to track certificate expiry, trust
 | Connected scan interval (minimum) | 60 min | 15 min | 1 min | 1 min |
 | Scan result retention | 7 days | 30 days | 90 days | 90 days |
 
+## Scan Intervals
+
+Scan intervals follow the endpoint owner's plan (the organization's plan for an org member):
+
+| | Starter (`free`) | Pro | Business | Enterprise |
+|---|---|---|---|---|
+| Hosted probes scan every | 60 min | 30 min | 5 min | 1 min |
+| Connected probes, shortest interval | 60 min | 15 min | 1 min | 1 min |
+
+`GET /probes/:probeId/config` returns each endpoint with its `interval` (Go duration syntax, for example `"30m"`): for a hosted probe, how often to scan the endpoint; for a connected probe, the shortest interval the API accepts (the probe's own `KK_PROBE_INTERVAL` still applies when it is longer). The top-level `interval` is the shortest endpoint interval, or `60m` with no endpoints. `KK_PROBE_HOSTED_INTERVAL` is no longer read.
+
+```json
+{
+  "endpoints": [
+    { "host": "example.com", "port": 443, "sni": "example.com", "userId": "...", "interval": "30m" }
+  ],
+  "interval": "30m"
+}
+```
+
+`POST /probes/report` skips a result that arrives sooner than the interval after the previous result from the same probe for the same endpoint (measured when the API receives it, with 10% or at least 10 seconds of slack), unless a scan was requested for the endpoint since (`POST /endpoints/:id/scan`). The response counts them: `{ "accepted": 3, "tooSoon": 1 }`. This applies whatever the probe version: probes before per-endpoint intervals scan everything at their local interval, so a connected probe set faster than its plan allows has the extra results skipped, and a hosted probe on an older version scans at its local interval until it is upgraded.
+
 ## API Endpoints
 
 ### Create Endpoint

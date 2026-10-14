@@ -1,6 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { ConfigService } from '@nestjs/config';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { ProbesService } from './probes.service';
 import { Probe } from './entities/probe.entity';
@@ -10,6 +9,7 @@ import { EndpointHostedRegion } from '../endpoints/entities/endpoint-hosted-regi
 import { EndpointProbeAssignment } from '../endpoints/entities/endpoint-probe-assignment.entity';
 import { AlertsService } from '../notifications/channels/alerts.service';
 import { scanFailureReason } from './scan-failure';
+import { BillingService } from '../billing/billing.service';
 
 describe('ProbesService', () => {
   let service: ProbesService;
@@ -17,6 +17,8 @@ describe('ProbesService', () => {
   let scanResultRepo: Record<string, jest.Mock>;
   let endpointRepo: Record<string, jest.Mock>;
   let alerts: { emit: jest.Mock };
+  let billing: { resolveTiers: jest.Mock };
+  let tiers: Record<string, string>;
 
   const serviceKeyUser = { isServiceKey: true, serviceKeyId: 'svc-1' };
   const connectedUser = { userId: 'user-123' };
@@ -57,6 +59,14 @@ describe('ProbesService', () => {
     };
 
     alerts = { emit: jest.fn().mockResolvedValue(1) };
+    tiers = {};
+    billing = {
+      resolveTiers: jest.fn(async (ids: string[]) => {
+        const map = new Map<string, string>();
+        for (const id of ids) map.set(id, tiers[id] ?? 'free');
+        return map;
+      }),
+    };
 
     scanResultRepo = {
       findOne: jest.fn().mockResolvedValue(null),
@@ -96,11 +106,8 @@ describe('ProbesService', () => {
           provide: getRepositoryToken(EndpointProbeAssignment),
           useValue: {},
         },
-        {
-          provide: ConfigService,
-          useValue: { get: jest.fn().mockReturnValue('60m') },
-        },
         { provide: AlertsService, useValue: alerts },
+        { provide: BillingService, useValue: billing },
       ],
     }).compile();
 
@@ -284,7 +291,6 @@ describe('ProbesService', () => {
         scanResultRepo.findOne.mockResolvedValue(failingRow);
         await service.submitReport(dto, connectedUser);
         expect(alerts.emit).not.toHaveBeenCalled();
-        expect(scanResultRepo.findOne).not.toHaveBeenCalled();
       });
 
       it('treats an expired certificate as failing', async () => {
@@ -317,8 +323,95 @@ describe('ProbesService', () => {
         scanResultRepo.findOne.mockRejectedValue(new Error('db down'));
         await expect(
           service.submitReport(failing, connectedUser),
-        ).resolves.toEqual({ accepted: 1 });
+        ).resolves.toEqual({ accepted: 1, tooSoon: 0 });
         expect(alerts.emit).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('scan interval', () => {
+      const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000);
+
+      beforeEach(() => {
+        probeRepo.findOne.mockResolvedValue({ ...mockProbe });
+        endpointRepo.findOne.mockResolvedValue(mockEndpoint);
+      });
+
+      it.each([
+        ['free', 50, 0],
+        ['free', 60, 1],
+        ['pro', 12, 0],
+        ['pro', 15, 1],
+        ['business', 0.5, 0],
+        ['business', 1, 1],
+      ])(
+        'on %s, a connected result %s minutes after the last is accepted %i time(s)',
+        async (plan, after, accepted) => {
+          tiers['user-123'] = plan;
+          scanResultRepo.findOne.mockResolvedValue({
+            connectionSuccess: true,
+            certTrusted: true,
+            certChainComplete: true,
+            certDaysUntilExpiry: 40,
+            createdAt: minutesAgo(after),
+          });
+
+          const res = await service.submitReport(dto, connectedUser);
+
+          expect(res).toEqual({ accepted, tooSoon: 1 - accepted });
+          if (!accepted) expect(scanResultRepo.save).not.toHaveBeenCalled();
+        },
+      );
+
+      it('accepts a result that is a little early (probe timers)', async () => {
+        scanResultRepo.findOne.mockResolvedValue({
+          connectionSuccess: true,
+          createdAt: minutesAgo(55),
+        });
+        await expect(service.submitReport(dto, connectedUser)).resolves.toEqual(
+          { accepted: 1, tooSoon: 0 },
+        );
+      });
+
+      it('accepts an early result after an on-demand scan request', async () => {
+        endpointRepo.findOne.mockResolvedValue({
+          ...mockEndpoint,
+          lastScanRequestedAt: minutesAgo(1),
+        });
+        scanResultRepo.findOne.mockResolvedValue({
+          connectionSuccess: true,
+          createdAt: minutesAgo(5),
+        });
+        await expect(service.submitReport(dto, connectedUser)).resolves.toEqual(
+          { accepted: 1, tooSoon: 0 },
+        );
+      });
+
+      it('uses the hosted interval for hosted results', async () => {
+        probeRepo.findOne.mockResolvedValue({
+          ...mockProbe,
+          mode: 'hosted',
+          userId: null,
+        });
+        endpointRepo.createQueryBuilder().getMany.mockResolvedValue([
+          { ...mockEndpoint, id: 'ep-pro', userId: 'u-pro' },
+          { ...mockEndpoint, id: 'ep-biz', userId: 'u-biz' },
+        ]);
+        tiers = { 'u-pro': 'pro', 'u-biz': 'business' };
+        // 10 minutes since the last scan: Business (5m) is due, Pro (30m) isn't
+        scanResultRepo.findOne.mockResolvedValue({
+          connectionSuccess: true,
+          createdAt: minutesAgo(10),
+        });
+
+        const res = await service.submitReport(
+          { ...dto, mode: 'hosted' },
+          serviceKeyUser,
+        );
+
+        expect(res).toEqual({ accepted: 1, tooSoon: 1 });
+        expect(scanResultRepo.save.mock.calls[0][0]).toEqual([
+          expect.objectContaining({ endpointId: 'ep-biz' }),
+        ]);
       });
     });
 
@@ -346,7 +439,7 @@ describe('ProbesService', () => {
 
       await expect(
         service.submitReport({ ...dto, mode: 'hosted' }, serviceKeyUser),
-      ).resolves.toEqual({ accepted: 0 });
+      ).resolves.toEqual({ accepted: 0, tooSoon: 0 });
     });
 
     it("rejects reports for another user's probe", async () => {
@@ -394,6 +487,61 @@ describe('ProbesService', () => {
 
       expect(result.endpoints).toEqual([]);
       expect(endpointRepo.createQueryBuilder).toHaveBeenCalled();
+    });
+
+    it('gives each connected endpoint the owner plan minimum interval', async () => {
+      probeRepo.findOne.mockResolvedValue(mockProbe);
+      tiers['user-123'] = 'pro';
+      endpointRepo
+        .createQueryBuilder()
+        .getMany.mockResolvedValue([mockEndpoint]);
+
+      const result = await service.getConfig('probe-1', connectedUser);
+
+      expect(result.endpoints[0].interval).toBe('15m');
+      expect(result.interval).toBe('15m');
+    });
+
+    it('gives each hosted endpoint its owner plan interval, shortest on top', async () => {
+      probeRepo.findOne.mockResolvedValue({
+        ...mockProbe,
+        mode: 'hosted',
+        region: 'us-east-1',
+        userId: null,
+      });
+      tiers = { 'u-free': 'free', 'u-pro': 'pro', 'u-biz': 'business' };
+      endpointRepo.createQueryBuilder().getRawMany.mockResolvedValue(
+        ['u-free', 'u-pro', 'u-biz', 'u-ent'].map((userId) => ({
+          host: `${userId}.example.com`,
+          port: 443,
+          sni: `${userId}.example.com`,
+          userId,
+          lastScanRequestedAt: null,
+        })),
+      );
+      tiers['u-ent'] = 'enterprise';
+
+      const result = await service.getConfig('probe-1', serviceKeyUser);
+
+      expect(result.endpoints.map((e) => [e.userId, e.interval])).toEqual([
+        ['u-free', '60m'],
+        ['u-pro', '30m'],
+        ['u-biz', '5m'],
+        ['u-ent', '1m'],
+      ]);
+      expect(result.interval).toBe('1m');
+      // One lookup for every owner, not one per endpoint
+      expect(billing.resolveTiers).toHaveBeenCalledTimes(1);
+    });
+
+    it('answers 60m with no endpoints', async () => {
+      probeRepo.findOne.mockResolvedValue({
+        ...mockProbe,
+        mode: 'hosted',
+        userId: null,
+      });
+      const result = await service.getConfig('probe-1', serviceKeyUser);
+      expect(result).toEqual({ endpoints: [], interval: '60m' });
     });
 
     it("rejects fetching config for another user's probe", async () => {
