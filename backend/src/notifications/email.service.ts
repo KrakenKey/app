@@ -34,6 +34,14 @@ export interface CertEmailContext {
   expiresAt?: Date;
   daysUntilExpiry?: number;
   errorMessage?: string;
+  /** Renewal failures: the CA asked for early replacement (ARI). */
+  replacementRequested?: boolean;
+  /**
+   * Renewal failures: who tries again, and the earliest time KrakenKey or
+   * the connector does. 'manual': auto-renewal is off.
+   */
+  retryBy?: 'krakenkey' | 'connector' | 'manual';
+  retryAt?: Date | null;
 }
 
 export interface DomainVerificationFailedContext {

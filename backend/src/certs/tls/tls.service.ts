@@ -53,6 +53,7 @@ import type { SubscriptionPlan } from '@krakenkey/shared';
 import {
   certRenewalWindowDays,
   daysUntilExpiry,
+  hasRenewalFailure,
   renewAfter,
   renewalRetryAt,
 } from './util/renewal-window';
@@ -457,7 +458,8 @@ export class TlsService {
       return plan;
     };
     return Promise.all(
-      certs.map(async (cert) => {
+      certs.map(async (stored) => {
+        const cert = publicView(stored);
         // Without an expiry there is no window to apply, so skip the plan
         // lookup: null, or the creation time for an awaiting_csr certificate
         if (!cert.expiresAt) {
@@ -607,6 +609,9 @@ export class TlsService {
         status: CertStatus.REVOKED,
         revocationReason: reason ?? 0,
         revokedAt: new Date(),
+        // A revoked certificate has no renewal to report on
+        renewalFailedAt: null,
+        failureReason: null,
       });
 
       if (cert.user) {
@@ -763,15 +768,23 @@ export class TlsService {
     // active and monthly limits don't apply, and past the concurrent pending
     // limit it waits for a slot instead of being refused. The new CSR is
     // stored with the claim, so a queued renewal uses it when it starts.
-    const claimed = await this.claimRenewal(cert.id, {
-      ...(newCsr
+    const claimed = await this.claimRenewal(
+      cert.id,
+      newCsr
         ? {
             rawCsr: newCsr.raw,
             // ParsedCsr has `unknown` values, which QueryDeepPartialEntity rejects
             parsedCsr: newCsr.parsed as QueryDeepPartialEntity<ParsedCsr>,
+            // The CSR the current certificate was issued with, evaluated
+            // before this UPDATE changes it: restored if the renewal fails
+            // and the current certificate is kept
+            previousRawCsr: () => '"rawCsr"',
+            previousParsedCsr: () => '"parsedCsr"',
           }
-        : {}),
-    });
+        : { previousRawCsr: null, previousParsedCsr: null },
+      {},
+      { userRequested: true },
+    );
     if (!claimed) throw new ConflictException(RENEWAL_IN_PROGRESS);
 
     await this.startQueuedRenewalsSafely(cert.userId);
@@ -851,8 +864,8 @@ export class TlsService {
   }
 
   /**
-   * For `renew?ifDue=true`: the skip response while the last renewal failed
-   * less than RENEWAL_RETRY_BACKOFF_MS ago, or null.
+   * For `renew?ifDue=true`: the skip response while automatic renewal is
+   * still waiting after a failed renewal (see renewalRetryAt), or null.
    */
   private async recentlyFailed(
     cert: TlsCrt,
@@ -925,7 +938,7 @@ export class TlsService {
   ): Promise<RetryTlsCertResponse> {
     const cert = await this.findOne(id, userId);
 
-    if (cert.status === CertStatus.ISSUED && cert.renewalFailedAt) {
+    if (cert.status === CertStatus.ISSUED && hasRenewalFailure(cert)) {
       if (!allowed.renew) {
         throw new ForbiddenException(
           'This API key needs the certs:renew scope to retry a renewal.',
@@ -934,15 +947,15 @@ export class TlsService {
       return this.retryRenewal(cert);
     }
 
-    if (!allowed.issue) {
-      throw new ForbiddenException(
-        'This API key needs the certs:issue scope for this request.',
-      );
-    }
-
     if (cert.status !== CertStatus.FAILED) {
       throw new BadRequestException(
         `Certificate must be in 'failed' state to retry. Current status: ${cert.status}`,
+      );
+    }
+
+    if (!allowed.issue) {
+      throw new ForbiddenException(
+        'This API key needs the certs:issue scope for this request.',
       );
     }
 
@@ -978,7 +991,12 @@ export class TlsService {
         'Certificate missing CSR data, cannot retry',
       );
     }
-    const claimed = await this.claimRenewal(cert.id, {});
+    const claimed = await this.claimRenewal(
+      cert.id,
+      { previousRawCsr: null, previousParsedCsr: null },
+      {},
+      { userRequested: true },
+    );
     if (!claimed) throw new ConflictException(RENEWAL_IN_PROGRESS);
 
     await this.startQueuedRenewalsSafely(cert.userId);
@@ -1136,6 +1154,8 @@ export class TlsService {
       {
         renewalCount: () => '"renewalCount" + 1',
         lastRenewalAttemptAt: new Date(),
+        previousRawCsr: null,
+        previousParsedCsr: null,
       },
       { managedBy: IsNull() },
     );
@@ -1162,12 +1182,18 @@ export class TlsService {
    * A previous renewal failure is cleared here, so renewalFailedAt on an
    * issued certificate always describes the latest renewal: a client that
    * renewed and sees 'issued' with renewalFailedAt set knows its renewal
-   * failed. The recovery count starts over for the new request.
+   * failed.
+   *
+   * The recovery count starts over only for a renewal a user asked for
+   * (renew or retry). An automatic renewal keeps it, so a renewal that
+   * keeps losing its job isn't queued MAX_RECOVERIES times every day; a
+   * successful renewal resets it.
    */
   private async claimRenewal(
     id: number,
     changes: QueryDeepPartialEntity<TlsCrt>,
     where: FindOptionsWhere<TlsCrt> = {},
+    opts: { userRequested?: boolean } = {},
   ): Promise<boolean> {
     const result = await this.TlsCrtRepository.update(
       { ...where, id, status: CertStatus.ISSUED },
@@ -1177,7 +1203,7 @@ export class TlsService {
         renewalQueuedAt: new Date(),
         renewalFailedAt: null,
         failureReason: null,
-        recoveryCount: 0,
+        ...(opts.userRequested ? { recoveryCount: 0 } : {}),
       },
     );
     return (result?.affected ?? 0) > 0;
@@ -1451,6 +1477,8 @@ export class TlsService {
           inFlightSince: null,
           renewalFailedAt: now,
           failureReason,
+          // ParsedCsr has `unknown` values, which QueryDeepPartialEntity rejects
+          ...(restoredCsr(cert) as QueryDeepPartialEntity<TlsCrt>),
         };
         outcome =
           'back to issued with its current certificate (renewal failed)';
@@ -1460,7 +1488,14 @@ export class TlsService {
           inFlightSince: null,
           failureReason,
           // An expired certificate is no use; same as a failure in the job
-          ...(renewal ? { crtPem: null, chainPem: null } : {}),
+          ...(renewal
+            ? {
+                crtPem: null,
+                chainPem: null,
+                previousRawCsr: null,
+                previousParsedCsr: null,
+              }
+            : {}),
         };
         outcome = 'marked failed';
       }
@@ -1481,6 +1516,7 @@ export class TlsService {
         renewal,
         error: failureReason,
         currentExpiresAt: keepsCert ? cert.expiresAt : null,
+        failedAt: now,
       }).catch(() => undefined);
     }
     await this.startQueuedRenewalsSafely(cert.userId);
@@ -1501,6 +1537,8 @@ export class TlsService {
       renewal: boolean;
       error: string;
       currentExpiresAt?: Date | null;
+      /** When the renewal failure was recorded (for the retry time). */
+      failedAt?: Date;
     },
   ): Promise<void> {
     const commonName = certDisplayName(cert);
@@ -1525,6 +1563,18 @@ export class TlsService {
         await this.emailService.sendCertRenewalFailed({
           ...ctx,
           expiresAt: failure.currentExpiresAt,
+          replacementRequested: !!cert.ariReplacementRequestedAt,
+          retryBy:
+            cert.managedBy === 'connector'
+              ? 'connector'
+              : cert.autoRenew
+                ? 'krakenkey'
+                : 'manual',
+          retryAt: renewalRetryAt({
+            ...cert,
+            renewalFailedAt: failure.failedAt ?? new Date(),
+            lastRenewedAt: null,
+          }),
         });
       } else {
         await this.emailService.sendCertFailed(ctx);
@@ -1671,6 +1721,53 @@ export class TlsService {
       },
     });
   }
+}
+
+/**
+ * For a renewal that failed while its certificate is kept: puts back the
+ * CSR that certificate was issued with, if the renewal had replaced it
+ * (a renewal with a new CSR), so the stored CSR keeps matching the
+ * certificate's key, and clears the saved copy.
+ *
+ * This applies to connector-managed certificates too: the connector still
+ * holds the key of the certificate it has deployed, and sends a CSR for a
+ * fresh key on its next renewal anyway, so nothing relies on the failed
+ * renewal's CSR staying stored.
+ */
+export function restoredCsr(
+  cert: Pick<TlsCrt, 'previousRawCsr' | 'previousParsedCsr'>,
+): {
+  rawCsr?: string;
+  parsedCsr?: ParsedCsr | null;
+  previousRawCsr: null;
+  previousParsedCsr: null;
+} {
+  return {
+    ...(cert.previousRawCsr
+      ? { rawCsr: cert.previousRawCsr, parsedCsr: cert.previousParsedCsr }
+      : {}),
+    previousRawCsr: null,
+    previousParsedCsr: null,
+  };
+}
+
+/**
+ * A certificate as the API shows it: without the saved previous CSR, and
+ * without a renewal failure left over from a renewal that a previous
+ * release finished (see hasRenewalFailure).
+ */
+function publicView(cert: TlsCrt): TlsCrt {
+  const {
+    previousRawCsr: _previousRawCsr,
+    previousParsedCsr: _previousParsedCsr,
+    ...rest
+  } = cert;
+  void _previousRawCsr;
+  void _previousParsedCsr;
+  if (rest.renewalFailedAt && !hasRenewalFailure(rest)) {
+    return { ...rest, renewalFailedAt: null, failureReason: null } as TlsCrt;
+  }
+  return rest as TlsCrt;
 }
 
 /**

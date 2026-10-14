@@ -130,12 +130,17 @@ class FakeCertTable {
     const where = typeof criteria === 'number' ? { id: criteria } : criteria;
     const hit = [...this.rows.values()].filter((r) => matches(r, where));
     for (const row of hit) {
+      // SQL expressions see the row as it was before this UPDATE
+      const before = { ...row };
       for (const [key, value] of Object.entries(changes)) {
         if (typeof value === 'function') {
-          // Only the `"col" + n` expressions TlsService uses
-          const m = /^"(\w+)" \+ (\d+)$/.exec((value as () => string)());
-          if (!m) throw new Error(`Fake table: unsupported SQL ${value}`);
-          row[key] = row[m[1]] + Number(m[2]);
+          // Only the `"col" + n` and `"col"` expressions TlsService uses
+          const sql = (value as () => string)();
+          const add = /^"(\w+)" \+ (\d+)$/.exec(sql);
+          const col = /^"(\w+)"$/.exec(sql);
+          if (add) row[key] = before[add[1]] + Number(add[2]);
+          else if (col) row[key] = before[col[1]];
+          else throw new Error(`Fake table: unsupported SQL ${sql}`);
         } else {
           row[key] = value;
         }
@@ -1292,7 +1297,7 @@ describe('Renewal claims and queue', () => {
 
     it('renewAfter shows when it will be tried again', async () => {
       const failedAt = new Date();
-      const id = current({ renewalFailedAt: failedAt, expiresAt: inDays(3) });
+      const id = current({ renewalFailedAt: failedAt, expiresAt: inDays(4) });
 
       const res = await service.toResponse(table.row(id) as any);
       expect(res.renewAfter).toBe(
@@ -1318,6 +1323,118 @@ describe('Renewal claims and queue', () => {
       const renewed = await service.renew(id, 'u1');
       expect(renewed).toMatchObject({ skipped: false, status: 'renewing' });
       expect(queue.renewals()).toEqual([id]);
+    });
+
+    it('a failed renewal with a new key puts back the CSR of the kept certificate', async () => {
+      const oldParsed = parsedFor(['example.com']);
+      const id = current({ rawCsr: PEM, parsedCsr: oldParsed });
+      csrUtil.validateAndParse.mockResolvedValue({
+        raw: `${PEM}new`,
+        parsed: parsedFor(['example.com']),
+        domains: ['example.com'],
+        publicKeyLength: 256,
+      });
+
+      await service.renew(id, 'u1', { csrPem: 'new key CSR' });
+      expect(table.row(id)).toMatchObject({
+        rawCsr: `${PEM}new`,
+        previousRawCsr: PEM,
+        previousParsedCsr: oldParsed,
+      });
+
+      acmeIssue.mockRejectedValue(new Error('CAA record forbids'));
+      await runFinalAttempt(id);
+      expect(table.row(id)).toMatchObject({
+        status: 'issued',
+        crtPem: 'old-leaf',
+        rawCsr: PEM,
+        parsedCsr: oldParsed,
+        previousRawCsr: null,
+        previousParsedCsr: null,
+      });
+      // The API never shows the saved copy
+      const res = await service.toResponse(table.row(id) as any);
+      expect(res).not.toHaveProperty('previousRawCsr');
+      expect(res).not.toHaveProperty('previousParsedCsr');
+
+      // Automatic renewal later uses the restored CSR, not the new key's
+      await table.update(id, {
+        renewalFailedAt: new Date(Date.now() - 2 * DAY),
+      });
+      await service.renewInternal(id);
+      expect(table.row(id)).toMatchObject({ status: 'renewing', rawCsr: PEM });
+    });
+
+    it('a successful renewal with a new key keeps the new CSR', async () => {
+      const id = current({
+        rawCsr: PEM,
+        parsedCsr: parsedFor(['example.com']),
+      });
+      csrUtil.validateAndParse.mockResolvedValue({
+        raw: `${PEM}new`,
+        parsed: parsedFor(['example.com']),
+        domains: ['example.com'],
+        publicKeyLength: 256,
+      });
+      await service.renew(id, 'u1', { csrPem: 'new key CSR' });
+      acmeIssue.mockResolvedValue('new-leaf|new-chain');
+      await runFinalAttempt(id);
+      expect(table.row(id)).toMatchObject({
+        crtPem: 'new-leaf',
+        rawCsr: `${PEM}new`,
+        previousRawCsr: null,
+      });
+    });
+
+    it('only a renewal a user asks for starts the recovery count over', async () => {
+      const id = current({
+        recoveryCount: 2,
+        renewalFailedAt: new Date(Date.now() - 2 * DAY),
+      });
+      await service.renewInternal(id);
+      expect(table.row(id)).toMatchObject({
+        status: 'renewing',
+        recoveryCount: 2,
+      });
+
+      const other = current({ recoveryCount: 2 });
+      await service.renew(other, 'u1');
+      expect(table.row(other).recoveryCount).toBe(0);
+    });
+
+    it('revoking clears a recorded renewal failure', async () => {
+      const id = current({
+        renewalFailedAt: new Date(),
+        failureReason: 'CAA record forbids',
+      });
+      await service.revoke(id, 'u1');
+      expect(table.row(id)).toMatchObject({
+        status: 'revoked',
+        renewalFailedAt: null,
+        failureReason: null,
+      });
+    });
+
+    it('retry checks the status before the scope', async () => {
+      const id = current();
+      await service.renew(id, 'u1');
+      await expect(
+        service.retry(id, 'u1', { issue: false, renew: true }),
+      ).rejects.toThrow(/must be in 'failed' state/);
+    });
+
+    it('ignores a failure left over from a renewal an older release finished', async () => {
+      const id = current({
+        renewalFailedAt: new Date(Date.now() - 60 * 60_000),
+        failureReason: 'CAA record forbids',
+        lastRenewedAt: new Date(),
+      });
+
+      const res = await service.toResponse(table.row(id) as any);
+      expect(res).toMatchObject({ renewalFailedAt: null, failureReason: null });
+      await expect(service.retry(id, 'u1')).rejects.toThrow(/'failed' state/);
+      await service.renewInternal(id);
+      expect(table.row(id).status).toBe('renewing');
     });
 
     it('a connector timer sees the same wait through ifDue', async () => {

@@ -88,6 +88,8 @@ CREATE TABLE "tls_crt" (
   "id" SERIAL PRIMARY KEY,
   "rawCsr" VARCHAR,                               -- Original CSR PEM (hidden from API); NULL while awaiting_csr
   "parsedCsr" JSONB,                              -- Parsed CSR metadata; NULL while awaiting_csr
+  "previousRawCsr" VARCHAR,                       -- CSR of the current cert while a renewal with a new CSR runs (hidden from API)
+  "previousParsedCsr" JSONB,                      -- Parsed form of previousRawCsr
   "requestedNames" TEXT[],                        -- Names a pending certificate was created with; NULL for CSR requests
   "crtPem" TEXT,                                  -- Issued certificate PEM
   "status" VARCHAR DEFAULT 'pending',             -- awaiting_csr/pending/issuing/issued/failed/renewing/revoking/revoked

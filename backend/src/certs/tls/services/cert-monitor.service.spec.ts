@@ -331,4 +331,90 @@ describe('CertMonitorService', () => {
       expect(mockTlsService.renewInternal).toHaveBeenNthCalledWith(3, 30);
     });
   });
+  describe('retryFailedRenewals', () => {
+    const HOUR = 3_600_000;
+    const now = new Date('2026-10-14T13:00:00.000Z');
+    const failed = (extra: Partial<TlsCrt> = {}) =>
+      ({
+        ...expiringCert,
+        user: undefined,
+        expiresAt: new Date(now.getTime() + 3 * 24 * HOUR),
+        renewalFailedAt: new Date(now.getTime() - 21 * HOUR),
+        lastRenewedAt: null,
+        ariReplacementRequestedAt: null,
+        ariWindowStart: null,
+        ariWindowEnd: null,
+        ...extra,
+      }) as unknown as TlsCrt;
+
+    it('looks only at issued certificates KrakenKey renews whose renewal failed', async () => {
+      mockRepository.find.mockResolvedValue([]);
+      await service.retryFailedRenewals(now);
+      expect(mockRepository.find).toHaveBeenCalledWith({
+        where: {
+          status: CertStatus.ISSUED,
+          autoRenew: true,
+          managedBy: expect.anything(),
+          renewalFailedAt: expect.anything(),
+        },
+      });
+    });
+
+    it('renews again once the retry time has passed', async () => {
+      mockRepository.find.mockResolvedValue([failed()]);
+      await service.retryFailedRenewals(now);
+      expect(mockTlsService.renewInternal).toHaveBeenCalledWith(1);
+    });
+
+    it('waits until the retry time', async () => {
+      mockRepository.find.mockResolvedValue([
+        failed({ renewalFailedAt: new Date(now.getTime() - 5 * HOUR) }),
+      ]);
+      await service.retryFailedRenewals(now);
+      expect(mockTlsService.renewInternal).not.toHaveBeenCalled();
+    });
+
+    it('retries sooner close to expiry', async () => {
+      // 12 hours left at the failure: retry after 3 hours
+      mockRepository.find.mockResolvedValue([
+        failed({
+          renewalFailedAt: new Date(now.getTime() - 3 * HOUR),
+          expiresAt: new Date(now.getTime() + 9 * HOUR),
+        }),
+      ]);
+      await service.retryFailedRenewals(now);
+      expect(mockTlsService.renewInternal).toHaveBeenCalledWith(1);
+    });
+
+    it('leaves a failed early manual renewal until the certificate is due', async () => {
+      mockRepository.find.mockResolvedValue([
+        failed({ expiresAt: new Date(now.getTime() + 40 * 24 * HOUR) }),
+      ]);
+      await service.retryFailedRenewals(now);
+      expect(mockTlsService.renewInternal).not.toHaveBeenCalled();
+    });
+
+    it('retries outside the window once a CA early-replacement window is open', async () => {
+      mockRepository.find.mockResolvedValue([
+        failed({
+          expiresAt: new Date(now.getTime() + 40 * 24 * HOUR),
+          ariReplacementRequestedAt: new Date(now.getTime() - 48 * HOUR),
+          ariWindowStart: new Date(now.getTime() - 24 * HOUR),
+          ariWindowEnd: new Date(now.getTime() + 10 * 24 * HOUR),
+        }),
+      ]);
+      await service.retryFailedRenewals(now);
+      expect(mockTlsService.renewInternal).toHaveBeenCalledWith(1);
+    });
+
+    it('skips a free-plan owner whose auto-renewal confirmation lapsed', async () => {
+      mockUserRepository.findOneBy.mockResolvedValue({
+        ...mockUser,
+        autoRenewalConfirmedAt: null,
+      });
+      mockRepository.find.mockResolvedValue([failed()]);
+      await service.retryFailedRenewals(now);
+      expect(mockTlsService.renewInternal).not.toHaveBeenCalled();
+    });
+  });
 });

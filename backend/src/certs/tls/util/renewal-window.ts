@@ -8,27 +8,64 @@ import { PLAN_LIMITS } from '../../../billing/constants/plan-limits';
 const MS_PER_DAY = 86_400_000;
 
 /**
- * After a renewal fails while the current certificate is still valid
- * (renewalFailedAt), automatic renewal waits this long before trying
- * again: the daily expiry check retries about once a day, and the hourly
- * ARI check, a connector or a `renew?ifDue=true` timer don't send a
- * failing order every hour. A little under a day, so a failure recorded
- * shortly after the 6 AM check doesn't push the retry to the day after.
- * A renewal requested without ifDue (or a retry) is never held back.
+ * How long automatic renewal waits after a renewal fails while the current
+ * certificate is still valid (renewalFailedAt): a quarter of the time left
+ * until the deadline, but never more than RENEWAL_RETRY_BACKOFF_MS and
+ * never less than RENEWAL_RETRY_MIN_BACKOFF_MS. The deadline is the
+ * certificate's expiry, or the end of the CA's window when the CA asked
+ * for early replacement (ARI) and that comes first.
+ *
+ * So a failing renewal with weeks left is tried about once a day (not on
+ * every hourly check, connector pass or `renew?ifDue=true` timer), and one
+ * close to its deadline is tried more often: with a day left, every 6
+ * hours; with 8 hours or less left, every 2 hours. A renewal requested
+ * without ifDue, or a retry, is never held back.
  */
 export const RENEWAL_RETRY_BACKOFF_MS = 20 * 60 * 60 * 1000;
+export const RENEWAL_RETRY_MIN_BACKOFF_MS = 2 * 60 * 60 * 1000;
+
+/** The fields renewalRetryAt and hasRenewalFailure read. */
+export interface RenewalFailureInput {
+  renewalFailedAt?: Date | string | null;
+  lastRenewedAt?: Date | string | null;
+  expiresAt?: Date | string | null;
+  ariReplacementRequestedAt?: Date | string | null;
+  ariWindowEnd?: Date | string | null;
+}
+
+const ms = (d: Date | string | null | undefined) =>
+  d ? new Date(d).getTime() : NaN;
+
+/**
+ * Whether the certificate's last renewal failed. A renewalFailedAt older
+ * than lastRenewedAt is left over from a renewal that a previous release
+ * finished without clearing it (during a deploy), so it doesn't count.
+ */
+export function hasRenewalFailure(cert: RenewalFailureInput): boolean {
+  const failedAt = ms(cert.renewalFailedAt);
+  if (Number.isNaN(failedAt)) return false;
+  const renewedAt = ms(cert.lastRenewedAt);
+  return Number.isNaN(renewedAt) || failedAt > renewedAt;
+}
 
 /**
  * When automatic renewal may try again after a failed renewal, or null when
- * the last renewal didn't fail.
+ * the last renewal didn't fail. See RENEWAL_RETRY_BACKOFF_MS for the rule.
  */
-export function renewalRetryAt(cert: {
-  renewalFailedAt?: Date | string | null;
-}): Date | null {
-  if (!cert.renewalFailedAt) return null;
-  return new Date(
-    new Date(cert.renewalFailedAt).getTime() + RENEWAL_RETRY_BACKOFF_MS,
+export function renewalRetryAt(cert: RenewalFailureInput): Date | null {
+  if (!hasRenewalFailure(cert)) return null;
+  const failedAt = ms(cert.renewalFailedAt);
+  const deadlines = [ms(cert.expiresAt)];
+  if (cert.ariReplacementRequestedAt) deadlines.push(ms(cert.ariWindowEnd));
+  const deadline = Math.min(
+    ...deadlines.filter((d) => !Number.isNaN(d)),
+    Infinity,
   );
+  const delay = Math.min(
+    RENEWAL_RETRY_BACKOFF_MS,
+    Math.max(RENEWAL_RETRY_MIN_BACKOFF_MS, (deadline - failedAt) / 4),
+  );
+  return new Date(failedAt + delay);
 }
 
 /** Whole days until `expiresAt`, rounded down (negative once expired). */
@@ -65,6 +102,8 @@ export interface RenewAfterInput {
   managedBy?: CertManagedBy | null;
   createdAt?: Date | string | null;
   renewalFailedAt?: Date | string | null;
+  lastRenewedAt?: Date | string | null;
+  ariWindowEnd?: Date | string | null;
 }
 
 /**

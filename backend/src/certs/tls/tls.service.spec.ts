@@ -1221,6 +1221,8 @@ describe('TlsService', () => {
         status: 'revoked',
         revocationReason: 4,
         revokedAt: expect.any(Date),
+        renewalFailedAt: null,
+        failureReason: null,
       });
       expect(result).toEqual({ id: 1, status: 'revoked' });
     });
@@ -1234,6 +1236,8 @@ describe('TlsService', () => {
         status: 'revoked',
         revocationReason: 0,
         revokedAt: expect.any(Date),
+        renewalFailedAt: null,
+        failureReason: null,
       });
     });
 
@@ -1604,6 +1608,8 @@ describe('TlsService', () => {
             renewalFailedAt: null,
             failureReason: null,
             recoveryCount: 0,
+            previousRawCsr: expect.any(Function),
+            previousParsedCsr: expect.any(Function),
           },
         );
         expect(mockQueue.addBulk).toHaveBeenCalledWith([renewalJob(1)]);
@@ -1902,7 +1908,8 @@ describe('TlsService', () => {
         renewalQueuedAt: expect.any(Date),
         renewalFailedAt: null,
         failureReason: null,
-        recoveryCount: 0,
+        previousRawCsr: null,
+        previousParsedCsr: null,
       });
       // Incremented in SQL, so a stale read can't lose a count
       expect(changes.renewalCount()).toBe('"renewalCount" + 1');

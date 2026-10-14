@@ -416,6 +416,8 @@ describe('CertIssuerConsumer', () => {
           chainPem: null,
           failureReason: reason,
           inFlightSince: null,
+          previousRawCsr: null,
+          previousParsedCsr: null,
         },
         'failed',
       );
@@ -669,6 +671,8 @@ describe('CertIssuerConsumer', () => {
           failureReason: 'DNS propagation timeout',
           renewalFailedAt: expect.any(Date),
           inFlightSince: null,
+          previousRawCsr: null,
+          previousParsedCsr: null,
         },
         'issued',
       );
@@ -695,6 +699,31 @@ describe('CertIssuerConsumer', () => {
         status: 'failed',
       });
       expect(mockTlsService.startQueuedRenewalsSafely).toHaveBeenCalledTimes(1);
+    });
+
+    it('puts back the CSR the kept certificate was issued with', async () => {
+      mockTlsService.findOneInternal.mockResolvedValue(
+        renewing({
+          expiresAt: inThirtyDays(),
+          rawCsr: mockCsrRecord.rawCsr,
+          previousRawCsr: 'old CSR',
+          previousParsedCsr: { subject: [] },
+        }),
+      );
+      mockAcme.issue.mockRejectedValue(new Error('CAA record forbids'));
+
+      await expect(processor.process(finalAttempt as any)).rejects.toThrow();
+      expect(mockTlsService.finishProcessing).toHaveBeenCalledWith(
+        1,
+        expect.anything(),
+        expect.objectContaining({
+          rawCsr: 'old CSR',
+          parsedCsr: { subject: [] },
+          previousRawCsr: null,
+          previousParsedCsr: null,
+        }),
+        'issued',
+      );
     });
 
     it('keeps it on a permanent failure too, without more attempts', async () => {
@@ -735,6 +764,8 @@ describe('CertIssuerConsumer', () => {
           chainPem: null,
           failureReason: 'DNS propagation timeout',
           inFlightSince: null,
+          previousRawCsr: null,
+          previousParsedCsr: null,
         },
         'failed',
       );

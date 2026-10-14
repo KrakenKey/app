@@ -176,11 +176,17 @@ export function certName(cert: TlsCert): string {
 
 /**
  * The last renewal of this certificate failed, but the certificate itself
- * is still issued (and valid until it expires). KrakenKey tries again about
- * a day later; renewing by hand tries right away.
+ * is still issued (and in place until it expires). Automatic renewal tries
+ * again once it is due, not before `renewAfter`; renewing by hand tries
+ * right away. A failure older than the last successful renewal is ignored.
  */
 export function renewalFailed(cert: TlsCert): boolean {
-  return cert.status === CertStatus.ISSUED && !!cert.renewalFailedAt;
+  if (cert.status !== CertStatus.ISSUED || !cert.renewalFailedAt) return false;
+  return (
+    !cert.lastRenewedAt ||
+    new Date(cert.renewalFailedAt).getTime() >
+      new Date(cert.lastRenewedAt).getTime()
+  );
 }
 
 /**

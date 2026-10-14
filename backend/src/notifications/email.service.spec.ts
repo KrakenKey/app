@@ -266,13 +266,35 @@ describe('EmailService', () => {
         ...certCtx,
         expiresAt: new Date('2026-11-20T00:00:00Z'),
         errorMessage: 'CAA record forbids issuance',
+        retryBy: 'krakenkey',
+        retryAt: new Date('2026-10-15T02:00:00Z'),
       });
 
       const mail = mockSendMail.mock.calls[0][0];
       expect(mail.subject).toBe('Certificate renewal failed for example.com');
-      expect(mail.text).toContain('still valid and stays in place');
+      expect(mail.text).toContain('stays in place and is valid until');
       expect(mail.text).toContain('CAA record forbids issuance');
       expect(mail.text).toContain('krakenkey cert renew');
+      expect(mail.text).toContain('once it is due for renewal, not before');
+      expect(mail.text).not.toMatch(/several times/);
+    });
+
+    it('sendCertRenewalFailed adapts to replacement requests, connectors and manual renewal', async () => {
+      await service.sendCertRenewalFailed({
+        ...certCtx,
+        expiresAt: new Date('2026-11-20T00:00:00Z'),
+        replacementRequested: true,
+        retryBy: 'connector',
+        retryAt: new Date('2026-10-15T02:00:00Z'),
+      });
+      await service.sendCertRenewalFailed({ ...certCtx, retryBy: 'manual' });
+
+      const [replace, manual] = mockSendMail.mock.calls.map((c) => c[0].text);
+      expect(replace).toContain('the CA has asked for it to be replaced early');
+      expect(replace).not.toContain('nothing you have deployed changes');
+      expect(replace).toContain('Your connector renews it again');
+      expect(manual).toContain('Auto-renewal is off');
+      expect(manual).not.toContain('KrakenKey also renews');
     });
 
     it('sendCertRevoked sends correct subject', async () => {

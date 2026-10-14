@@ -1,6 +1,6 @@
 import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job, UnrecoverableError } from 'bullmq';
-import { TlsService, hasValidCert } from '../tls.service';
+import { TlsService, hasValidCert, restoredCsr } from '../tls.service';
 import { TlsCrt } from '../entities/tls-crt.entity';
 import { InternalUpdateTlsCrtDto } from '../dto/update-tls-crt.dto';
 import { CsrUtilService } from '../util/csr-util.service';
@@ -193,6 +193,9 @@ export class CertIssuerConsumer extends WorkerHost {
         // A new certificate: no failure to report any more
         failureReason: null,
         renewalFailedAt: null,
+        // The new CSR is now the certificate's
+        previousRawCsr: null,
+        previousParsedCsr: null,
         inFlightSince: null,
       };
       if (isRenewal) {
@@ -284,14 +287,17 @@ export class CertIssuerConsumer extends WorkerHost {
       // A renewal keeps the current certificate while it is still valid.
       const failureReason = message.slice(0, MAX_FAILURE_REASON_LENGTH);
       const keepsCert = isRenewal && hasValidCert(csrRecord);
+      const failedAt = new Date();
       const recorded = keepsCert
         ? await this.tlsService.finishProcessing(
             csrRecord.id,
             guard,
             {
               failureReason,
-              renewalFailedAt: new Date(),
+              renewalFailedAt: failedAt,
               inFlightSince: null,
+              // Back to the CSR the kept certificate was issued with
+              ...restoredCsr(csrRecord),
             },
             CertStatus.ISSUED,
           )
@@ -303,6 +309,8 @@ export class CertIssuerConsumer extends WorkerHost {
               chainPem: null,
               failureReason,
               inFlightSince: null,
+              previousRawCsr: null,
+              previousParsedCsr: null,
             },
             CertStatus.FAILED,
           );
@@ -327,6 +335,7 @@ export class CertIssuerConsumer extends WorkerHost {
         renewal: isRenewal,
         error: failureReason,
         currentExpiresAt: keepsCert ? csrRecord.expiresAt : null,
+        failedAt,
       });
 
       if (permanent) {

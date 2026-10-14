@@ -39,6 +39,9 @@ export class InternalUpdateTlsCrtDto extends UpdateTlsCrtDto {
   chainPem?: string | null;
   failureReason?: string | null;
   renewalFailedAt?: Date | null;
+  previousRawCsr?: string | null;
+  /** Only ever cleared through this DTO (set with a SQL expression). */
+  previousParsedCsr?: null;
   ariCertId?: string | null;
   ariWindowStart?: Date | null;
   ariWindowEnd?: Date | null;

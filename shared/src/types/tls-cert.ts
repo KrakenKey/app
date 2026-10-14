@@ -72,7 +72,7 @@ export interface TlsCert {
    * Set when the last renewal failed while the current certificate was
    * still valid. The certificate stays `issued` with its PEM, chain and
    * expiry, `failureReason` says why, and automatic renewal tries again
-   * after about a day (see `renewAfter`). Cleared when a renewal is
+   * once the certificate is due, not before `renewAfter`. Cleared when a renewal is
    * requested again. Null otherwise. Optional because older API releases
    * don't send it.
    */
@@ -96,9 +96,9 @@ export interface TlsCert {
    * is earlier. Connector-managed certificates use any ARI window and a
    * window of at least 30 days; other certificates use the plan window and
    * only an early-replacement ARI window (ariReplacementRequestedAt set).
-   * After a failed renewal (`renewalFailedAt`) it is never earlier than
-   * about a day after that failure, so automatic renewal doesn't retry a
-   * failing renewal more than about once a day.
+   * After a failed renewal (`renewalFailedAt`) it is never earlier than the
+   * next automatic attempt: 20 hours after the failure, or a quarter of the
+   * time left until expiry (at least 2 hours) when that is sooner.
    * Null when the certificate has no expiry yet (not issued) or is revoked.
    * For an `awaiting_csr` certificate it is the creation time: it is due now.
    */

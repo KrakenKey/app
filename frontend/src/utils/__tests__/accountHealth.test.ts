@@ -154,6 +154,22 @@ describe('computeAttention', () => {
     expect(items[0].linkLabel).toBe('Connectors');
   });
 
+  it('ignores a renewal failure older than the last successful renewal', () => {
+    const items = computeAttention({
+      ...empty,
+      certs: [
+        cert({
+          id: 7,
+          expiresAt: inDays(80),
+          renewalFailedAt: inDays(-2),
+          lastRenewedAt: inDays(-1),
+          failureReason: 'old',
+        }),
+      ],
+    });
+    expect(items).toEqual([]);
+  });
+
   it('lists an expiring endpoint once when a certificate covers it', () => {
     const items = computeAttention({
       ...empty,

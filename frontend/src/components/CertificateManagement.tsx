@@ -971,9 +971,17 @@ function CertDetailsPanel({
               {shortDate(cert.renewalFailedAt!)}. The current certificate stays
               in place until it expires.{' '}
               {cert.managedBy === 'connector'
-                ? 'The connector tries again on its next check after about a day.'
+                ? `The connector tries again on its next check${
+                    cert.renewAfter
+                      ? ` after ${shortDate(cert.renewAfter)}`
+                      : ''
+                  }.`
                 : cert.autoRenew
-                  ? 'KrakenKey tries again on its own, at the earliest in about a day, or renew it now.'
+                  ? `KrakenKey tries again on its own once it is due${
+                      cert.renewAfter
+                        ? `, not before ${shortDate(cert.renewAfter)}`
+                        : ''
+                    }, or renew it now.`
                   : 'Renew it to try again.'}
             </span>
           </DetailRow>
