@@ -63,6 +63,8 @@ export interface UpgradeRequest {
   plan: SubscriptionPlan;
   /** Defaults to the subscription's current interval. */
   interval?: BillingInterval;
+  /** prorationDate from the preview. */
+  prorationDate?: number;
 }
 
 /** `switch_interval` opens the portal on a monthly/yearly switch to confirm. */
@@ -96,6 +98,11 @@ export interface UpgradePreviewResponse {
   targetInterval?: BillingInterval;
   /** When the next regular invoice is due after the upgrade. */
   currentPeriodEnd: string;
+  /**
+   * Unix time the amount was prorated from. Send it with the upgrade so
+   * Stripe charges the same amount. Missing from older API versions.
+   */
+  prorationDate?: number;
 }
 
 export interface UpgradeResponse {

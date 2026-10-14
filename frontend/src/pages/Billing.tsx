@@ -336,11 +336,22 @@ export default function Billing() {
     setActionLoading(true);
     setUpgradeError(null);
     try {
-      await upgradeSubscription(upgradeModal.plan, upgradeModal.interval);
+      await upgradeSubscription(
+        upgradeModal.plan,
+        upgradeModal.interval,
+        upgradeModal.preview.prorationDate,
+      );
       setUpgradeModal(null);
       await loadSubscription();
-    } catch {
-      setUpgradeError('Upgrade failed. Please try again.');
+    } catch (err) {
+      // 402: the payment didn't go through; the API says what to do
+      const msg =
+        axios.isAxiosError(err) && err.response?.status === 402
+          ? err.response.data?.message
+          : null;
+      setUpgradeError(
+        typeof msg === 'string' ? msg : 'Upgrade failed. Please try again.',
+      );
     } finally {
       setActionLoading(false);
     }

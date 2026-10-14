@@ -69,6 +69,29 @@ function upgradeProration(change: UpgradeChange): {
     : { proration_behavior: 'always_invoice' };
 }
 
+/**
+ * The proration time the preview returned, when it is recent and not in the
+ * future; otherwise undefined, and Stripe prorates from now.
+ */
+function validProrationDate(date: number | undefined): number | undefined {
+  if (!date || !Number.isInteger(date)) return undefined;
+  const now = Math.floor(Date.now() / 1000);
+  return date <= now && now - date <= 60 * 60 ? date : undefined;
+}
+
+/**
+ * True when the payment needs the customer (3D Secure or another bank
+ * confirmation), which error_if_incomplete reports as a failed update.
+ */
+function needsCustomerAction(err: unknown): boolean {
+  const e = err as { code?: string; decline_code?: string } | null;
+  return (
+    e?.code === 'subscription_payment_intent_requires_action' ||
+    e?.code === 'authentication_required' ||
+    e?.decline_code === 'authentication_required'
+  );
+}
+
 /** One billing interval after `from`. */
 function addInterval(from: Date, interval: BillingInterval): Date {
   const d = new Date(from);
@@ -485,9 +508,13 @@ export class BillingService {
     targetPlan: string;
     targetInterval: BillingInterval;
     currentPeriodEnd: string;
+    prorationDate: number;
   }> {
     await this.assertBillingAccess(userId);
     const change = await this.planUpgrade(userId, newPlan, interval);
+    // Sent back with the upgrade, so Stripe prorates from the same moment
+    // and charges the amount shown here
+    const prorationDate = Math.floor(Date.now() / 1000);
 
     // The same change the upgrade makes, so the amount shown is the amount
     // charged: the new price for the rest of the period less the unused
@@ -498,6 +525,7 @@ export class BillingService {
       subscription_details: {
         items: [{ id: change.item.id, price: change.newPriceId }],
         ...upgradeProration(change),
+        proration_date: prorationDate,
       },
     });
     return {
@@ -508,6 +536,7 @@ export class BillingService {
       currentPeriodEnd: change.intervalChanges
         ? addInterval(new Date(), change.targetInterval).toISOString()
         : change.sub.currentPeriodEnd!.toISOString(),
+      prorationDate,
     };
   }
 
@@ -515,6 +544,7 @@ export class BillingService {
     userId: string,
     newPlan: string,
     interval?: BillingInterval,
+    prorationDate?: number,
   ): Promise<{
     plan: string;
     interval: BillingInterval;
@@ -531,6 +561,15 @@ export class BillingService {
     // error_if_incomplete changes nothing unless that payment succeeds. A
     // fresh idempotency key per request makes a network retry safe and
     // lets the customer try again after a declined card.
+    //
+    // Don't switch to pending_if_incomplete without also reading
+    // `pending_update` on the result: with it Stripe keeps the old price
+    // until the invoice is paid, and saving the new plan here right away
+    // would grant it unpaid.
+    //
+    // No off_session: the customer is on the page making the change, so
+    // the payment is on-session; a bank that asks for confirmation gets
+    // sent to the billing portal instead (below).
     let updated: Stripe.Subscription;
     try {
       updated = await this.stripe.subscriptions.update(
@@ -538,12 +577,25 @@ export class BillingService {
         {
           items: [{ id: change.item.id, price: change.newPriceId }],
           ...upgradeProration(change),
+          proration_date: validProrationDate(prorationDate),
           payment_behavior: 'error_if_incomplete',
         },
         { idempotencyKey: `upgrade-${sub.id}-${randomUUID()}` },
       );
     } catch (err) {
-      if (isStripeError(err, 'StripeCardError')) {
+      if (needsCustomerAction(err)) {
+        throw new HttpException(
+          {
+            message:
+              "Your bank needs you to confirm this payment. Your plan hasn't changed; use Manage Subscription to make the change in the billing portal, where you can confirm it.",
+          },
+          402,
+        );
+      }
+      if (
+        isStripeError(err, 'StripeCardError') ||
+        (err as { statusCode?: number }).statusCode === 402
+      ) {
         const reason = (err as { message?: string }).message?.replace(
           /\.+$/,
           '',
@@ -1135,6 +1187,14 @@ export class BillingService {
       sub.plan = price.plan;
       sub.billingInterval = price.interval;
     } else {
+      if (priceId) {
+        // Not one of the configured prices (an old or test price, or a
+        // portal configuration listing other prices): keep the plan, but
+        // make it visible
+        this.logger.warn(
+          `Subscription ${stripeSub.id} is on unrecognized price ${priceId}; kept plan ${sub.plan}`,
+        );
+      }
       // A row an older release wrote with a legacy plan id
       sub.plan = LEGACY_PLAN_ALIASES[sub.plan] ?? sub.plan;
     }

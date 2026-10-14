@@ -232,6 +232,7 @@ describe('BillingController', () => {
         userId,
         'business',
         undefined,
+        undefined,
       );
     });
   });

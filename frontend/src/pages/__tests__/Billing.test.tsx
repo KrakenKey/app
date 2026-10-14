@@ -166,7 +166,59 @@ describe('Billing', () => {
         expect(screen.getAllByText('$1,490/yr')).toHaveLength(2),
       );
       await user.click(screen.getByRole('button', { name: 'Confirm Upgrade' }));
-      expect(mockUpgradeSubscription).toHaveBeenCalledWith('business', 'year');
+      expect(mockUpgradeSubscription).toHaveBeenCalledWith(
+        'business',
+        'year',
+        undefined,
+      );
+    });
+
+    it('sends the preview proration time and shows a declined payment', async () => {
+      mockFetchPlans.mockResolvedValue(withYearly);
+      mockFetchSubscription.mockResolvedValue({
+        ...sub('pro'),
+        interval: 'month',
+      });
+      mockPreviewUpgrade.mockResolvedValue({
+        immediateAmountCents: 6000,
+        currency: 'usd',
+        targetPlan: 'business',
+        targetInterval: 'month',
+        currentPeriodEnd: '2026-11-14T00:00:00.000Z',
+        prorationDate: 1791000000,
+      });
+      const message =
+        "The payment for the upgrade didn't go through: Your card was declined. Your plan hasn't changed.";
+      mockUpgradeSubscription.mockRejectedValue(
+        new AxiosError(
+          'Payment Required',
+          'ERR_BAD_REQUEST',
+          undefined,
+          undefined,
+          {
+            status: 402,
+            statusText: 'Payment Required',
+            data: { statusCode: 402, message },
+            headers: {},
+            config: { headers: new AxiosHeaders() },
+          },
+        ),
+      );
+      const user = userEvent.setup();
+      render(<Billing />);
+
+      await user.click(
+        await screen.findByRole('button', { name: 'Upgrade to Business' }),
+      );
+      await user.click(
+        await screen.findByRole('button', { name: 'Confirm Upgrade' }),
+      );
+      expect(mockUpgradeSubscription).toHaveBeenCalledWith(
+        'business',
+        'month',
+        1791000000,
+      );
+      expect(await screen.findByText(message)).toBeInTheDocument();
     });
 
     it('explains a new billing period when the upgrade changes the interval', async () => {

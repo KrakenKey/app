@@ -60,10 +60,12 @@ export async function previewUpgrade(
 export async function upgradeSubscription(
   plan: string,
   interval?: BillingInterval,
+  prorationDate?: number,
 ): Promise<UpgradeResponse> {
   const response = await api.post<UpgradeResponse>(API_ROUTES.BILLING.UPGRADE, {
     plan,
     interval,
+    prorationDate,
   });
   return response.data;
 }

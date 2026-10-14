@@ -175,6 +175,7 @@ export class BillingController {
       req.user.userId,
       dto.plan,
       dto.interval,
+      dto.prorationDate,
     );
   }
 
