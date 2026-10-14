@@ -4,6 +4,7 @@
  * Tests complete certificate lifecycle flows through the HTTP API:
  *   submit CSR (pending) → issued → revoke → revoked → delete
  *   submit CSR (pending) → failed → retry → pending → issued → renew → renewing
+ *   issued → renewal fails (still issued, renewalFailedAt) → retry → renewing
  *
  * Also covers CSR validation rejections and status guard enforcement.
  *
@@ -212,6 +213,56 @@ describe('Certificate Lifecycle (e2e)', () => {
         .expect(200);
 
       expect(res.body.status).toBe('issued');
+    });
+  });
+
+  // ─── Lifecycle: issued → renew → renewal fails → retry ────────────────────
+  describe('Lifecycle: a failed renewal keeps the current certificate', () => {
+    const failedRenewal = {
+      ...MOCK_ISSUED_CERT,
+      id: 30,
+      chainPem:
+        '-----BEGIN CERTIFICATE-----\nintermediate\n-----END CERTIFICATE-----',
+      failureReason: 'CAA record forbids issuance',
+      renewalFailedAt: '2026-10-14T06:03:00.000Z',
+      renewAfter: '2026-10-15T02:03:00.000Z',
+    };
+
+    it('GET /certs/tls/:id: still issued, with its PEM, chain, expiry and the failure', async () => {
+      mockTlsService.findOne.mockResolvedValueOnce(failedRenewal);
+
+      const res = await request(app.getHttpServer())
+        .get('/certs/tls/30')
+        .expect(200);
+
+      expect(res.body).toMatchObject({
+        status: 'issued',
+        crtPem: MOCK_ISSUED_CERT.crtPem,
+        chainPem: failedRenewal.chainPem,
+        expiresAt: MOCK_ISSUED_CERT.expiresAt,
+        failureReason: 'CAA record forbids issuance',
+        renewalFailedAt: '2026-10-14T06:03:00.000Z',
+        renewAfter: '2026-10-15T02:03:00.000Z',
+      });
+    });
+
+    it('POST /certs/tls/:id/retry: renews it again', async () => {
+      mockTlsService.retry.mockResolvedValueOnce({
+        id: 30,
+        status: 'renewing',
+        queued: false,
+      });
+
+      const res = await request(app.getHttpServer())
+        .post('/certs/tls/30/retry')
+        .expect(201);
+
+      expect(res.body).toEqual({ id: 30, status: 'renewing', queued: false });
+      expect(mockTlsService.retry).toHaveBeenLastCalledWith(
+        30,
+        expect.any(String),
+        { issue: true, renew: true },
+      );
     });
   });
 

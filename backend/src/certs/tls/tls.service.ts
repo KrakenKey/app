@@ -54,6 +54,7 @@ import {
   certRenewalWindowDays,
   daysUntilExpiry,
   renewAfter,
+  renewalRetryAt,
 } from './util/renewal-window';
 import { certDnsNames, nameCovered } from '../../auth/api-key-restrictions';
 import {
@@ -76,8 +77,10 @@ export type TlsCrtResponse = TlsCrt & {
  * - awaiting_csr: created from names; waiting for a connector's CSR
  * - pending: CSR validated, awaiting ACME issuance
  * - issuing: Background job processing ACME challenge
- * - issued: Certificate successfully issued
- * - failed: ACME challenge or issuance failed
+ * - issued: Certificate successfully issued (renewalFailedAt is set when
+ *   its last renewal failed; the certificate itself is still valid)
+ * - failed: ACME challenge or issuance failed, or a renewal failed once the
+ *   certificate had expired
  * - renewing: Certificate renewal in progress
  */
 /** How long a create request stays idempotent (seconds). */
@@ -737,6 +740,13 @@ export class TlsService {
       ? await this.validateRenewalCsr(cert, options.csrPem)
       : null;
 
+    // A renewal that failed recently isn't retried by a timer more than
+    // about once a day; asking without ifDue renews right away
+    if (options.ifDue) {
+      const skip = await this.recentlyFailed(cert);
+      if (skip) return skip;
+    }
+
     // A CA request for early replacement (ARI) makes the cert due regardless.
     // Connector-managed certs follow renewAfter alone, which already takes
     // the CA's window into account.
@@ -841,6 +851,30 @@ export class TlsService {
   }
 
   /**
+   * For `renew?ifDue=true`: the skip response while the last renewal failed
+   * less than RENEWAL_RETRY_BACKOFF_MS ago, or null.
+   */
+  private async recentlyFailed(
+    cert: TlsCrt,
+  ): Promise<RenewTlsCertResponse | null> {
+    const retryAt = renewalRetryAt(cert);
+    if (!retryAt || retryAt.getTime() <= Date.now()) return null;
+    const windowDays = certRenewalWindowDays(
+      await this.billingService.resolveUserTier(cert.userId),
+      cert.managedBy,
+    );
+    return {
+      id: cert.id,
+      status: CertStatus.ISSUED,
+      skipped: true,
+      reason: 'not_due',
+      ...(cert.expiresAt ? { expiresAt: cert.expiresAt.toISOString() } : {}),
+      renewalWindowDays: windowDays,
+      retryAfter: retryAt.toISOString(),
+    };
+  }
+
+  /**
    * For `renew?ifDue=true`: the skip response when the certificate is not
    * due yet, or null when it is. Other certificates use the same window the
    * auto-renewal cron applies to the owner's plan. A connector-managed
@@ -877,9 +911,34 @@ export class TlsService {
    * - Original CSR must be available
    *
    * Re-queues the original 'tlsCertIssuance' job.
+   *
+   * An issued certificate whose last renewal failed (renewalFailedAt) is
+   * renewed again instead, like POST /renew: no plan limits, and past the
+   * concurrent pending limit it waits for a slot. `allowed` says what the
+   * caller's API key may do (a scoped key needs certs:issue to issue again
+   * and certs:renew to renew); a dashboard session may do both.
    */
-  async retry(id: number, userId: string) {
+  async retry(
+    id: number,
+    userId: string,
+    allowed: { issue: boolean; renew: boolean } = { issue: true, renew: true },
+  ): Promise<RetryTlsCertResponse> {
     const cert = await this.findOne(id, userId);
+
+    if (cert.status === CertStatus.ISSUED && cert.renewalFailedAt) {
+      if (!allowed.renew) {
+        throw new ForbiddenException(
+          'This API key needs the certs:renew scope to retry a renewal.',
+        );
+      }
+      return this.retryRenewal(cert);
+    }
+
+    if (!allowed.issue) {
+      throw new ForbiddenException(
+        'This API key needs the certs:issue scope for this request.',
+      );
+    }
 
     if (cert.status !== CertStatus.FAILED) {
       throw new BadRequestException(
@@ -910,6 +969,25 @@ export class TlsService {
       status: CertStatus.PENDING,
     };
     return response;
+  }
+
+  /** retry() for an issued certificate whose last renewal failed. */
+  private async retryRenewal(cert: TlsCrt): Promise<RetryTlsCertResponse> {
+    if (!cert.rawCsr) {
+      throw new BadRequestException(
+        'Certificate missing CSR data, cannot retry',
+      );
+    }
+    const claimed = await this.claimRenewal(cert.id, {});
+    if (!claimed) throw new ConflictException(RENEWAL_IN_PROGRESS);
+
+    await this.startQueuedRenewalsSafely(cert.userId);
+    const after = await this.TlsCrtRepository.findOneBy({ id: cert.id });
+    return {
+      id: cert.id,
+      status: CertStatus.RENEWING,
+      queued: after?.status === CertStatus.RENEWING && !!after.renewalQueuedAt,
+    };
   }
 
   /** Queues an issuance job carrying the certificate's fencing token. */
@@ -953,9 +1031,13 @@ export class TlsService {
   /**
    * @internal
    * For the worker: moves a certificate into processing (issuing, or
-   * renewing) and clears the old PEM data, but only while it is in the
-   * state the job was queued for and, for jobs that carry one, with the
-   * same inFlightSince token. Returns false when the job is stale.
+   * renewing), but only while it is in the state the job was queued for
+   * and, for jobs that carry one, with the same inFlightSince token.
+   * Returns false when the job is stale.
+   *
+   * A renewal keeps the current certificate (crtPem, chainPem, expiry): it
+   * stays readable while the renewal runs, and stays in place if the
+   * renewal fails. Only a successful renewal replaces it.
    */
   async beginProcessing(
     id: number,
@@ -972,7 +1054,14 @@ export class TlsService {
           ? { inFlightSince: new Date(job.token) }
           : {}),
       },
-      { status: job.status, crtPem: null, chainPem: null, failureReason: null },
+      job.renewal
+        ? { status: job.status }
+        : {
+            status: job.status,
+            crtPem: null,
+            chainPem: null,
+            failureReason: null,
+          },
     );
     return (result?.affected ?? 0) > 0;
   }
@@ -1032,6 +1121,16 @@ export class TlsService {
       return;
     }
 
+    // The last renewal failed recently: try again about once a day, not on
+    // every hourly ARI check
+    const retryAt = renewalRetryAt(cert);
+    if (retryAt && retryAt.getTime() > Date.now()) {
+      this.logger.log(
+        `Auto-renewal skipped for cert #${id}: the last renewal failed at ${cert.renewalFailedAt!.toISOString()}; next attempt after ${retryAt.toISOString()}`,
+      );
+      return;
+    }
+
     const claimed = await this.claimRenewal(
       cert.id,
       {
@@ -1059,6 +1158,11 @@ export class TlsService {
    * processes running the same cron, or two renew requests) only one
    * matches the row, so only one renewal and one ACME order are queued.
    * Returns false when the certificate was no longer issued.
+   *
+   * A previous renewal failure is cleared here, so renewalFailedAt on an
+   * issued certificate always describes the latest renewal: a client that
+   * renewed and sees 'issued' with renewalFailedAt set knows its renewal
+   * failed. The recovery count starts over for the new request.
    */
   private async claimRenewal(
     id: number,
@@ -1071,6 +1175,9 @@ export class TlsService {
         ...changes,
         status: CertStatus.RENEWING,
         renewalQueuedAt: new Date(),
+        renewalFailedAt: null,
+        failureReason: null,
+        recoveryCount: 0,
       },
     );
     return (result?.affected ?? 0) > 0;
@@ -1263,6 +1370,7 @@ export class TlsService {
         await this.recoverInterrupted(
           cert,
           'its job was lost before it finished',
+          now,
         )
       ) {
         recovered.push(cert.id);
@@ -1297,14 +1405,21 @@ export class TlsService {
   /**
    * Puts an interrupted request back in a state the user or the system can
    * act on, if the row is still exactly as seen (status and inFlightSince):
-   * - a renewal goes back to 'issued' when the old certificate is still
-   *   there (auto-renewal or the user renews again), and otherwise back in
-   *   the renewal queue;
-   * - a new certificate goes to 'failed' with a reason, so retry works.
+   * - a renewal is queued again, up to MAX_RECOVERIES times. A renewal no
+   *   longer clears the current certificate when it starts, so a renewal
+   *   that started and one whose job was lost before it started are
+   *   handled alike: either way it was requested and hasn't happened.
+   * - a renewal recovered too often, or one that can't be queued again
+   *   (no CSR), keeps its current certificate as a failed renewal
+   *   (issued, renewalFailedAt) while that is still valid, like a renewal
+   *   that failed inside its job;
+   * - otherwise (a new certificate, or a renewal with no valid certificate
+   *   left) it goes to 'failed' with a reason, so retry works.
    */
   private async recoverInterrupted(
     cert: TlsCrt,
     why: string,
+    now = new Date(),
   ): Promise<boolean> {
     const seen: FindOptionsWhere<TlsCrt> = {
       id: cert.id,
@@ -1313,29 +1428,42 @@ export class TlsService {
       inFlightSince: cert.inFlightSince ?? IsNull(),
     };
     const recoveries = (cert.recoveryCount ?? 0) + 1;
-    const what = cert.status === CertStatus.RENEWING ? 'Renewal' : 'Issuance';
+    const renewal = cert.status === CertStatus.RENEWING;
+    const what = renewal ? 'Renewal' : 'Issuance';
+    const keepsCert = renewal && hasValidCert(cert, now);
     let changes: QueryDeepPartialEntity<TlsCrt>;
     let outcome: string;
-    if (cert.status === CertStatus.RENEWING && cert.crtPem) {
-      changes = { status: CertStatus.ISSUED, inFlightSince: null };
-      outcome = 'back to issued with its current certificate';
-    } else if (
-      cert.status === CertStatus.RENEWING &&
-      cert.rawCsr &&
-      recoveries < MAX_RECOVERIES
-    ) {
-      changes = { renewalQueuedAt: new Date(), inFlightSince: null };
+    let failureReason: string | null = null;
+    if (renewal && cert.rawCsr && recoveries < MAX_RECOVERIES) {
+      changes = { renewalQueuedAt: now, inFlightSince: null };
       outcome = 'queued to renew again';
     } else {
-      changes = {
-        status: CertStatus.FAILED,
-        inFlightSince: null,
-        failureReason:
-          recoveries >= MAX_RECOVERIES && cert.status === CertStatus.RENEWING
-            ? `${what} was interrupted ${recoveries} times without finishing, so it was stopped. Retry it with POST /certs/tls/${cert.id}/retry.`
-            : `${what} was interrupted and did not finish. Retry it with POST /certs/tls/${cert.id}/retry.`,
-      };
-      outcome = 'marked failed';
+      const retryHow = keepsCert
+        ? `Renew it again with POST /certs/tls/${cert.id}/renew or /retry`
+        : `Retry it with POST /certs/tls/${cert.id}/retry`;
+      failureReason =
+        recoveries >= MAX_RECOVERIES && renewal
+          ? `${what} was interrupted ${recoveries} times without finishing, so it was stopped. ${retryHow}.`
+          : `${what} was interrupted and did not finish. ${retryHow}.`;
+      if (keepsCert) {
+        changes = {
+          status: CertStatus.ISSUED,
+          inFlightSince: null,
+          renewalFailedAt: now,
+          failureReason,
+        };
+        outcome =
+          'back to issued with its current certificate (renewal failed)';
+      } else {
+        changes = {
+          status: CertStatus.FAILED,
+          inFlightSince: null,
+          failureReason,
+          // An expired certificate is no use; same as a failure in the job
+          ...(renewal ? { crtPem: null, chainPem: null } : {}),
+        };
+        outcome = 'marked failed';
+      }
     }
     // Counted so a request that keeps crashing its worker stops after
     // MAX_RECOVERIES instead of sending an order every half hour
@@ -1346,41 +1474,78 @@ export class TlsService {
     this.logger.warn(
       `Recovered certificate #${cert.id} (${cert.status}) because ${why}: ${outcome}`,
     );
-    if (changes.status === CertStatus.FAILED) {
+    if (failureReason !== null) {
       // Same notifications as a failure inside the job
       this.metricsService.certIssuanceTotal.inc({ status: 'failed' });
-      const owner = await this.userRepo
+      await this.notifyFailure(cert, {
+        renewal,
+        error: failureReason,
+        currentExpiresAt: keepsCert ? cert.expiresAt : null,
+      }).catch(() => undefined);
+    }
+    await this.startQueuedRenewalsSafely(cert.userId);
+    return true;
+  }
+
+  /**
+   * @internal
+   * Emails the owner (per their preferences) and sends the cert.failed
+   * alert for an issuance or renewal that failed for good. With
+   * `currentExpiresAt`, a renewal failed but the current certificate stays
+   * in place until then. Emails never throw (EmailService logs delivery
+   * errors); an alert queuing error is passed on to the caller.
+   */
+  async notifyFailure(
+    cert: TlsCrt,
+    failure: {
+      renewal: boolean;
+      error: string;
+      currentExpiresAt?: Date | null;
+    },
+  ): Promise<void> {
+    const commonName = certDisplayName(cert);
+    const owner =
+      cert.user ??
+      (await this.userRepo
         .findOne({
           where: { id: cert.userId },
           select: { id: true, username: true, email: true },
         })
-        .catch(() => null);
-      if (owner?.email) {
-        await this.emailService
-          .sendCertFailed({
-            userId: owner.id,
-            username: owner.username,
-            email: owner.email,
-            certId: cert.id,
-            commonName: certDisplayName(cert),
-            errorMessage: changes.failureReason as string,
-          })
-          .catch(() => undefined);
+        .catch(() => null));
+    if (owner?.email) {
+      const ctx = {
+        userId: owner.id,
+        username: owner.username,
+        email: owner.email,
+        certId: cert.id,
+        commonName,
+        errorMessage: failure.error,
+      };
+      if (failure.currentExpiresAt) {
+        await this.emailService.sendCertRenewalFailed({
+          ...ctx,
+          expiresAt: failure.currentExpiresAt,
+        });
+      } else {
+        await this.emailService.sendCertFailed(ctx);
       }
-      await this.alerts
-        .emit(cert.userId, 'cert.failed', {
-          subject: certDisplayName(cert),
-          resource: { type: 'certificate', id: cert.id },
-          details: {
-            certificateId: cert.id,
-            renewal: cert.status === CertStatus.RENEWING,
-            error: changes.failureReason as string,
-          },
-        })
-        .catch(() => undefined);
     }
-    await this.startQueuedRenewalsSafely(cert.userId);
-    return true;
+    await this.alerts.emit(owner?.id ?? cert.userId, 'cert.failed', {
+      subject: commonName,
+      resource: { type: 'certificate', id: cert.id },
+      details: {
+        certificateId: cert.id,
+        renewal: failure.renewal,
+        error: failure.error,
+        ...(failure.currentExpiresAt
+          ? {
+              currentCertificateExpiresAt: new Date(
+                failure.currentExpiresAt,
+              ).toISOString(),
+            }
+          : {}),
+      },
+    });
   }
 
   // --- Plan Limit Helpers ---
@@ -1506,6 +1671,21 @@ export class TlsService {
       },
     });
   }
+}
+
+/**
+ * Whether a certificate still has a usable certificate to keep when its
+ * renewal fails: PEM data and an expiry still ahead.
+ */
+export function hasValidCert(
+  cert: Pick<TlsCrt, 'crtPem' | 'expiresAt'>,
+  now = new Date(),
+): boolean {
+  return (
+    !!cert.crtPem &&
+    !!cert.expiresAt &&
+    new Date(cert.expiresAt).getTime() > now.getTime()
+  );
 }
 
 /**

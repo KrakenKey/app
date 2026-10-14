@@ -175,6 +175,15 @@ export function certName(cert: TlsCert): string {
 /* ── Renewal ───────────────────────────────────────────────────────────── */
 
 /**
+ * The last renewal of this certificate failed, but the certificate itself
+ * is still issued (and valid until it expires). KrakenKey tries again about
+ * a day later; renewing by hand tries right away.
+ */
+export function renewalFailed(cert: TlsCert): boolean {
+  return cert.status === CertStatus.ISSUED && !!cert.renewalFailedAt;
+}
+
+/**
  * - scheduled: KrakenKey renews it automatically, renewal not due yet
  * - connector: a connector renews it, renewal not due yet
  * - manual: auto-renew is off and no connector manages it
@@ -362,11 +371,29 @@ export function computeAttention(input: HealthInput): AttentionItem[] {
         });
         break;
       case CertStatus.ISSUED: {
-        const r = certRenewal(cert, window, now);
-        if (!r || !r.severity) break;
         const target = managed
           ? { to: connectorsLink, linkLabel: 'Connectors' }
           : { action: { kind: 'renew' as const, certId: cert.id } };
+        if (renewalFailed(cert)) {
+          items.push({
+            ...base,
+            severity: days != null && days <= 7 ? 'critical' : 'warning',
+            summary: 'Renewal failed',
+            detail:
+              [
+                cert.failureReason,
+                days != null &&
+                  `the current certificate ${expiresIn(days).toLowerCase()}`,
+              ]
+                .filter(Boolean)
+                .join('; ') || undefined,
+            dueDays: days ?? undefined,
+            ...target,
+          });
+          break;
+        }
+        const r = certRenewal(cert, window, now);
+        if (!r || !r.severity) break;
         let summary: string;
         if (r.state === 'replace') {
           summary = 'The CA asked for early replacement';

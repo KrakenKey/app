@@ -380,6 +380,48 @@ export function certFailedTemplate(
   );
 }
 
+/**
+ * A renewal failed for good, but the current certificate is still valid and
+ * stays in place (ctx.expiresAt is its expiry).
+ */
+export function certRenewalFailedTemplate(
+  ctx: CertEmailContext,
+  brand: EmailBranding,
+): EmailContent {
+  const until = ctx.expiresAt ? formatDate(ctx.expiresAt) : null;
+  return render(
+    {
+      tone: 'danger',
+      label: 'Renewal failed',
+      title: `We couldn't renew the certificate for ${ctx.commonName}`,
+      preheader: until
+        ? `Your current certificate stays valid until ${until}. Check DNS, then renew again.`
+        : 'Your current certificate stays in place. Check DNS, then renew again.',
+      blocks: [
+        para(
+          `Hi ${ctx.username}, we tried several times to renew your TLS certificate and each attempt failed. Your current certificate is still valid and stays in place, so nothing you have deployed changes.`,
+        ),
+        details(
+          ['Domain', ctx.commonName, true],
+          ['Certificate ID', String(ctx.certId), true],
+          ['Valid until', until ?? undefined],
+          ['Error', ctx.errorMessage, true],
+        ),
+        para(
+          `Check that the \`_acme-challenge\` CNAME record for this domain is still in place, then renew from the dashboard or run \`krakenkey cert renew ${ctx.certId}\`. If auto-renewal is on, KrakenKey also tries again in about a day.`,
+        ),
+        button(
+          'Renew from dashboard',
+          `${brand.appUrl}/dashboard/certificates`,
+        ),
+      ],
+      reason: CERT_REASON,
+      manageable: true,
+    },
+    brand,
+  );
+}
+
 export function certRevokedTemplate(
   ctx: CertEmailContext,
   brand: EmailBranding,

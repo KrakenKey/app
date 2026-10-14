@@ -120,6 +120,40 @@ describe('computeAttention', () => {
     expect(items[1].action).toEqual({ kind: 'retry', certId: 1 });
   });
 
+  it('flags an issued certificate whose renewal failed, with the reason', () => {
+    const items = computeAttention({
+      ...empty,
+      certs: [
+        cert({
+          id: 5,
+          expiresAt: inDays(20.5),
+          renewalFailedAt: inDays(-0.1),
+          // The retry is about a day away, so it isn't "overdue"
+          renewAfter: inDays(0.7),
+          failureReason: 'CAA record forbids issuance',
+        }),
+        cert({
+          id: 6,
+          expiresAt: inDays(3.5),
+          renewalFailedAt: inDays(-0.1),
+          failureReason: null,
+          managedBy: 'connector',
+        }),
+      ],
+    });
+    expect(items.map((i) => [i.id, i.severity, i.summary])).toEqual([
+      ['cert-6', 'critical', 'Renewal failed'],
+      ['cert-5', 'warning', 'Renewal failed'],
+    ]);
+    expect(items[1].detail).toBe(
+      'CAA record forbids issuance; the current certificate expires in 20 days',
+    );
+    expect(items[1].action).toEqual({ kind: 'renew', certId: 5 });
+    // A connector renews its own certificates
+    expect(items[0].action).toBeUndefined();
+    expect(items[0].linkLabel).toBe('Connectors');
+  });
+
   it('lists an expiring endpoint once when a certificate covers it', () => {
     const items = computeAttention({
       ...empty,

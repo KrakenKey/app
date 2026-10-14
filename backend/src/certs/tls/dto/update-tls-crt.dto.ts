@@ -38,6 +38,7 @@ export class InternalUpdateTlsCrtDto extends UpdateTlsCrtDto {
   crtPem?: string | null;
   chainPem?: string | null;
   failureReason?: string | null;
+  renewalFailedAt?: Date | null;
   ariCertId?: string | null;
   ariWindowStart?: Date | null;
   ariWindowEnd?: Date | null;

@@ -32,7 +32,7 @@ export interface AlertMessage {
 export const ALERT_TITLES: Record<AlertDeliveryEvent, string> = {
   'cert.issued': 'Certificate issued',
   'cert.renewed': 'Certificate renewed',
-  'cert.failed': 'Certificate issuance failed',
+  'cert.failed': 'Certificate issuance or renewal failed',
   'cert.expiring': 'Certificate expiring soon',
   'cert.revoked': 'Certificate revoked',
   'cert.replacement_requested': 'Certificate replacement requested by the CA',

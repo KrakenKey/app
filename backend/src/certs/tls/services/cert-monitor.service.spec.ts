@@ -166,6 +166,31 @@ describe('CertMonitorService', () => {
       });
     });
 
+    it('keeps warning about a certificate whose last renewal failed, and leaves the retry timing to renewInternal', async () => {
+      mockRepository.find.mockResolvedValue([
+        {
+          ...expiringCert,
+          crtPem: 'old-leaf',
+          renewalFailedAt: new Date(),
+          failureReason: 'CAA record forbids',
+        },
+      ]);
+
+      await service.checkExpiringCertificates();
+
+      const email = module.get<Record<string, jest.Mock>>(EmailService);
+      expect(email.sendCertExpiryWarning).toHaveBeenCalledWith(
+        expect.objectContaining({ certId: 1 }),
+      );
+      expect(mockAlerts.emit).toHaveBeenCalledWith(
+        'user-123',
+        'cert.expiring',
+        expect.anything(),
+      );
+      // renewInternal holds it back until the retry backoff has passed
+      expect(mockTlsService.renewInternal).toHaveBeenCalledWith(1);
+    });
+
     it('queues renewal for expiring certs', async () => {
       mockRepository.find.mockResolvedValue([expiringCert]);
       mockTlsService.renewInternal.mockResolvedValue(undefined);

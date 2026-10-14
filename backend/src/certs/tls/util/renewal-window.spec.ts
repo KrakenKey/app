@@ -1,6 +1,8 @@
 import {
+  RENEWAL_RETRY_BACKOFF_MS,
   certRenewalWindowDays,
   renewAfter,
+  renewalRetryAt,
   renewalWindowDays,
 } from './renewal-window';
 
@@ -168,6 +170,40 @@ describe('renewal window', () => {
     it('is null for a revoked certificate', () => {
       expect(renewAfter({ status: 'revoked', expiresAt }, 30)).toBeNull();
       expect(renewAfter({ status: 'revoking', expiresAt }, 30)).toBeNull();
+    });
+
+    it('waits the retry backoff after a failed renewal', () => {
+      const failedAt = daysBefore(3);
+      expect(
+        renewAfter(
+          { status: 'issued', expiresAt, renewalFailedAt: failedAt },
+          30,
+        ),
+      ).toEqual(new Date(failedAt.getTime() + RENEWAL_RETRY_BACKOFF_MS));
+    });
+
+    it('ignores an old failure once the window is later anyway', () => {
+      expect(
+        renewAfter(
+          { status: 'issued', expiresAt, renewalFailedAt: daysBefore(60) },
+          30,
+        ),
+      ).toEqual(daysBefore(30));
+    });
+  });
+
+  describe('renewalRetryAt', () => {
+    it('is about a day after a failed renewal, or null', () => {
+      const failedAt = new Date('2026-10-14T06:03:00.000Z');
+      const at = renewalRetryAt({ renewalFailedAt: failedAt.toISOString() });
+      expect(at).toEqual(
+        new Date(failedAt.getTime() + RENEWAL_RETRY_BACKOFF_MS),
+      );
+      // Before the next day's 6 AM check
+      expect(at!.getTime()).toBeLessThan(
+        new Date('2026-10-15T06:00:00.000Z').getTime(),
+      );
+      expect(renewalRetryAt({ renewalFailedAt: null })).toBeNull();
     });
   });
 });

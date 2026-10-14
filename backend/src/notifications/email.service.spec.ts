@@ -261,6 +261,20 @@ describe('EmailService', () => {
       );
     });
 
+    it('sendCertRenewalFailed says the current certificate stays in place', async () => {
+      await service.sendCertRenewalFailed({
+        ...certCtx,
+        expiresAt: new Date('2026-11-20T00:00:00Z'),
+        errorMessage: 'CAA record forbids issuance',
+      });
+
+      const mail = mockSendMail.mock.calls[0][0];
+      expect(mail.subject).toBe('Certificate renewal failed for example.com');
+      expect(mail.text).toContain('still valid and stays in place');
+      expect(mail.text).toContain('CAA record forbids issuance');
+      expect(mail.text).toContain('krakenkey cert renew');
+    });
+
     it('sendCertRevoked sends correct subject', async () => {
       await service.sendCertRevoked(certCtx);
 
@@ -310,6 +324,12 @@ describe('EmailService', () => {
       [
         'sendCertFailed',
         'sendCertFailed',
+        NotificationType.CERT_FAILED,
+        certCtx,
+      ],
+      [
+        'sendCertRenewalFailed',
+        'sendCertRenewalFailed',
         NotificationType.CERT_FAILED,
         certCtx,
       ],

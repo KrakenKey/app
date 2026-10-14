@@ -97,9 +97,22 @@ export class TlsCrt {
   @Column({ type: 'int', nullable: true })
   revocationReason: number | null;
 
-  /** Why the last issuance or renewal attempt failed; cleared on the next attempt. */
+  /**
+   * Why the last issuance or renewal attempt failed; cleared when the
+   * certificate is issued, retried or renewed again.
+   */
   @Column({ type: 'text', nullable: true })
   failureReason: string | null;
+
+  /**
+   * When the last renewal failed while the current certificate was still
+   * valid. The certificate then stays 'issued' with its PEM, chain and
+   * expiry (failureReason says why), and automatic renewal waits
+   * RENEWAL_RETRY_BACKOFF_MS before trying again. Cleared when a renewal is
+   * requested again.
+   */
+  @Column({ type: 'timestamp', nullable: true })
+  renewalFailedAt: Date | null;
 
   @Column({ type: 'timestamp', nullable: true })
   revokedAt: Date | null;

@@ -7,6 +7,30 @@ import { PLAN_LIMITS } from '../../../billing/constants/plan-limits';
 
 const MS_PER_DAY = 86_400_000;
 
+/**
+ * After a renewal fails while the current certificate is still valid
+ * (renewalFailedAt), automatic renewal waits this long before trying
+ * again: the daily expiry check retries about once a day, and the hourly
+ * ARI check, a connector or a `renew?ifDue=true` timer don't send a
+ * failing order every hour. A little under a day, so a failure recorded
+ * shortly after the 6 AM check doesn't push the retry to the day after.
+ * A renewal requested without ifDue (or a retry) is never held back.
+ */
+export const RENEWAL_RETRY_BACKOFF_MS = 20 * 60 * 60 * 1000;
+
+/**
+ * When automatic renewal may try again after a failed renewal, or null when
+ * the last renewal didn't fail.
+ */
+export function renewalRetryAt(cert: {
+  renewalFailedAt?: Date | string | null;
+}): Date | null {
+  if (!cert.renewalFailedAt) return null;
+  return new Date(
+    new Date(cert.renewalFailedAt).getTime() + RENEWAL_RETRY_BACKOFF_MS,
+  );
+}
+
 /** Whole days until `expiresAt`, rounded down (negative once expired). */
 export function daysUntilExpiry(expiresAt: Date, now = Date.now()): number {
   return Math.floor((expiresAt.getTime() - now) / MS_PER_DAY);
@@ -40,6 +64,7 @@ export interface RenewAfterInput {
   ariReplacementRequestedAt?: Date | string | null;
   managedBy?: CertManagedBy | null;
   createdAt?: Date | string | null;
+  renewalFailedAt?: Date | string | null;
 }
 
 /**
@@ -51,6 +76,9 @@ export interface RenewAfterInput {
  *   connector follows the CA's suggestion (RFC 9773);
  * - everything else: only when the CA asked for early replacement
  *   (ariReplacementRequestedAt), the one case the server renews early.
+ *
+ * After a failed renewal it is never earlier than renewalRetryAt, when
+ * automatic renewal tries again.
  *
  * An awaiting_csr certificate has never been issued, so it is due from the
  * moment it was created. Otherwise null when there is no expiry yet, or the
@@ -77,7 +105,7 @@ export function renewAfter(
     ariApplies && cert.ariWindowStart
       ? new Date(cert.ariWindowStart).getTime()
       : NaN;
-  return new Date(
-    Number.isNaN(ariStart) ? byWindow : Math.min(byWindow, ariStart),
-  );
+  const due = Number.isNaN(ariStart) ? byWindow : Math.min(byWindow, ariStart);
+  const retryAt = renewalRetryAt(cert)?.getTime() ?? NaN;
+  return new Date(Number.isNaN(retryAt) ? due : Math.max(due, retryAt));
 }

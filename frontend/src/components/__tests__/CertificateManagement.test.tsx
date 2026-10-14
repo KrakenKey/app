@@ -7,6 +7,7 @@ import { mockAwaitingCsrCert, mockCerts } from '../../test/mocks/data';
 import { mockDeployments } from '../../test/mocks/connectors';
 import { API_URL } from '../../services/api';
 import CertificateManagement from '../CertificateManagement';
+import { toast } from '../../utils/toast';
 
 // Mock AuthContext
 vi.mock('../../hooks/useAuth', async () => {
@@ -182,6 +183,71 @@ describe('CertificateManagement', () => {
       await screen.findByRole('button', { name: 'Show details' }),
     );
     expect(screen.getByText(reason)).toBeInTheDocument();
+  });
+
+  it('keeps an issued certificate usable after a failed renewal and says why', async () => {
+    vi.useRealTimers();
+    const reason = 'CAA record for example.com forbids issuance';
+    server.use(
+      http.get(`${API_URL}/certs/tls`, () =>
+        HttpResponse.json([
+          {
+            ...mockCerts[0],
+            renewalFailedAt: new Date().toISOString(),
+            failureReason: reason,
+          },
+        ]),
+      ),
+    );
+
+    const user = userEvent.setup();
+    render(<CertificateManagement />);
+
+    // Listed as needing attention, still issued, still downloadable
+    expect(await screen.findByText('Renewal failed')).toBeInTheDocument();
+    expect(screen.getAllByText('Issued').length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByRole('button', { name: /Download/ }).length,
+    ).toBeGreaterThan(0);
+
+    await user.click(screen.getByRole('button', { name: 'Show details' }));
+    expect(
+      screen.getByText(`Renewal failed: ${reason}`, { exact: false }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/The current certificate stays in place/),
+    ).toBeInTheDocument();
+  });
+
+  it('reports a renewal that came back failed instead of renewed', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const error = vi.spyOn(toast, 'error');
+    const success = vi.spyOn(toast, 'success');
+    server.use(
+      http.get(`${API_URL}/certs/tls/:id`, () =>
+        HttpResponse.json({
+          ...mockCerts[0],
+          renewalFailedAt: new Date().toISOString(),
+          failureReason: 'DNS problem',
+        }),
+      ),
+    );
+    render(<CertificateManagement />);
+
+    const [renew] = await screen.findAllByRole('button', { name: /^Renew$/ });
+    await user.click(renew);
+    await vi.advanceTimersByTimeAsync(5000);
+
+    await waitFor(() =>
+      expect(error).toHaveBeenCalledWith(
+        `Renewal of certificate #${mockCerts[0].id} failed: DNS problem`,
+      ),
+    );
+    expect(success).not.toHaveBeenCalledWith(
+      expect.stringContaining('has been renewed'),
+    );
+    vi.useRealTimers();
   });
 
   it('shows an awaiting_csr certificate by its requested names, with Delete', async () => {

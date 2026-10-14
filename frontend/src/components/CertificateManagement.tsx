@@ -28,6 +28,7 @@ import {
 } from '../utils/statusMappings';
 import { getCertDomains, parseNameList } from '../utils/certDomains';
 import { getExpirationInfo } from '../utils/expiration';
+import { renewalFailed } from '../utils/accountHealth';
 import { copyToClipboard } from '../utils/clipboard';
 import { downloadPem } from '../utils/download';
 import { usePolling } from '../hooks/usePolling';
@@ -100,7 +101,14 @@ export default function CertificateManagement() {
           updated.status === CertStatus.FAILED
         ) {
           removePollingId(certId);
-          if (updated.status === CertStatus.ISSUED) {
+          if (renewalFailed(updated)) {
+            // Back to issued with the current certificate: the renewal failed
+            toast.error(
+              `Renewal of certificate #${certId} failed${
+                updated.failureReason ? `: ${updated.failureReason}` : '.'
+              }`,
+            );
+          } else if (updated.status === CertStatus.ISSUED) {
             toast.success(
               wasRenewing
                 ? `Certificate #${certId} has been renewed!`
@@ -673,9 +681,9 @@ export default function CertificateManagement() {
   );
 }
 
-/** Failed, expiring within 30 days, or waiting on someone. */
+/** Failed, renewal failed, expiring within 30 days, or waiting on someone. */
 function certNeedsAttention(cert: TlsCert): boolean {
-  if (cert.status === CertStatus.FAILED) return true;
+  if (cert.status === CertStatus.FAILED || renewalFailed(cert)) return true;
   if (cert.status !== CertStatus.ISSUED) return false;
   const exp = getExpirationInfo(cert);
   return !!exp && exp.daysUntilExpiry <= 30;
@@ -953,6 +961,23 @@ function CertDetailsPanel({
             <span className="text-red-300">{cert.failureReason}</span>
           </DetailRow>
         )}
+        {renewalFailed(cert) && (
+          <DetailRow label="Renewal">
+            <span className="text-red-300">
+              Renewal failed
+              {cert.failureReason ? `: ${cert.failureReason}` : ''}
+            </span>
+            <span className="block text-zinc-500">
+              {shortDate(cert.renewalFailedAt!)}. The current certificate stays
+              in place until it expires.{' '}
+              {cert.managedBy === 'connector'
+                ? 'The connector tries again on its next check after about a day.'
+                : cert.autoRenew
+                  ? 'KrakenKey tries again in about a day, or renew it now.'
+                  : 'Renew it to try again.'}
+            </span>
+          </DetailRow>
+        )}
         {expirationInfo && !revoked && (
           <DetailRow label="Expiration">
             <ExpiryText cert={cert} />
@@ -1071,6 +1096,8 @@ function CertName({ cert, polling }: { cert: TlsCert; polling: boolean }) {
       </div>
       {cert.status === CertStatus.AWAITING_CSR ? (
         <div className="text-xs text-zinc-500">Awaiting CSR from connector</div>
+      ) : renewalFailed(cert) ? (
+        <div className="text-xs text-red-300">Renewal failed</div>
       ) : (
         cert.managedBy === 'connector' && (
           <div className="text-xs text-zinc-500">Managed by a connector</div>

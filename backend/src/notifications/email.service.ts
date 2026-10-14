@@ -9,6 +9,7 @@ import {
   certRenewedTemplate,
   certExpiryWarningTemplate,
   certFailedTemplate,
+  certRenewalFailedTemplate,
   certRevokedTemplate,
   domainVerificationFailedTemplate,
   planLimitReachedTemplate,
@@ -272,6 +273,20 @@ export class EmailService {
       ctx.email,
       `Certificate issuance failed for ${ctx.commonName}`,
       certFailedTemplate(ctx, this.brand),
+    );
+  }
+
+  /**
+   * A renewal failed, but the current certificate (valid until
+   * ctx.expiresAt) stays in place. Same preference as sendCertFailed.
+   */
+  async sendCertRenewalFailed(ctx: CertEmailContext): Promise<void> {
+    if (!(await this.shouldSend(ctx.userId, NotificationType.CERT_FAILED)))
+      return;
+    await this.send(
+      ctx.email,
+      `Certificate renewal failed for ${ctx.commonName}`,
+      certRenewalFailedTemplate(ctx, this.brand),
     );
   }
 

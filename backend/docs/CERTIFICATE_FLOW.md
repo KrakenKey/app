@@ -37,10 +37,12 @@ End-to-end walkthrough of how KrakenKey processes certificate requests, from CSR
             ┌──────────┐                               │
             │ renewing  │◄─────────────────────────────┘
             └────┬──────┘
-                 │
+                 │  success: new certificate
+                 │  failure: current certificate kept,
+                 │           renewalFailedAt set
                  ▼
             ┌─────────┐
-            │ issued   │  (renewed)
+            │ issued   │  (renewed, or renewal failed)
             └────┬─────┘
                  │
           revoke │ (manual)
@@ -62,8 +64,8 @@ End-to-end walkthrough of how KrakenKey processes certificate requests, from CSR
 | `awaiting_csr` | Created from names for a connector; waiting for its CSR. Nothing sent to the CA yet. See [Pending Certificates](#pending-certificates) |
 | `pending` | CSR received, validated, and queued for processing |
 | `issuing` | ACME workflow actively running (order created, challenges in progress) |
-| `issued` | Certificate successfully issued and stored |
-| `failed` | Issuance failed after 3 retry attempts |
+| `issued` | Certificate successfully issued and stored. When `renewalFailedAt` is set, its last renewal failed and the current certificate is still in place; see [Failed Renewals](#failed-renewals) |
+| `failed` | Issuance failed after 3 retry attempts, or a renewal failed after the certificate had already expired |
 | `renewing` | Renewal in progress, or waiting for a free concurrent pending slot (`renewalQueuedAt` set) |
 | `revoking` | Revocation request sent to ACME CA |
 | `revoked` | Certificate successfully revoked |
@@ -260,7 +262,7 @@ Both are classified as **permanent** failures by the issuance processor. Only th
 | Backoff | Exponential (5-second base delay) |
 | Retry delays | ~5s, then ~10s |
 
-If the last attempt fails, the certificate status is set to `failed`, the error message is stored in `failureReason` (truncated to 2,000 characters) and a failure notification email is sent. `failureReason` is returned by `GET /certs/tls` and `GET /certs/tls/:id`, shown on the dashboard, and cleared when the next attempt starts.
+If the last attempt of a new certificate fails, the certificate status is set to `failed`, the error message is stored in `failureReason` (truncated to 2,000 characters) and a failure notification email is sent. `failureReason` is returned by `GET /certs/tls` and `GET /certs/tls/:id`, shown on the dashboard, and cleared when the next attempt starts. A renewal that fails keeps the current certificate instead; see [Failed Renewals](#failed-renewals).
 
 Some failures are classified as **permanent** and skip retries entirely: an invalid CSR, a malformed ACME key authorization, a missing or mismatched challenge delegation, a CA policy refusal (including CAA), a deactivated ACME account, or a CA rate limit. Retrying the first group would produce the same result every time while delaying the customer's failure notification. CA rate limits last hours to days, far longer than the seconds-scale backoff, so they fail fast too and the customer can retry once the limit clears. Any of these fails the job on the first attempt. The patterns are listed in `PERMANENT_FAILURE_PATTERNS` in `backend/src/certs/tls/processors/tls-crt-issuer.processor.ts`; add to that list when introducing an error that only the customer can resolve.
 
@@ -324,7 +326,21 @@ So an account with many certificates due at once, for example after a CA asks fo
 
 While a renewal runs or waits, `POST /certs/tls/:id/renew` answers `409`, or `200` with `"skipped": true, "reason": "in_progress"` when called with `?ifDue=true`, so a daily timer doesn't fail. A certificate whose renewal is still waiting can be revoked; the waiting renewal is dropped. The daily expiry check keeps sending the expiry warning and `cert.expiring` alert for a certificate that is renewing or waiting inside its warning window, since the renewal may not finish in time.
 
-**Lost jobs.** Each request handed to the worker records `inFlightSince`, and its job carries that value as a fencing token: the worker only acts on a job whose token still matches the certificate and whose certificate is in the state the job was queued for, and drops any other (a duplicate, or a job left over from a start that was rolled back). The sweep that starts waiting renewals also looks, every minute, for certificates in flight for more than 30 minutes with no waiting, active or delayed job (BullMQ fails a job that stalls too often without telling the worker, and Redis can lose its data). A renewal goes back to `issued` if its current certificate is still there, otherwise back into the queue; a new certificate goes to `failed` with a `failureReason` saying it was interrupted (and a `cert.failed` alert), so it can be retried. Certificates already in flight before this was added have no `inFlightSince`; the first sweep gives them one and judges them 30 minutes later. A job's final failure that couldn't record itself (for example the database was down) is cleaned up the same way from the worker's `failed` event. A recovered request that ends `failed` gets the usual failure email, alert and metric. A renewal recovered three times (`recoveryCount`) is marked `failed` rather than queued again, so a request that keeps crashing its worker doesn't send an order every half hour. The job's final write is conditional too: it only lands while the certificate still has the job's processing status and token, so a job that stalled and was replaced can't overwrite the newer result.
+**Lost jobs.** Each request handed to the worker records `inFlightSince`, and its job carries that value as a fencing token: the worker only acts on a job whose token still matches the certificate and whose certificate is in the state the job was queued for, and drops any other (a duplicate, or a job left over from a start that was rolled back). The sweep that starts waiting renewals also looks, every minute, for certificates in flight for more than 30 minutes with no waiting, active or delayed job (BullMQ fails a job that stalls too often without telling the worker, and Redis can lose its data). A renewal goes back into the queue (it keeps its current certificate meanwhile, whether or not its job had started); a new certificate goes to `failed` with a `failureReason` saying it was interrupted (and a `cert.failed` alert), so it can be retried. Certificates already in flight before this was added have no `inFlightSince`; the first sweep gives them one and judges them 30 minutes later. A job's final failure that couldn't record itself (for example the database was down) is cleaned up the same way from the worker's `failed` event. A recovered request that ends failed gets the usual failure email, alert and metric. A renewal recovered three times (`recoveryCount`) is not queued again, so a request that keeps crashing its worker doesn't send an order every half hour: it becomes a [failed renewal](#failed-renewals) that keeps its certificate, or `failed` if that certificate has expired. The job's final write is conditional too: it only lands while the certificate still has the job's processing status and token, so a job that stalled and was replaced can't overwrite the newer result.
+
+### Failed Renewals
+
+A renewal never removes the current certificate. `crtPem`, `chainPem` and `expiresAt` stay as they are while the renewal runs or waits, and are only replaced when the new certificate is issued.
+
+If the renewal fails after its retries (or is stopped after three lost jobs) while the current certificate is still valid:
+
+- The status goes back to `issued`, with `renewalFailedAt` set and the error in `failureReason`. `GET /certs/tls/:id`, `/chain` and `/details` keep returning the current certificate, so the CLI, the GitHub Action, the connector and Terraform can still download it.
+- The owner gets a "renewal failed" email (same preference as the issuance failure email) and a `cert.failed` alert with `renewal: true` and `currentCertificateExpiresAt`.
+- Expiry warnings and `cert.expiring` alerts continue, and ARI checks continue on the current certificate.
+- Automatic renewal tries again after about a day (`RENEWAL_RETRY_BACKOFF_MS`, 20 hours), not on every hourly ARI check. `renewAfter` is never earlier than that, so a connector waits too, and `renew?ifDue=true` answers `200` with `"skipped": true, "reason": "not_due"` and `retryAfter` until then. A renewal requested without `ifDue`, or `POST /certs/tls/:id/retry`, runs right away.
+- Requesting a renewal again clears `renewalFailedAt` and `failureReason`. A client that renewed and then sees `issued` with `renewalFailedAt` set (and its old `crtPem`) knows that renewal failed.
+
+If the current certificate has already expired when the renewal fails, the certificate goes to `failed` with no PEM, as a failed issuance does, and is retried with `POST /certs/tls/:id/retry`.
 
 ### Renewal Windows
 
@@ -449,6 +465,8 @@ curl -X POST https://api.example.com/certs/tls/42/retry \
 ```
 
 This re-queues the original CSR for another issuance attempt. For a [pending certificate](#pending-certificates) that failed, that is the CSR the connector sent.
+
+On an `issued` certificate whose last renewal failed (`renewalFailedAt` set), retry renews it again instead, exactly like `POST /certs/tls/:id/renew`: status `renewing`, no plan limits, and `202` with `"queued": true` when it waits for a concurrent pending slot. A scoped API key needs `certs:issue` to retry a failed issuance and `certs:renew` to retry a failed renewal.
 
 ---
 

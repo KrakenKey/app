@@ -43,8 +43,8 @@ A key can be limited when it is created. None of the limits can be changed after
 | Scope | Routes |
 | --- | --- |
 | `certs:read` | `GET /certs/tls`, `GET /certs/tls/:id`, `/details`, `/chain`; `POST /connectors/report`, `PUT /connectors/config`, `DELETE /connectors/config` (connector-issued keys only) |
-| `certs:issue` | `POST /certs/tls`, `POST /certs/tls/:id/retry` |
-| `certs:renew` | `POST /certs/tls/:id/renew`, `PATCH /certs/tls/:id` |
+| `certs:issue` | `POST /certs/tls`, `POST /certs/tls/:id/retry` (failed issuance) |
+| `certs:renew` | `POST /certs/tls/:id/renew`, `PATCH /certs/tls/:id`, `POST /certs/tls/:id/retry` (failed renewal) |
 | `certs:revoke` | `POST /certs/tls/:id/revoke`, `DELETE /certs/tls/:id` |
 | `domains:read` | `GET /domains`, `GET /domains/:id` |
 | `domains:write` | `POST /domains`, `POST /domains/:id/verify`, `DELETE /domains/:id` |
@@ -489,7 +489,25 @@ Get certificate details and status.
 - **Connector-managed certificates:** the earlier of `expiresAt` minus the renewal window and the start of the CA's suggested window (`ariWindowStart`, see [ACME Renewal Information](CERTIFICATE_FLOW.md#acme-renewal-information-ari)), routine or early, since the connector follows the CA's suggestion. The renewal window is the owner's plan window but at least 30 days on every plan.
 - **Other certificates:** `expiresAt` minus the plan's renewal window (Free: 5 days, paid plans: 30 days). `ariWindowStart` only counts, when it is earlier, once the CA has asked for early replacement (`ariReplacementRequestedAt` set), because that is the only time KrakenKey renews early. A routine ARI window does not move it.
 
+After a failed renewal (`renewalFailedAt` set) it is never earlier than about a day (20 hours) after that failure, when automatic renewal tries again.
+
 It is computed on each read, and is `null` when the certificate has no expiry yet (not issued) or is revoked. For an `awaiting_csr` certificate it is the creation time: the certificate is due now. `GET /certs/tls` and `PATCH /certs/tls/:id` return the same two fields.
+
+**After a failed renewal.** A renewal never removes the current certificate. If it fails while the current certificate is still valid, the status goes back to `issued` with the current `crtPem`, `chainPem` and `expiresAt` unchanged, `renewalFailedAt` (ISO 8601) set and the error in `failureReason`:
+
+```json
+{
+  "id": 42,
+  "status": "issued",
+  "crtPem": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----",
+  "expiresAt": "2026-06-25T10:00:00.000Z",
+  "failureReason": "CAA record for example.com prevents issuance",
+  "renewalFailedAt": "2026-05-26T06:03:12.000Z",
+  "renewAfter": "2026-05-27T02:03:12.000Z"
+}
+```
+
+Both fields are cleared when a renewal is requested again, so a client that renewed and then sees `issued` with `renewalFailedAt` set (and the same `crtPem` as before) knows the renewal failed. If the current certificate had already expired, the status is `failed` with no PEM, as for a failed issuance. See [Failed Renewals](CERTIFICATE_FLOW.md#failed-renewals).
 
 `rawCsr` and internal fields are excluded from API responses.
 
@@ -612,7 +630,7 @@ Use `ifDue=true` when calling renew on a schedule (cron, systemd timer, CI): it 
 }
 ```
 
-Poll `GET /certs/tls/:id` either way: the status goes `renewing` -> `issued` (or `failed`).
+Poll `GET /certs/tls/:id` either way: the status goes `renewing` -> `issued`. A new `crtPem` means the renewal succeeded; `renewalFailedAt` set (with the old `crtPem`) means it failed and the current certificate was kept. It ends `failed` only when the current certificate had already expired.
 
 **Response `200` (`ifDue=true`, not due yet; nothing queued, status unchanged):**
 ```json
@@ -626,6 +644,7 @@ Poll `GET /certs/tls/:id` either way: the status goes `renewing` -> `issued` (or
 }
 ```
 
+After a failed renewal, `ifDue=true` also skips as `not_due` until automatic renewal would try again (about a day later), and the response adds `retryAfter` (ISO 8601). A request without `ifDue` renews right away.
 
 **Response `200` (`ifDue=true`, a renewal is already running or waiting; nothing changed):**
 ```json
@@ -640,11 +659,15 @@ Poll `GET /certs/tls/:id` either way: the status goes `renewing` -> `issued` (or
 
 **Errors:** `400` when the certificate is `pending`, `issuing`, `failed`, `revoking` or `revoked`, has no stored CSR and none was sent, or the CSR is invalid or has other names; `404` when it doesn't exist or the API key can't see it; `409` when a renewal of it is already running or waiting (status `renewing`, without `ifDue`), when another request started one at the same moment, or when another request completed the `awaiting_csr` certificate; `402` only when completing an `awaiting_csr` certificate; `429` past the `renewal` rate limit.
 
-A request whose job is lost (for example Redis lost its data, or the job stalled more often than the worker allows) doesn't stay in flight for good. After 30 minutes with no waiting, active or delayed job, a renewal goes back to `issued` when its current certificate is still there (otherwise it is queued again, at most until it has been recovered three times), and a new certificate goes to `failed` with a `failureReason` saying it was interrupted and the usual failure email, so `POST /certs/tls/:id/retry` works.
+A request whose job is lost (for example Redis lost its data, or the job stalled more often than the worker allows) doesn't stay in flight for good. After 30 minutes with no waiting, active or delayed job, a renewal is queued again, keeping its current certificate meanwhile; after three recoveries it is stopped and recorded as a failed renewal (`issued` with `renewalFailedAt`, or `failed` once the certificate has expired). A new certificate goes to `failed` with a `failureReason` saying it was interrupted and the usual failure email, so `POST /certs/tls/:id/retry` works.
 
 ### POST /certs/tls/:id/retry
 
-Retry issuance for a `failed` certificate. Re-queues the original CSR.
+Retry issuance for a `failed` certificate. Re-queues the original CSR. Returns `201` with `{"id": 42, "status": "pending"}`; plan limits apply as for a new request. A scoped API key needs `certs:issue`.
+
+For an `issued` certificate whose last renewal failed (`renewalFailedAt` set), retry renews it again, exactly like [`POST /certs/tls/:id/renew`](#post-certstlsidrenew) without a body: no plan limits, `201` with `{"id": 42, "status": "renewing", "queued": false}`, or `202` with `"queued": true` when it waits for a concurrent pending slot. A scoped API key needs `certs:renew`.
+
+**Errors:** `400` when the certificate is neither `failed` nor `issued` with a failed renewal, or has no stored CSR; `403` when a scoped key lacks the scope for that retry; `409` when a renewal of it started meanwhile; `429` past the `expensive` rate limit.
 
 ### POST /certs/tls/:id/revoke
 

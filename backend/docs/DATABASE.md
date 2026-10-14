@@ -100,6 +100,8 @@ CREATE TABLE "tls_crt" (
   "inFlightSince" TIMESTAMP,                      -- When the current issuance/renewal job was queued; job fencing token
   "recoveryCount" INTEGER DEFAULT 0,              -- Times the current request was recovered after losing its job
   "revocationReason" INTEGER,                     -- RFC 5280 reason code (0-10)
+  "failureReason" TEXT,                           -- Why the last issuance or renewal failed
+  "renewalFailedAt" TIMESTAMP,                    -- Last renewal failed; the issued certificate was kept
   "revokedAt" TIMESTAMP,
   "managedBy" TEXT,                               -- 'connector' or NULL (KrakenKey renews)
   "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
