@@ -16,7 +16,7 @@ import { BillingService } from '../billing/billing.service';
 import { PLAN_LIMITS } from '../billing/constants/plan-limits';
 import { CreateEndpointDto } from './dto/create-endpoint.dto';
 import { UpdateEndpointDto } from './dto/update-endpoint.dto';
-import type { SubscriptionPlan } from '@krakenkey/shared';
+import { planLabel, type SubscriptionPlan } from '@krakenkey/shared';
 
 @Injectable()
 export class EndpointsService {
@@ -179,9 +179,30 @@ export class EndpointsService {
     }
   }
 
+  /**
+   * Marks the endpoint for an on-demand scan: probes see `scanNow` and the
+   * next result is accepted even inside the scan interval. At most one
+   * request per the owner's plan minimum interval (60 minutes on Starter,
+   * 15 on Pro, 1 on Business), so on-demand scans can't bypass it.
+   */
   async requestScan(id: string, userId: string): Promise<Endpoint> {
     const endpoint = await this.findOne(id, userId);
-    endpoint.lastScanRequestedAt = new Date();
+    const plan = await this.billingService.resolveUserTier(endpoint.userId);
+    const cooldownMinutes = PLAN_LIMITS[plan].minScanInterval;
+    const now = Date.now();
+    const last = endpoint.lastScanRequestedAt?.getTime();
+    if (last !== undefined && now - last < cooldownMinutes * 60_000) {
+      const waitMinutes = Math.ceil(
+        (cooldownMinutes * 60_000 - (now - last)) / 60_000,
+      );
+      throw new HttpException(
+        {
+          message: `A scan was already requested for this endpoint. The ${planLabel(plan)} plan allows one on-demand scan every ${cooldownMinutes} minute${cooldownMinutes === 1 ? '' : 's'}; try again in ${waitMinutes} minute${waitMinutes === 1 ? '' : 's'}.`,
+        },
+        429,
+      );
+    }
+    endpoint.lastScanRequestedAt = new Date(now);
     return this.endpointRepo.save(endpoint);
   }
 

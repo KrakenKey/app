@@ -251,6 +251,65 @@ describe('EndpointsService', () => {
     });
   });
 
+  describe('requestScan', () => {
+    const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000);
+
+    it('marks the endpoint for a scan', async () => {
+      endpointRepo.findOne.mockResolvedValue({
+        ...mockEndpoint,
+        lastScanRequestedAt: null,
+      });
+      endpointRepo.save.mockImplementation((e) => Promise.resolve(e));
+      const before = Date.now();
+      const res = await service.requestScan('ep-uuid-1', userId);
+      expect(res.lastScanRequestedAt!.getTime()).toBeGreaterThanOrEqual(before);
+    });
+
+    it.each([
+      ['free', 59, 60],
+      ['pro', 14, 15],
+      ['business', 0.5, 1],
+    ])(
+      'allows one request per the %s minimum interval',
+      async (plan, early, onTime) => {
+        billingService.resolveUserTier.mockResolvedValue(plan);
+        endpointRepo.save.mockImplementation((e) => Promise.resolve(e));
+        endpointRepo.findOne.mockResolvedValue({
+          ...mockEndpoint,
+          lastScanRequestedAt: minutesAgo(early),
+        });
+        await expect(
+          service.requestScan('ep-uuid-1', userId),
+        ).rejects.toMatchObject({ status: 429 });
+        expect(endpointRepo.save).not.toHaveBeenCalled();
+
+        endpointRepo.findOne.mockResolvedValue({
+          ...mockEndpoint,
+          lastScanRequestedAt: minutesAgo(onTime),
+        });
+        await expect(
+          service.requestScan('ep-uuid-1', userId),
+        ).resolves.toBeDefined();
+      },
+    );
+
+    it('uses the endpoint owner plan and says when to try again', async () => {
+      endpointRepo.findOne.mockResolvedValue({
+        ...mockEndpoint,
+        userId: 'owner-1',
+        lastScanRequestedAt: minutesAgo(50),
+      });
+      const err = await service
+        .requestScan('ep-uuid-1', userId)
+        .catch((e: HttpException) => e);
+      expect(billingService.resolveUserTier).toHaveBeenCalledWith('owner-1');
+      expect((err as HttpException).getResponse()).toMatchObject({
+        message:
+          'A scan was already requested for this endpoint. The Starter plan allows one on-demand scan every 60 minutes; try again in 10 minutes.',
+      });
+    });
+  });
+
   describe('delete', () => {
     it('should delete an endpoint', async () => {
       endpointRepo.findOne.mockResolvedValue(mockEndpoint);
