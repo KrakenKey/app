@@ -103,6 +103,12 @@ export interface UpgradePreviewResponse {
    * Stripe charges the same amount. Missing from older API versions.
    */
   prorationDate?: number;
+  /**
+   * True when a change scheduled for the end of the period (a downgrade or
+   * a yearly-to-monthly switch made in the billing portal) will be canceled
+   * by the upgrade.
+   */
+  cancelsScheduledChange?: boolean;
 }
 
 export interface UpgradeResponse {

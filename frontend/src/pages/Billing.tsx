@@ -686,6 +686,12 @@ export default function Billing() {
                 cancellation will be cleared).
               </p>
             )}
+            {upgradeModal.preview.cancelsScheduledChange && (
+              <p className="text-sm text-amber-400">
+                Upgrading also cancels the change scheduled for the end of your
+                billing period.
+              </p>
+            )}
             {upgradeError && (
               <p className="text-sm text-red-400">{upgradeError}</p>
             )}

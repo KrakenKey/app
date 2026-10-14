@@ -221,6 +221,30 @@ describe('Billing', () => {
       expect(await screen.findByText(message)).toBeInTheDocument();
     });
 
+    it('says the upgrade cancels a change scheduled in the portal', async () => {
+      mockFetchSubscription.mockResolvedValue({
+        ...sub('pro'),
+        interval: 'month',
+      });
+      mockPreviewUpgrade.mockResolvedValue({
+        immediateAmountCents: 6000,
+        currency: 'usd',
+        targetPlan: 'business',
+        targetInterval: 'month',
+        currentPeriodEnd: '2026-11-14T00:00:00.000Z',
+        cancelsScheduledChange: true,
+      });
+      const user = userEvent.setup();
+      render(<Billing />);
+
+      await user.click(
+        await screen.findByRole('button', { name: 'Upgrade to Business' }),
+      );
+      expect(
+        await screen.findByText(/also cancels the change scheduled/),
+      ).toBeInTheDocument();
+    });
+
     it('explains a new billing period when the upgrade changes the interval', async () => {
       mockFetchPlans.mockResolvedValue(withYearly);
       mockFetchSubscription.mockResolvedValue({
