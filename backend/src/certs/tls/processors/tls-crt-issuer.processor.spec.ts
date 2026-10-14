@@ -44,6 +44,8 @@ describe('CertIssuerConsumer', () => {
             emailService: mockEmailService,
             alerts: mockAlerts,
             userRepo: { findOne: jest.fn().mockResolvedValue(null) },
+            // The daily email limit is covered in tls.renewal-queue.spec.ts
+            claimRenewalFailedEmail: () => Promise.resolve(true),
           },
           cert as any,
           failure as any,

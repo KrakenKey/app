@@ -1437,6 +1437,53 @@ describe('Renewal claims and queue', () => {
       expect(table.row(id).status).toBe('renewing');
     });
 
+    it('emails a failed renewal at most once a day, and alerts every time', async () => {
+      const id = current();
+      const failOnce = async () => {
+        await table.update(id, { renewalFailedAt: null });
+        await service.renew(id, 'u1');
+        await new Promise((resolve) => setTimeout(resolve, 3)); // a new token
+        acmeIssue.mockRejectedValue(new Error('CAA record forbids'));
+        await runFinalAttempt(id);
+        expect(table.row(id).status).toBe('issued');
+      };
+
+      await failOnce();
+      await failOnce();
+      expect(email.sendCertRenewalFailed).toHaveBeenCalledTimes(1);
+      expect(
+        alerts.emit.mock.calls.filter((c) => c[1] === 'cert.failed'),
+      ).toHaveLength(2);
+      expect(table.row(id).renewalFailedEmailAt).toBeInstanceOf(Date);
+
+      // A day later the next failure is emailed again
+      await table.update(id, {
+        renewalFailedEmailAt: new Date(Date.now() - DAY - 60_000),
+      });
+      await failOnce();
+      expect(email.sendCertRenewalFailed).toHaveBeenCalledTimes(2);
+
+      // The API never shows the bookkeeping
+      const res = await service.toResponse(table.row(id) as any);
+      expect(res).not.toHaveProperty('renewalFailedEmailAt');
+    });
+
+    it('always emails a renewal that ended failed because the certificate expired', async () => {
+      const id = current({
+        expiresAt: new Date(Date.now() + 60 * 60_000),
+        renewalFailedEmailAt: new Date(),
+      });
+      await service.renew(id, 'u1');
+      // The certificate expires while the renewal runs
+      await table.update(id, { expiresAt: new Date(Date.now() - 60_000) });
+      acmeIssue.mockRejectedValue(new Error('CAA record forbids'));
+      await runFinalAttempt(id);
+
+      expect(table.row(id).status).toBe('failed');
+      expect(email.sendCertFailed).toHaveBeenCalledTimes(1);
+      expect(email.sendCertRenewalFailed).not.toHaveBeenCalled();
+    });
+
     it('a connector timer sees the same wait through ifDue', async () => {
       const id = current({
         managedBy: 'connector',

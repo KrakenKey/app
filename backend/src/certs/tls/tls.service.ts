@@ -104,6 +104,8 @@ export const QUEUE_ADD_TIMEOUT_MS = 10_000;
 export const STUCK_AFTER_MS = 30 * 60_000;
 /** A renewal recovered this many times is marked failed, not re-queued. */
 export const MAX_RECOVERIES = 3;
+/** At most one renewal-failed email per certificate in this interval. */
+export const RENEWAL_FAILED_EMAIL_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const IN_FLIGHT_STATUSES: CertStatus[] = [
   CertStatus.PENDING,
   CertStatus.ISSUING,
@@ -1524,11 +1526,47 @@ export class TlsService {
   }
 
   /**
+   * Claims the day's renewal-failed email for a certificate: sets
+   * renewalFailedEmailAt in one conditional update, only when none went
+   * out in the last RENEWAL_FAILED_EMAIL_INTERVAL_MS. Returns false when
+   * one was sent more recently (or another process just claimed it).
+   */
+  private async claimRenewalFailedEmail(
+    id: number,
+    at = new Date(),
+  ): Promise<boolean> {
+    try {
+      const result = await this.TlsCrtRepository.update(
+        [
+          { id, renewalFailedEmailAt: IsNull() },
+          {
+            id,
+            renewalFailedEmailAt: LessThan(
+              new Date(at.getTime() - RENEWAL_FAILED_EMAIL_INTERVAL_MS),
+            ),
+          },
+        ],
+        { renewalFailedEmailAt: at },
+      );
+      return (result?.affected ?? 0) > 0;
+    } catch (err) {
+      // Can't tell: send rather than stay silent about a failed renewal
+      this.logger.warn(
+        `Could not check the renewal-failed email limit for cert #${id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return true;
+    }
+  }
+
+  /**
    * @internal
    * Emails the owner (per their preferences) and sends the cert.failed
    * alert for an issuance or renewal that failed for good. With
    * `currentExpiresAt`, a renewal failed but the current certificate stays
-   * in place until then. Emails never throw (EmailService logs delivery
+   * in place until then; that email goes out at most once per certificate
+   * per day (claimRenewalFailedEmail), while the cert.failed alert goes to
+   * opted-in channels on every failure. A failure that ends 'failed' is
+   * always emailed. Emails never throw (EmailService logs delivery
    * errors); an alert queuing error is passed on to the caller.
    */
   async notifyFailure(
@@ -1560,22 +1598,26 @@ export class TlsService {
         errorMessage: failure.error,
       };
       if (failure.currentExpiresAt) {
-        await this.emailService.sendCertRenewalFailed({
-          ...ctx,
-          expiresAt: failure.currentExpiresAt,
-          replacementRequested: !!cert.ariReplacementRequestedAt,
-          retryBy:
-            cert.managedBy === 'connector'
-              ? 'connector'
-              : cert.autoRenew
-                ? 'krakenkey'
-                : 'manual',
-          retryAt: renewalRetryAt({
-            ...cert,
-            renewalFailedAt: failure.failedAt ?? new Date(),
-            lastRenewedAt: null,
-          }),
-        });
+        // At most one renewal-failed email per certificate per day: close
+        // to expiry a failing renewal is retried every few hours
+        if (await this.claimRenewalFailedEmail(cert.id, failure.failedAt)) {
+          await this.emailService.sendCertRenewalFailed({
+            ...ctx,
+            expiresAt: failure.currentExpiresAt,
+            replacementRequested: !!cert.ariReplacementRequestedAt,
+            retryBy:
+              cert.managedBy === 'connector'
+                ? 'connector'
+                : cert.autoRenew
+                  ? 'krakenkey'
+                  : 'manual',
+            retryAt: renewalRetryAt({
+              ...cert,
+              renewalFailedAt: failure.failedAt ?? new Date(),
+              lastRenewedAt: null,
+            }),
+          });
+        }
       } else {
         await this.emailService.sendCertFailed(ctx);
       }
@@ -1752,7 +1794,8 @@ export function restoredCsr(
 }
 
 /**
- * A certificate as the API shows it: without the saved previous CSR, and
+ * A certificate as the API shows it: without the saved previous CSR and
+ * the email bookkeeping, and
  * without a renewal failure left over from a renewal that a previous
  * release finished (see hasRenewalFailure).
  */
@@ -1760,10 +1803,12 @@ function publicView(cert: TlsCrt): TlsCrt {
   const {
     previousRawCsr: _previousRawCsr,
     previousParsedCsr: _previousParsedCsr,
+    renewalFailedEmailAt: _renewalFailedEmailAt,
     ...rest
   } = cert;
   void _previousRawCsr;
   void _previousParsedCsr;
+  void _renewalFailedEmailAt;
   if (rest.renewalFailedAt && !hasRenewalFailure(rest)) {
     return { ...rest, renewalFailedAt: null, failureReason: null } as TlsCrt;
   }

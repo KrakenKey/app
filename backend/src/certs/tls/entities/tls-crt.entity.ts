@@ -129,6 +129,14 @@ export class TlsCrt {
   @Column({ type: 'timestamp', nullable: true })
   renewalFailedAt: Date | null;
 
+  /**
+   * When the owner was last emailed about a failed renewal that kept the
+   * certificate; at most one such email per day. Never returned by the API.
+   */
+  @ApiHideProperty()
+  @Column({ type: 'timestamp', nullable: true })
+  renewalFailedEmailAt: Date | null;
+
   @Column({ type: 'timestamp', nullable: true })
   revokedAt: Date | null;
 

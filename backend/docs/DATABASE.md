@@ -104,6 +104,7 @@ CREATE TABLE "tls_crt" (
   "revocationReason" INTEGER,                     -- RFC 5280 reason code (0-10)
   "failureReason" TEXT,                           -- Why the last issuance or renewal failed
   "renewalFailedAt" TIMESTAMP,                    -- Last renewal failed; the issued certificate was kept
+  "renewalFailedEmailAt" TIMESTAMP,               -- Last renewal-failed email (at most one per day; hidden from API)
   "revokedAt" TIMESTAMP,
   "managedBy" TEXT,                               -- 'connector' or NULL (KrakenKey renews)
   "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
