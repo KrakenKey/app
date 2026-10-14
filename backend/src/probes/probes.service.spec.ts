@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
-import { ProbesService } from './probes.service';
+import { PREVIOUS_RESULTS_SQL, ProbesService } from './probes.service';
 import { Probe } from './entities/probe.entity';
 import { ProbeScanResult } from './entities/probe-scan-result.entity';
 import { Endpoint } from '../endpoints/entities/endpoint.entity';
@@ -78,24 +78,12 @@ describe('ProbesService', () => {
       create: jest.fn((dto) => ({ id: 'sr-1', ...dto })),
       save: jest.fn((entities) => Promise.resolve(entities)),
     };
-    scanResultRepo.createQueryBuilder = jest.fn(() => {
-      let ids: string[] = [];
-      const qb = {
-        distinctOn: jest.fn().mockReturnThis(),
-        where: jest.fn().mockReturnThis(),
-        andWhere: jest.fn((_sql: string, params: { endpointIds: string[] }) => {
-          ids = params.endpointIds;
-          return qb;
-        }),
-        orderBy: jest.fn().mockReturnThis(),
-        addOrderBy: jest.fn().mockReturnThis(),
-        getMany: jest.fn(async () => {
-          const row = await scanResultRepo.findOne();
-          return row ? ids.map((endpointId) => ({ ...row, endpointId })) : [];
-        }),
-      };
-      return qb;
-    });
+    scanResultRepo.query = jest.fn(
+      async (_sql: string, [ids]: [string[], string]) => {
+        const row = await scanResultRepo.findOne();
+        return row ? ids.map((endpointId) => ({ ...row, endpointId })) : [];
+      },
+    );
 
     endpointRepo = {
       findOne: jest.fn(),
@@ -282,12 +270,10 @@ describe('ProbesService', () => {
         await service.submitReport(failing, connectedUser);
 
         // The previous result is the last one received from this probe
-        const qb = scanResultRepo.createQueryBuilder.mock.results[0].value;
-        expect(qb.distinctOn).toHaveBeenCalledWith(['r.endpointId']);
-        expect(qb.where).toHaveBeenCalledWith('r.probeId = :probeId', {
-          probeId: 'probe-1',
-        });
-        expect(qb.addOrderBy).toHaveBeenCalledWith('r.createdAt', 'DESC');
+        expect(scanResultRepo.query).toHaveBeenCalledWith(
+          PREVIOUS_RESULTS_SQL,
+          [['ep-1'], 'probe-1'],
+        );
         expect(alerts.emit).toHaveBeenCalledTimes(1);
         expect(alerts.emit).toHaveBeenCalledWith(
           'user-123',
@@ -420,6 +406,41 @@ describe('ProbesService', () => {
         );
         expect(res).toEqual({ accepted: 1, tooSoon: 1 });
         expect(scanResultRepo.save.mock.calls[0][0]).toHaveLength(1);
+      });
+
+      it('matches the SNI too, so endpoints sharing host:port each get their result', async () => {
+        endpointRepo.findOne
+          .mockResolvedValueOnce({ ...mockEndpoint, id: 'ep-a' })
+          .mockResolvedValueOnce({ ...mockEndpoint, id: 'ep-b' });
+        const res = await service.submitReport(
+          {
+            ...dto,
+            results: [
+              {
+                ...dto.results[0],
+                endpoint: {
+                  host: 'example.com',
+                  port: 443,
+                  sni: 'a.example.com',
+                },
+              },
+              {
+                ...dto.results[0],
+                endpoint: { host: 'example.com', port: 443 },
+              },
+            ],
+          },
+          connectedUser,
+        );
+        expect(res).toEqual({ accepted: 2, tooSoon: 0 });
+        const qb = endpointRepo.createQueryBuilder();
+        const sniCalls = qb.andWhere.mock.calls.filter(([sql]: [string]) =>
+          sql.includes('COALESCE(NULLIF(e.sni'),
+        );
+        // A result without an SNI matches on the host
+        expect(
+          sniCalls.map(([, p]: [string, { sni: string }]) => p.sni),
+        ).toEqual(['a.example.com', 'example.com']);
       });
 
       it('ignores results for endpoints not assigned to the connected probe', async () => {

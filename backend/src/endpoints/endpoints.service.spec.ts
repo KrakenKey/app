@@ -293,6 +293,25 @@ describe('EndpointsService', () => {
       },
     );
 
+    it('uses the hosted interval for an endpoint scanned from a hosted region', async () => {
+      billingService.resolveUserTier.mockResolvedValue('pro');
+      endpointRepo.save.mockImplementation((e) => Promise.resolve(e));
+      const hosted = (minutes: number) => ({
+        ...mockEndpoint,
+        hostedRegions: [{ region: 'us-east-1' }],
+        lastScanRequestedAt: minutesAgo(minutes),
+      });
+      // Pro: 15 minutes connected, 30 hosted
+      endpointRepo.findOne.mockResolvedValue(hosted(20));
+      await expect(
+        service.requestScan('ep-uuid-1', userId),
+      ).rejects.toMatchObject({ status: 429 });
+      endpointRepo.findOne.mockResolvedValue(hosted(30));
+      await expect(
+        service.requestScan('ep-uuid-1', userId),
+      ).resolves.toBeDefined();
+    });
+
     it('uses the endpoint owner plan and says when to try again', async () => {
       endpointRepo.findOne.mockResolvedValue({
         ...mockEndpoint,

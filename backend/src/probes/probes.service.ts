@@ -38,6 +38,39 @@ export function earlyResultSlackMs(intervalMinutes: number): number {
   return Math.max(intervalMinutes * 6_000, 20_000);
 }
 
+/** The columns of a previous result that the report and config read. */
+export type PreviousResult = Pick<
+  ProbeScanResult,
+  | 'createdAt'
+  | 'scannedAt'
+  | 'connectionSuccess'
+  | 'connectionError'
+  | 'certChainComplete'
+  | 'certTrusted'
+  | 'certNotAfter'
+  | 'certDaysUntilExpiry'
+>;
+
+/**
+ * The last result per endpoint from one probe ($1 endpoint ids, $2 probe
+ * id), on the (endpointId, probeId, createdAt) index.
+ */
+export const PREVIOUS_RESULTS_SQL = `
+  SELECT e.id AS "endpointId", r.*
+  FROM unnest($1::uuid[]) AS e(id)
+  CROSS JOIN LATERAL (
+    SELECT "createdAt", "scannedAt", "connectionSuccess", "connectionError",
+           "certChainComplete", "certTrusted", "certNotAfter",
+           "certDaysUntilExpiry"
+    FROM probe_scan_result
+    WHERE "endpointId" = e.id AND "probeId" = $2
+    ORDER BY "createdAt" DESC
+    LIMIT 1
+  ) r`;
+
+/** An endpoint's SNI as probes scan it: its own, or its host. */
+const SNI_MATCH = `COALESCE(NULLIF(e.sni, ''), e.host) = :sni`;
+
 /** How long an on-demand scan request keeps `scanNow` set for probes. */
 const SCAN_NOW_WINDOW_MS = 5 * 60 * 1000;
 
@@ -312,29 +345,24 @@ export class ProbesService {
 
   /**
    * The latest stored result from this probe for each endpoint, by when the
-   * API received it, in one query. Undefined when the lookup fails (the
-   * report is still accepted, without an interval check or a failure alert).
+   * API received it. One query, one index probe per endpoint: a LATERAL
+   * subquery walks the (endpointId, probeId, createdAt) index backwards and
+   * stops at the first row, instead of sorting every result kept in
+   * retention. Only the columns the interval check and the failure alert
+   * read. Undefined when the lookup fails (the report is still accepted,
+   * without an interval check or a failure alert).
    */
   private async previousResults(
     probeId: string,
     endpointIds: string[],
-  ): Promise<Map<string, ProbeScanResult> | undefined> {
-    const byEndpoint = new Map<string, ProbeScanResult>();
-    if (endpointIds.length === 0) return byEndpoint;
+  ): Promise<Map<string, PreviousResult> | undefined> {
+    const byEndpoint = new Map<string, PreviousResult>();
+    const ids = [...new Set(endpointIds)];
+    if (ids.length === 0) return byEndpoint;
     try {
-      const rows = await this.scanResultRepo
-        .createQueryBuilder('r')
-        .distinctOn(['r.endpointId'])
-        .where('r.probeId = :probeId', { probeId })
-        .andWhere('r.endpointId IN (:...endpointIds)', {
-          endpointIds: [...new Set(endpointIds)],
-        })
-        .orderBy('r.endpointId')
-        .addOrderBy('r.createdAt', 'DESC')
-        .getMany();
-      for (const row of rows) {
-        if (row.endpointId) byEndpoint.set(row.endpointId, row);
-      }
+      const rows: (PreviousResult & { endpointId: string })[] =
+        await this.scanResultRepo.query(PREVIOUS_RESULTS_SQL, [ids, probeId]);
+      for (const row of rows) byEndpoint.set(row.endpointId, row);
       return byEndpoint;
     } catch (err) {
       this.logger.warn(
@@ -352,7 +380,7 @@ export class ProbesService {
    */
   private startedFailing(
     result: ProbeScanResult,
-    previous: ProbeScanResult | null | undefined,
+    previous: PreviousResult | null | undefined,
   ): boolean {
     if (!scanFailureReason(result) || !result.endpointId) return false;
     if (previous === undefined) return false;
@@ -499,6 +527,8 @@ export class ProbesService {
   ): Promise<Endpoint[]> {
     const host = result.endpoint.host;
     const port = result.endpoint.port;
+    // Endpoints on the same host:port with different SNI are separate
+    const sni = result.endpoint.sni || host;
 
     // A connected probe's results count only for the owner's endpoints
     // that are assigned to this probe
@@ -508,6 +538,7 @@ export class ProbesService {
         .innerJoin(EndpointProbeAssignment, 'epa', 'epa."endpointId" = e.id')
         .where('e."userId" = :userId', { userId: probe.userId })
         .andWhere('e.host = :host AND e.port = :port', { host, port })
+        .andWhere(SNI_MATCH, { sni })
         .andWhere('epa."probeId" = :probeId', { probeId: probe.id })
         .getOne();
       return ep ? [ep] : [];
@@ -520,6 +551,7 @@ export class ProbesService {
         .createQueryBuilder('e')
         .innerJoin(EndpointHostedRegion, 'ehr', 'ehr."endpointId" = e.id')
         .where('e.host = :host AND e.port = :port', { host, port })
+        .andWhere(SNI_MATCH, { sni })
         .andWhere('ehr.region = :region', { region: probe.region })
         .andWhere('e."isActive" = true')
         .getMany();
