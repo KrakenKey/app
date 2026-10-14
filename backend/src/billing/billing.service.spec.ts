@@ -109,8 +109,11 @@ describe('BillingService', () => {
               const config: Record<string, string> = {
                 KK_STRIPE_SECRET_KEY: 'sk_test_123',
                 KK_STRIPE_WEBHOOK_SECRET: 'whsec_test',
+                KK_STRIPE_PRICE_PRO_MONTHLY: 'price_pro_month',
+                // Old prices: must not be used for Pro or Business
                 KK_STRIPE_PRICE_STARTER: 'price_starter_123',
                 KK_STRIPE_PRICE_TEAM: 'price_team_456',
+                KK_STRIPE_PRICE_BUSINESS_MONTHLY: 'price_business_month',
                 KK_APP_DOMAIN: 'app.krakenkey.io',
               };
               return config[key] ?? defaultValue ?? '';
@@ -655,7 +658,7 @@ describe('BillingService', () => {
                 {
                   current_period_end:
                     Math.floor(Date.now() / 1000) + 86400 * 30,
-                  price: { id: 'price_team_456' },
+                  price: { id: 'price_business_month' },
                 },
               ],
             },
@@ -694,12 +697,47 @@ describe('BillingService', () => {
         },
       }) as any;
 
-    it('maps the Starter price to pro', async () => {
+    it('maps the Pro price to pro', async () => {
       mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
-      await service.handleWebhookEvent(updated('price_starter_123'));
+      await service.handleWebhookEvent(updated('price_pro_month'));
       expect(mockRepository.save).toHaveBeenCalledWith(
         expect.objectContaining({ plan: 'pro' }),
       );
+    });
+
+    it('does not treat the old Starter and Team prices as Pro or Business', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        plan: 'pro',
+      });
+      await service.handleWebhookEvent(updated('price_team_456'));
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ plan: 'pro' }),
+      );
+    });
+
+    it('sells Business only with its own price, not the old Team price', async () => {
+      const unpriced = new BillingService(
+        mockRepository as any,
+        mockUserRepo as any,
+        mockOrgRepo as any,
+        {} as any,
+        {
+          get: (key: string, d?: string) =>
+            ({
+              KK_STRIPE_SECRET_KEY: 'sk_test_123',
+              KK_STRIPE_PRICE_STARTER: 'price_starter_123',
+              KK_STRIPE_PRICE_TEAM: 'price_team_456',
+            })[key] ?? d,
+        } as any,
+        mockEmailService as any,
+      );
+      await expect(
+        unpriced.createCheckoutSession(userId, 'a@example.com', 'business'),
+      ).rejects.toThrow('The Business plan is not available for purchase');
+      await expect(
+        unpriced.createCheckoutSession(userId, 'a@example.com', 'pro'),
+      ).rejects.toThrow('The Pro plan is not available for purchase');
     });
 
     it('stores pro for a checkout opened before the rename', async () => {
@@ -1095,9 +1133,11 @@ describe('BillingService', () => {
         currentPeriodEnd: mockSubscription.currentPeriodEnd!.toISOString(),
       });
       expect(mockStripe.prices.retrieve).toHaveBeenCalledWith(
-        'price_starter_123',
+        'price_pro_month',
       );
-      expect(mockStripe.prices.retrieve).toHaveBeenCalledWith('price_team_456');
+      expect(mockStripe.prices.retrieve).toHaveBeenCalledWith(
+        'price_business_month',
+      );
     });
   });
 
@@ -1138,7 +1178,7 @@ describe('BillingService', () => {
       expect(mockStripe.subscriptions.update).toHaveBeenCalledWith(
         'sub_test123',
         {
-          items: [{ id: 'si_item1', price: 'price_team_456' }],
+          items: [{ id: 'si_item1', price: 'price_business_month' }],
           proration_behavior: 'none',
         },
       );
