@@ -106,7 +106,13 @@ describe('Notification channels (e2e)', () => {
       useFactory: () =>
         new PlanLimitsService(
           billing as unknown as BillingService,
-          {} as never,
+          {
+            findOne: async () => ({ id: MOCK_USER.userId }),
+            manager: {
+              transaction: (cb: (m: unknown) => unknown) =>
+                cb({ query: async () => [], getRepository: () => repo }),
+            },
+          } as never,
           {} as never,
           repo as never,
           {} as never,

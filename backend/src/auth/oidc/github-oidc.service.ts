@@ -83,7 +83,9 @@ export class GithubOidcService {
       lastUsedAt: null,
       lastUsedRef: null,
     });
-    await this.trustRepo.save(trust);
+    await this.planLimits.addWithinLimit(userId, 'githubOidcTrusts', (m) =>
+      m.getRepository(GithubOidcTrust).save(trust),
+    );
     return toDto(trust);
   }
 

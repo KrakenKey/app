@@ -126,14 +126,17 @@ export class BillingService {
       '',
     );
 
-    // Map plan names to Stripe price IDs from env vars. The Pro and Business
-    // plans replaced Starter and Team and still read their price variables.
+    // Map plan names to Stripe price IDs from env vars. Pro and Business
+    // need their own prices: the old Starter and Team prices are not used
+    // for them, so a plan without its variable can't be bought.
     this.priceMap = {};
-    const proPrice = this.configService.get<string>('KK_STRIPE_PRICE_STARTER');
+    const proPrice = this.configService.get<string>(
+      'KK_STRIPE_PRICE_PRO_MONTHLY',
+    );
     if (proPrice) this.priceMap['pro'] = proPrice;
 
     const businessPrice = this.configService.get<string>(
-      'KK_STRIPE_PRICE_TEAM',
+      'KK_STRIPE_PRICE_BUSINESS_MONTHLY',
     );
     if (businessPrice) this.priceMap['business'] = businessPrice;
 

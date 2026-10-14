@@ -19,7 +19,7 @@ describe('OrganizationsService', () => {
   let mockOrgRepo: Record<string, any>;
   let mockUserRepo: Record<string, jest.Mock>;
   let mockBillingService: Record<string, jest.Mock>;
-  let mockPlanLimits: { assertCanAddMember: jest.Mock };
+  let mockPlanLimits: { addMemberWithinLimit: jest.Mock };
 
   const ownerId = 'user-owner';
   const orgId = 'org-1';
@@ -52,7 +52,13 @@ describe('OrganizationsService', () => {
       queueDissolution: jest.fn(),
     };
 
-    mockPlanLimits = { assertCanAddMember: jest.fn() };
+    // Runs the update through the given manager, like the real one
+    mockPlanLimits = {
+      addMemberWithinLimit: jest.fn(
+        (_org: string, _actor: string, save: (m: unknown) => unknown) =>
+          save({ getRepository: () => mockUserRepo }),
+      ),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -226,7 +232,7 @@ describe('OrganizationsService', () => {
         role: null,
       });
       mockBillingService.getSubscription.mockResolvedValue(null);
-      mockPlanLimits.assertCanAddMember.mockRejectedValue(
+      mockPlanLimits.addMemberWithinLimit.mockRejectedValue(
         planLimitExceeded('orgMembers', 'pro', 3),
       );
 
@@ -234,9 +240,10 @@ describe('OrganizationsService', () => {
         .inviteMember(orgId, ownerId, 'target@example.com', 'member')
         .catch((e: HttpException) => e);
 
-      expect(mockPlanLimits.assertCanAddMember).toHaveBeenCalledWith(
+      expect(mockPlanLimits.addMemberWithinLimit).toHaveBeenCalledWith(
         orgId,
         ownerId,
+        expect.any(Function),
       );
       expect((err as HttpException).getStatus()).toBe(402);
       expect((err as HttpException).getResponse()).toMatchObject({
@@ -261,7 +268,7 @@ describe('OrganizationsService', () => {
 
       await service.inviteMember(orgId, ownerId, 'target@example.com', 'admin');
 
-      expect(mockPlanLimits.assertCanAddMember).not.toHaveBeenCalled();
+      expect(mockPlanLimits.addMemberWithinLimit).not.toHaveBeenCalled();
       expect(mockUserRepo.update).toHaveBeenCalledWith('target', {
         organizationId: orgId,
         role: 'admin',

@@ -230,8 +230,8 @@ KrakenKey uses Stripe for subscription billing. The integration supports checkou
 |----------|-------------|
 | `KK_STRIPE_SECRET_KEY` | Stripe secret API key |
 | `KK_STRIPE_WEBHOOK_SECRET` | Webhook signing secret |
-| `KK_STRIPE_PRICE_STARTER` | Price ID for the Pro plan (the variable kept its old name) |
-| `KK_STRIPE_PRICE_TEAM` | Price ID for the Business plan (the variable kept its old name) |
+| `KK_STRIPE_PRICE_PRO_MONTHLY` | Price ID for the Pro plan, monthly |
+| `KK_STRIPE_PRICE_BUSINESS_MONTHLY` | Price ID for the Business plan, monthly |
 
 ### Setting Up Stripe
 
