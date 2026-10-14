@@ -2,6 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
 import { ExternalLink, Loader2, ShoppingBag } from 'lucide-react';
+import {
+  ORG_ELIGIBLE_PLANS,
+  PLAN_LABELS,
+  planLabel as labelFor,
+} from '@krakenkey/shared';
 import type { MarketplaceLandingResponse } from '@krakenkey/shared';
 import { useAuth } from '../hooks/useAuth';
 import { Button } from '../components/ui/Button';
@@ -19,11 +24,8 @@ import {
 
 const SUPPORT_URL = 'https://krakenkey.io/support/';
 
-const PLAN_LABELS: Record<string, string> = {
-  starter: 'Starter',
-  team: 'Team',
-  business: 'Business',
-};
+/** The smallest plan that includes organizations. */
+const ORG_PLAN_LABEL = PLAN_LABELS[ORG_ELIGIBLE_PLANS[0]];
 
 const TERM_LABELS: Record<string, string> = {
   P1M: 'Monthly',
@@ -72,12 +74,7 @@ function PurchaseDetails({
 }) {
   const rows: [string, string][] = [
     ['Subscription', purchase.subscriptionName || '-'],
-    [
-      'Plan',
-      purchase.plan
-        ? (PLAN_LABELS[purchase.plan] ?? purchase.plan)
-        : purchase.planId,
-    ],
+    ['Plan', purchase.plan ? labelFor(purchase.plan) : purchase.planId],
   ];
   if (purchase.termUnit) {
     rows.push([
@@ -281,7 +278,7 @@ const Marketplace: React.FC = () => {
       const { purchase } = state;
       const busy = state.kind === 'working';
       const planLabel = purchase.plan
-        ? (PLAN_LABELS[purchase.plan] ?? purchase.plan)
+        ? labelFor(purchase.plan)
         : purchase.planId;
       let detail: React.ReactNode;
       switch (purchase.state) {
@@ -376,12 +373,12 @@ const Marketplace: React.FC = () => {
           );
           break;
         case 'needs_team':
-          title = 'Organizations need Team or higher';
+          title = `Organizations need ${ORG_PLAN_LABEL} or higher`;
           detail = (
             <p className="mt-6 text-sm text-amber-400">
               {planLabel} is a personal plan, and {purchase.target.name} is an
-              organization. Change the plan to Team or Business in the Azure
-              portal, or sign in with an account that isn&apos;t in an
+              organization. Change the plan to {ORG_PLAN_LABEL} or higher in the
+              Azure portal, or sign in with an account that isn&apos;t in an
               organization.
             </p>
           );

@@ -4,7 +4,7 @@ import { mockDomains, mockCertificates } from './fixtures/mock-data';
 test.describe('CSR Generator', () => {
   test.beforeEach(async ({ page }) => {
     await authenticateAs(page, {
-      plan: 'starter',
+      plan: 'pro',
       resourceCounts: { domains: 2, certificates: 1, apiKeys: 0 },
     });
 

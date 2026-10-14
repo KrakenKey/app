@@ -1,8 +1,9 @@
 import {
   CONNECTOR_MIN_RENEWAL_WINDOW_DAYS,
   CertStatus,
+  normalizePlan,
 } from '@krakenkey/shared';
-import type { CertManagedBy, SubscriptionPlan } from '@krakenkey/shared';
+import type { CertManagedBy } from '@krakenkey/shared';
 import { PLAN_LIMITS } from '../../../billing/constants/plan-limits';
 
 const MS_PER_DAY = 86_400_000;
@@ -75,8 +76,7 @@ export function daysUntilExpiry(expiresAt: Date, now = Date.now()): number {
 
 /** Renewal window for a plan in days. Unknown plans fall back to free. */
 export function renewalWindowDays(plan: string): number {
-  return (PLAN_LIMITS[plan as SubscriptionPlan] ?? PLAN_LIMITS.free)
-    .renewalWindowDays;
+  return PLAN_LIMITS[normalizePlan(plan)].renewalWindowDays;
 }
 
 /**

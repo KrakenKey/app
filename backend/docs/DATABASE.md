@@ -204,7 +204,7 @@ Subscription records linked to users or organizations, billed by Stripe or by Mi
 ```sql
 CREATE TABLE "subscription" (
   "id" UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  "plan" VARCHAR NOT NULL,                        -- starter/team/business/enterprise
+  "plan" VARCHAR NOT NULL,                        -- free/pro/business/enterprise
   "status" VARCHAR NOT NULL,                      -- active/past_due/unpaid/canceled/incomplete/trialing
   "stripeCustomerId" VARCHAR,                    -- null for Marketplace-only accounts
   "stripeSubscriptionId" VARCHAR UNIQUE,
@@ -256,7 +256,7 @@ CREATE TABLE "marketplace_operation" (
 
 ### Organization
 
-Teams with role-based access control. Requires Team+ plan.
+Teams with role-based access control. Requires the Business plan or higher.
 
 ```sql
 CREATE TABLE "organization" (

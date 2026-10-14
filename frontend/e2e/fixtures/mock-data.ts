@@ -10,29 +10,29 @@ export const freeSub = {
   createdAt: '2025-01-01T00:00:00.000Z',
 };
 
-export const starterSub = {
+export const proSub = {
   ...freeSub,
-  id: 'sub_starter',
-  plan: 'starter',
+  id: 'sub_pro',
+  plan: 'pro',
   currentPeriodEnd: '2026-04-20T00:00:00.000Z',
 };
 
-export const teamSub = {
+export const businessSub = {
   ...freeSub,
-  id: 'sub_team',
-  plan: 'team',
+  id: 'sub_business',
+  plan: 'business',
   currentPeriodEnd: '2026-04-20T00:00:00.000Z',
 };
 
 export const cancelingSub = {
-  ...starterSub,
+  ...proSub,
   cancelAtPeriodEnd: true,
 };
 
 export const upgradePreview = {
   immediateAmountCents: 4200,
   currency: 'usd',
-  targetPlan: 'team' as const,
+  targetPlan: 'business' as const,
   currentPeriodEnd: '2026-04-20T00:00:00.000Z',
 };
 
@@ -42,7 +42,7 @@ export const mockOrg = {
   id: 'org_001',
   name: 'Acme Corp',
   ownerId: 'usr_test_001',
-  plan: 'team',
+  plan: 'business',
   createdAt: '2025-06-01T00:00:00.000Z',
   members: [
     {
@@ -126,7 +126,7 @@ export const mockCertificates = [
 /* ── Org-Aware User Overrides ──────────────────────────────────────────── */
 
 export const orgOwnerUser = {
-  plan: 'team',
+  plan: 'business',
   organizationId: 'org_001',
   role: 'owner' as const,
   resourceCounts: { domains: 12, certificates: 8, apiKeys: 6 },
@@ -137,7 +137,7 @@ export const orgMemberUser = {
   username: 'janedoe',
   email: 'jane@example.com',
   displayName: 'Jane Doe',
-  plan: 'team',
+  plan: 'business',
   organizationId: 'org_001',
   role: 'member' as const,
   resourceCounts: { domains: 12, certificates: 8, apiKeys: 6 },
@@ -149,12 +149,12 @@ export const dissolvingOrg = {
 };
 
 export const paidUserSub = {
-  ...starterSub,
+  ...proSub,
   cancelAtPeriodEnd: false,
 };
 
 export const canceledPaidSub = {
-  ...starterSub,
+  ...proSub,
   cancelAtPeriodEnd: true,
 };
 

@@ -1,6 +1,7 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import { AlertTriangle, Check, CreditCard, ExternalLink } from 'lucide-react';
 import axios from 'axios';
+import { normalizePlan, planLabel as labelFor } from '@krakenkey/shared';
 import type {
   Subscription,
   SubscriptionPlan,
@@ -32,46 +33,45 @@ import {
 
 const PRICING_URL = 'https://krakenkey.io/pricing';
 
-const PLAN_LABELS: Record<string, string> = {
-  free: 'Free',
-  starter: 'Starter',
-  team: 'Team',
-  business: 'Business',
-  enterprise: 'Enterprise',
-};
+/** Enterprise is sold by quote. */
+const CONTACT_URL =
+  'mailto:support@krakenkey.io?subject=KrakenKey%20Enterprise';
 
-const PLAN_PRICES: Record<string, string> = {
-  starter: '$29/mo',
-  team: '$79/mo',
-  business: '$199/mo',
-  enterprise: 'Custom',
+/** Monthly list prices of the plans sold here. Enterprise is by quote. */
+const PLAN_PRICES: Partial<Record<SubscriptionPlan, string>> = {
+  pro: '$29/mo',
+  business: '$149/mo',
 };
 
 /** Extras each plan adds beyond the numeric limits. */
 const PLAN_EXTRAS: Partial<Record<SubscriptionPlan, string[]>> = {
-  starter: ['30-day renewal window', 'Double API rate limits'],
-  team: ['Organizations with RBAC', 'Higher rate limits (300 reads/min)'],
-  business: ['1-minute scan intervals', 'Higher rate limits (600 reads/min)'],
+  pro: ['30-day renewal window', '30-minute hosted scans'],
+  business: [
+    'Organizations with roles',
+    '5-minute hosted scans, 90-day scan history',
+  ],
+  enterprise: ['Custom limits', 'Annual invoice or Microsoft Marketplace'],
 };
 
-/**
- * Plans the API can switch to from here. Business has no self-serve price
- * yet, so Team accounts get a link to the pricing page instead.
- */
-const UPGRADE_TARGETS: Record<string, SubscriptionPlan[]> = {
-  free: ['starter', 'team'],
-  starter: ['team'],
+/** Plans the API can switch to from here. */
+const UPGRADE_TARGETS: Partial<Record<SubscriptionPlan, SubscriptionPlan[]>> = {
+  free: ['pro', 'business'],
+  pro: ['business'],
 };
 
-const NEXT_PLAN: Record<string, SubscriptionPlan> = {
-  team: 'business',
+/** The plan after the largest self-serve one, sold by quote. */
+const NEXT_PLAN: Partial<Record<SubscriptionPlan, SubscriptionPlan>> = {
+  business: 'enterprise',
 };
 
 function planFeatures(plan: SubscriptionPlan): string[] {
   const l = planLimits(plan);
+  const regions = Number.isFinite(l.hostedProbeRegions)
+    ? `${formatLimit(l.hostedProbeRegions)} hosted region${l.hostedProbeRegions === 1 ? '' : 's'}`
+    : 'every hosted region';
   const lines = [
     `${formatLimit(l.domains)} domains, ${formatLimit(l.totalActiveCerts)} active certificates`,
-    `${formatLimit(l.monitoredEndpoints)} monitored endpoints, ${formatLimit(l.hostedProbeRegions)} hosted regions`,
+    `${formatLimit(l.monitoredEndpoints)} monitored endpoints, ${regions}`,
   ];
   return [...lines, ...(PLAN_EXTRAS[plan] ?? [])];
 }
@@ -149,11 +149,9 @@ function PlanCard({
   return (
     <Card className="flex flex-col">
       <div className="flex items-baseline justify-between gap-3 mb-4">
-        <h3 className="text-base font-semibold text-text">
-          {PLAN_LABELS[plan]}
-        </h3>
+        <h3 className="text-base font-semibold text-text">{labelFor(plan)}</h3>
         <span className="text-sm text-text-muted tabular-nums">
-          {PLAN_PRICES[plan]}
+          {PLAN_PRICES[plan] ?? 'Contact us'}
         </span>
       </div>
       <ul className="space-y-2 text-sm text-text-secondary mb-6 flex-1">
@@ -196,12 +194,12 @@ export default function Billing() {
     }
   }
 
-  const plan = subscription?.plan ?? 'free';
+  const plan = normalizePlan(subscription?.plan);
   const isPaid = plan !== 'free';
   const isPastDue = subscription?.status === 'past_due';
   // Stripe retries a failed payment for a while; the paid limits keep
   // applying until graceEndsAt. After that (or once Stripe marks the
-  // subscription unpaid) the account is on Free limits.
+  // subscription unpaid) the account is on the free (Starter) limits.
   const paymentFailed =
     isPaid && (isPastDue || subscription?.status === 'unpaid');
   const graceEndsAt =
@@ -321,7 +319,8 @@ export default function Billing() {
     );
   }
 
-  const planLabel = PLAN_LABELS[plan] ?? plan;
+  const planLabel = labelFor(plan);
+  const freeLabel = labelFor('free');
 
   return (
     <div className="space-y-6">
@@ -339,10 +338,10 @@ export default function Billing() {
                 {billedByMicrosoft
                   ? inGrace && graceEndsAt
                     ? `Microsoft couldn't collect the payment for your subscription. Update the payment method in the Azure portal by ${formatDate(graceEndsAt.toISOString())} to keep ${planLabel} limits.`
-                    : `Microsoft couldn't collect the payment for your subscription. Your account is on Free limits until the payment goes through in the Azure portal.`
+                    : `Microsoft couldn't collect the payment for your subscription. Your account is on ${freeLabel} limits until the payment goes through in the Azure portal.`
                   : inGrace && graceEndsAt
                     ? `Your last payment failed. Update your payment method by ${formatDate(graceEndsAt.toISOString())} to keep ${planLabel} limits.`
-                    : `Your last payment failed. Your account is on Free limits until you update your payment method and the ${planLabel} payment goes through.`}
+                    : `Your last payment failed. Your account is on ${freeLabel} limits until you update your payment method and the ${planLabel} payment goes through.`}
               </p>
               {!canManageBilling && (
                 <p className="text-red-200/80">
@@ -493,7 +492,7 @@ export default function Billing() {
                     disabled={actionLoading}
                     className="w-full"
                   >
-                    Upgrade to {PLAN_LABELS[target]}
+                    Upgrade to {labelFor(target)}
                   </Button>
                 }
               />
@@ -503,13 +502,10 @@ export default function Billing() {
                 plan={nextPlan}
                 action={
                   <a
-                    href={PRICING_URL}
-                    target="_blank"
-                    rel="noreferrer"
+                    href={CONTACT_URL}
                     className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-border-strong bg-surface-elevated px-3.5 text-sm font-medium text-text transition-colors hover:border-[#4a5b78] hover:bg-[#2e3c55]"
                   >
-                    Compare plans
-                    <ExternalLink className="w-4 h-4" />
+                    Contact us
                   </a>
                 }
               />
@@ -528,7 +524,7 @@ export default function Billing() {
           setUpgradeModal(null);
           setUpgradeError(null);
         }}
-        title={`Upgrade to ${upgradeModal ? PLAN_LABELS[upgradeModal.plan] : ''}`}
+        title={`Upgrade to ${upgradeModal ? labelFor(upgradeModal.plan) : ''}`}
       >
         {upgradeModal && (
           <div className="space-y-4">
@@ -543,11 +539,11 @@ export default function Billing() {
             <p className="text-sm text-zinc-300">
               Your subscription will then renew at the{' '}
               <span className="font-semibold text-zinc-100">
-                {PLAN_LABELS[upgradeModal.plan]}
+                {labelFor(upgradeModal.plan)}
               </span>{' '}
               rate of{' '}
               <span className="font-semibold text-zinc-100">
-                {PLAN_PRICES[upgradeModal.plan]}
+                {PLAN_PRICES[normalizePlan(upgradeModal.plan)]}
               </span>{' '}
               on your next billing date.
             </p>

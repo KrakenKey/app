@@ -16,6 +16,11 @@ import { useActionSet } from '../hooks/useActionSet';
 import { useConfirm } from '../hooks/useConfirm';
 import * as orgService from '../services/organizationService';
 import type { Organization, OrgMember } from '../services/organizationService';
+import {
+  ORG_ELIGIBLE_PLANS,
+  PLAN_LABELS,
+  canHaveOrganization,
+} from '@krakenkey/shared';
 import type { OrgRole } from '@krakenkey/shared';
 import { Card, CardHeader } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -76,7 +81,8 @@ function initials(name: string): string {
   return letters.toUpperCase();
 }
 
-const ORG_ELIGIBLE_PLANS = new Set(['team', 'business', 'enterprise']);
+/** The smallest plan that includes organizations. */
+const ORG_PLAN_LABEL = PLAN_LABELS[ORG_ELIGIBLE_PLANS[0]];
 
 export default function Organizations() {
   const { user, refreshUser } = useAuth();
@@ -316,7 +322,7 @@ export default function Organizations() {
   }
 
   // Not on an eligible plan and not in an org: show upsell
-  if (!user?.organizationId && !ORG_ELIGIBLE_PLANS.has(user?.plan ?? '')) {
+  if (!user?.organizationId && !canHaveOrganization(user?.plan)) {
     return (
       <div>
         <PageHeader
@@ -327,16 +333,16 @@ export default function Organizations() {
         <Card className="max-w-lg">
           <div className="flex flex-col gap-4">
             <p className="text-zinc-300 text-sm">
-              Organizations are available on the Team plan and above. Upgrade to
-              create an organization, invite members, and manage access with
-              owner, admin, member, and viewer roles.
+              Organizations are available on the {ORG_PLAN_LABEL} plan and
+              above. Upgrade to create an organization, invite members, and
+              manage access with owner, admin, member, and viewer roles.
             </p>
             <Button
               variant="primary"
               icon={<CreditCard className="w-4 h-4" />}
               onClick={() => navigate('/dashboard/billing')}
             >
-              Upgrade to Team
+              Upgrade to {ORG_PLAN_LABEL}
             </Button>
           </div>
         </Card>

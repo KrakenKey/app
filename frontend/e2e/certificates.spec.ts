@@ -40,7 +40,7 @@ const failedCert = {
 
 test.describe('Certificate management', () => {
   test.beforeEach(async ({ page }) => {
-    await authenticateAs(page, { plan: 'starter' });
+    await authenticateAs(page, { plan: 'pro' });
     await page.route('**/certificates', (route) => {
       if (route.request().method() === 'GET') {
         return route.fulfill({ status: 200, json: mockCertificates });
@@ -133,7 +133,7 @@ test.describe('Certificate management', () => {
 // the /dashboard/certificates page itself.
 test.describe('Certificate row actions', () => {
   test.beforeEach(async ({ page }) => {
-    await authenticateAs(page, { plan: 'starter' });
+    await authenticateAs(page, { plan: 'pro' });
   });
 
   test('can revoke an issued certificate after confirming', async ({

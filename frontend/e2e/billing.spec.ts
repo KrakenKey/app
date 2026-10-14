@@ -1,8 +1,8 @@
 import { test, expect, authenticateAs, api } from './fixtures/auth';
 import {
   freeSub,
-  starterSub,
-  teamSub,
+  proSub,
+  businessSub,
   cancelingSub,
   upgradePreview,
 } from './fixtures/mock-data';
@@ -15,11 +15,11 @@ test.describe('Billing — free plan user', () => {
     );
   });
 
-  test('shows starter and team upgrade cards', async ({ page }) => {
+  test('shows Pro and Business upgrade cards', async ({ page }) => {
     await page.goto('/dashboard/billing');
 
-    await expect(page.getByRole('heading', { name: 'Starter' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Team' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Pro' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Business' })).toBeVisible();
   });
 
   test('clicking upgrade calls checkout endpoint', async ({ page }) => {
@@ -40,7 +40,7 @@ test.describe('Billing — free plan user', () => {
     await page.goto('/dashboard/billing');
 
     await page
-      .getByRole('button', { name: /upgrade to starter/i })
+      .getByRole('button', { name: /upgrade to pro/i })
       .first()
       .click();
 
@@ -50,18 +50,20 @@ test.describe('Billing — free plan user', () => {
   });
 });
 
-test.describe('Billing — starter plan user', () => {
+test.describe('Billing: Pro plan user', () => {
   test.beforeEach(async ({ page }) => {
-    await authenticateAs(page, { plan: 'starter' });
+    await authenticateAs(page, { plan: 'pro' });
     await page.route(api('/billing/subscription'), (route) =>
-      route.fulfill({ status: 200, json: starterSub }),
+      route.fulfill({ status: 200, json: proSub }),
     );
   });
 
-  test('shows upgrade to team option', async ({ page }) => {
+  test('shows upgrade to Business option', async ({ page }) => {
     await page.goto('/dashboard/billing');
 
-    await expect(page.getByText(/team/i).first()).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: /upgrade to business/i }),
+    ).toBeVisible();
   });
 
   test('upgrade preview modal shows prorated cost', async ({ page }) => {
@@ -71,7 +73,7 @@ test.describe('Billing — starter plan user', () => {
 
     await page.goto('/dashboard/billing');
 
-    await page.getByRole('button', { name: /upgrade to team/i }).click();
+    await page.getByRole('button', { name: /upgrade to business/i }).click();
 
     // Modal should show the prorated amount
     await expect(page.getByText('$42.00')).toBeVisible();
@@ -89,7 +91,7 @@ test.describe('Billing — starter plan user', () => {
       return route.fulfill({
         status: 200,
         json: {
-          plan: 'team',
+          plan: 'business',
           status: 'active',
           currentPeriodEnd: '2026-04-20T00:00:00.000Z',
           cancelAtPeriodEnd: false,
@@ -97,20 +99,20 @@ test.describe('Billing — starter plan user', () => {
       });
     });
 
-    // After upgrade, subscription refetch returns team
+    // After upgrade, subscription refetch returns business
     await page.goto('/dashboard/billing');
-    await page.getByRole('button', { name: /upgrade to team/i }).click();
+    await page.getByRole('button', { name: /upgrade to business/i }).click();
     await page.getByRole('button', { name: /confirm/i }).click();
 
     await expect.poll(() => upgradeCalled).toBe(true);
   });
 });
 
-test.describe('Billing — team+ plan user', () => {
+test.describe('Billing: Business plan user', () => {
   test.beforeEach(async ({ page }) => {
-    await authenticateAs(page, { plan: 'team' });
+    await authenticateAs(page, { plan: 'business' });
     await page.route(api('/billing/subscription'), (route) =>
-      route.fulfill({ status: 200, json: teamSub }),
+      route.fulfill({ status: 200, json: businessSub }),
     );
   });
 
@@ -127,19 +129,21 @@ test.describe('Billing — team+ plan user', () => {
 
     const domains = page.getByRole('meter', { name: 'Domains' });
     await expect(domains).toBeVisible();
-    await expect(domains).toHaveAttribute('aria-valuemax', '25');
+    await expect(domains).toHaveAttribute('aria-valuemax', '100');
     await expect(
       page.getByRole('meter', { name: 'Monitored endpoints' }),
-    ).toHaveAttribute('aria-valuemax', '50');
+    ).toHaveAttribute('aria-valuemax', '300');
   });
 
-  test('links to the pricing page for Business', async ({ page }) => {
+  test('offers Enterprise through a contact link', async ({ page }) => {
     await page.goto('/dashboard/billing');
 
-    await expect(page.getByRole('heading', { name: 'Business' })).toBeVisible();
     await expect(
-      page.getByRole('link', { name: /compare plans/i }),
-    ).toHaveAttribute('href', 'https://krakenkey.io/pricing');
+      page.getByRole('heading', { name: 'Enterprise' }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('link', { name: /contact us/i }),
+    ).toHaveAttribute('href', /^mailto:/);
   });
 
   test('manage subscription opens Stripe portal', async ({ page }) => {
@@ -158,7 +162,7 @@ test.describe('Billing — team+ plan user', () => {
 
 test.describe('Billing — canceling subscription', () => {
   test('shows cancellation warning', async ({ page }) => {
-    await authenticateAs(page, { plan: 'starter' });
+    await authenticateAs(page, { plan: 'pro' });
     await page.route(api('/billing/subscription'), (route) =>
       route.fulfill({ status: 200, json: cancelingSub }),
     );

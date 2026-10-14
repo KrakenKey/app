@@ -25,7 +25,7 @@ const awaitingCert = {
 
 test.describe('Pending certificates', () => {
   test.beforeEach(async ({ page }) => {
-    await authenticateAs(page, { plan: 'starter' });
+    await authenticateAs(page, { plan: 'pro' });
     await page.route(api('/certs/tls'), (route) => {
       if (route.request().method() === 'GET') {
         return route.fulfill({ status: 200, json: [awaitingCert] });

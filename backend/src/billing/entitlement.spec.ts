@@ -19,25 +19,33 @@ describe('entitlement', () => {
   });
 
   it('applies the plan while active', () => {
-    const sub = { plan: 'team', status: 'active', pastDueSince: null };
+    const sub = { plan: 'business', status: 'active', pastDueSince: null };
     expect(hasPlanEntitlement(sub, now)).toBe(true);
-    expect(effectivePlan(sub, now)).toBe('team');
+    expect(effectivePlan(sub, now)).toBe('business');
     expect(graceEndsAt(sub)).toBeNull();
   });
 
   it('applies the plan while past_due inside the grace period', () => {
-    const sub = { plan: 'team', status: 'past_due', pastDueSince: since(13) };
-    expect(effectivePlan(sub, now)).toBe('team');
+    const sub = {
+      plan: 'business',
+      status: 'past_due',
+      pastDueSince: since(13),
+    };
+    expect(effectivePlan(sub, now)).toBe('business');
     expect(graceEndsAt(sub)).toEqual(new Date(since(13).getTime() + 14 * DAY));
   });
 
   it('ends exactly 14 days after the first failure', () => {
-    const sub = { plan: 'team', status: 'past_due', pastDueSince: since(14) };
+    const sub = {
+      plan: 'business',
+      status: 'past_due',
+      pastDueSince: since(14),
+    };
     expect(effectivePlan(sub, now)).toBe('free');
   });
 
   it('gives no grace when pastDueSince is missing', () => {
-    const sub = { plan: 'team', status: 'past_due', pastDueSince: null };
+    const sub = { plan: 'business', status: 'past_due', pastDueSince: null };
     expect(effectivePlan(sub, now)).toBe('free');
     expect(graceEndsAt(sub)).toBeNull();
   });
@@ -45,11 +53,22 @@ describe('entitlement', () => {
   it.each(['unpaid', 'canceled', 'incomplete', 'incomplete_expired'])(
     'treats %s as free',
     (status) => {
-      const sub = { plan: 'team', status, pastDueSince: since(1) };
+      const sub = { plan: 'business', status, pastDueSince: since(1) };
       expect(effectivePlan(sub, now)).toBe('free');
       expect(graceEndsAt(sub)).toBeNull();
     },
   );
+
+  it('reads a legacy plan id written by an older release as its replacement', () => {
+    const active = (plan: string) => ({
+      plan,
+      status: 'active',
+      pastDueSince: null,
+    });
+    expect(effectivePlan(active('starter'), now)).toBe('pro');
+    expect(effectivePlan(active('team'), now)).toBe('business');
+    expect(effectivePlan(active('gold'), now)).toBe('free');
+  });
 
   it('treats a missing subscription as free', () => {
     expect(effectivePlan(null, now)).toBe('free');
@@ -61,7 +80,7 @@ describe('entitlement', () => {
 
   describe('Microsoft Marketplace', () => {
     const mp = (status: string, pastDueSince: Date | null = null) => ({
-      plan: 'team',
+      plan: 'business',
       status,
       pastDueSince,
       source: 'marketplace' as const,
@@ -72,12 +91,12 @@ describe('entitlement', () => {
     });
 
     it('applies the plan while Subscribed (active)', () => {
-      expect(effectivePlan(mp('active'), now)).toBe('team');
+      expect(effectivePlan(mp('active'), now)).toBe('business');
     });
 
     it('keeps the plan while Suspended (past_due) past the Stripe grace', () => {
       const sub = mp('past_due', since(20));
-      expect(effectivePlan(sub, now)).toBe('team');
+      expect(effectivePlan(sub, now)).toBe('business');
       expect(graceEndsAt(sub)).toEqual(
         new Date(since(20).getTime() + 30 * DAY),
       );

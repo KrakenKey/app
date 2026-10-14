@@ -101,7 +101,7 @@ const Home: React.FC = () => {
             </h2>
             <p className="mt-1.5 text-sm text-text-muted">
               Use your KrakenKey account. New here? Create one in a minute; the
-              Free plan needs no card.
+              free Starter plan needs no card.
             </p>
             <div className="mt-6 flex flex-col gap-2.5">
               <Button

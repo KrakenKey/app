@@ -29,9 +29,9 @@ describe('SubscriptionTierResolver', () => {
   });
 
   it('returns plan from billing service', async () => {
-    mockBillingService.resolveUserTier.mockResolvedValue('starter');
+    mockBillingService.resolveUserTier.mockResolvedValue('pro');
     const tier = await resolver.resolve('user-123');
-    expect(tier).toBe('starter');
+    expect(tier).toBe('pro');
   });
 
   it('returns free when billing service returns free', async () => {

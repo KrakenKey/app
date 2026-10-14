@@ -18,6 +18,7 @@ import {
 } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
 import { BillingService } from './billing.service';
+import { normalizePlan } from '@krakenkey/shared';
 import { graceEndsAt } from './entitlement';
 import { CreateCheckoutDto } from './dto/create-checkout.dto';
 import { UpgradePlanDto } from './dto/upgrade-plan.dto';
@@ -84,7 +85,7 @@ export class BillingController {
     }
     return {
       id: sub.id,
-      plan: sub.plan,
+      plan: normalizePlan(sub.plan),
       status: sub.status,
       currentPeriodEnd: sub.currentPeriodEnd,
       cancelAtPeriodEnd: sub.cancelAtPeriodEnd,

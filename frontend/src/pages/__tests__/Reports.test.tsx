@@ -72,12 +72,13 @@ describe('Reports page', () => {
     expect(screen.getByTestId('host-count')).toHaveTextContent('2 of 25 hosts');
   });
 
-  it('shows the paid plan limit', () => {
-    plan = 'team';
+  it.each([
+    ['pro', '0 of 250 hosts'],
+    ['business', '0 of 1000 hosts'],
+  ])('shows the %s plan limit', (p, text) => {
+    plan = p;
     render(<Reports />);
-    expect(screen.getByTestId('host-count')).toHaveTextContent(
-      '0 of 250 hosts',
-    );
+    expect(screen.getByTestId('host-count')).toHaveTextContent(text);
   });
 
   it('blocks a list over the plan limit', async () => {

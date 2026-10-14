@@ -42,7 +42,7 @@ describe('BillingService', () => {
     userId,
     stripeCustomerId: 'cus_test123',
     stripeSubscriptionId: 'sub_test123',
-    plan: 'starter',
+    plan: 'pro',
     status: 'active',
     currentPeriodEnd: new Date('2026-04-09'),
     cancelAtPeriodEnd: false,
@@ -147,7 +147,7 @@ describe('BillingService', () => {
     it('returns plan for active subscription', async () => {
       mockRepository.findOne.mockResolvedValue(mockSubscription);
       const tier = await service.resolveUserTier(userId);
-      expect(tier).toBe('starter');
+      expect(tier).toBe('pro');
     });
 
     it('returns free when no subscription exists', async () => {
@@ -174,7 +174,7 @@ describe('BillingService', () => {
         status: 'past_due',
         pastDueSince: daysAgo(13),
       });
-      expect(await service.resolveUserTier(userId)).toBe('starter');
+      expect(await service.resolveUserTier(userId)).toBe('pro');
     });
 
     it('drops to free once the grace period has passed', async () => {
@@ -213,11 +213,11 @@ describe('BillingService', () => {
         ...mockSubscription,
         userId: null,
         organizationId: 'org-1',
-        plan: 'team',
+        plan: 'business',
         status: 'past_due',
         pastDueSince: daysAgo(2),
       });
-      expect(await service.resolveUserTier(userId)).toBe('team');
+      expect(await service.resolveUserTier(userId)).toBe('business');
       expect(mockRepository.findOne).toHaveBeenCalledWith({
         where: { organizationId: 'org-1' },
       });
@@ -300,18 +300,18 @@ describe('BillingService', () => {
       const url = await service.createCheckoutSession(
         userId,
         'test@example.com',
-        'starter',
+        'pro',
       );
       expect(url).toBe('https://checkout.stripe.com/session123');
       expect(mockStripe.checkout.sessions.create).toHaveBeenCalledWith(
         expect.objectContaining({
           customer: 'cus_test123',
           mode: 'subscription',
-          metadata: expect.objectContaining({ plan: 'starter' }),
+          metadata: expect.objectContaining({ plan: 'pro' }),
         }),
         {
           idempotencyKey: expect.stringMatching(
-            new RegExp(`^checkout-user-${userId}-starter-\\d+$`),
+            new RegExp(`^checkout-user-${userId}-pro-\\d+$`),
           ),
         },
       );
@@ -326,7 +326,7 @@ describe('BillingService', () => {
         });
 
         const err = await service
-          .createCheckoutSession(userId, 'test@example.com', 'team')
+          .createCheckoutSession(userId, 'test@example.com', 'business')
           .catch((e: unknown) => e);
 
         expect(err).toBeInstanceOf(ConflictException);
@@ -351,14 +351,14 @@ describe('BillingService', () => {
                 ...mockSubscription,
                 userId: null,
                 organizationId: orgId,
-                plan: 'team',
+                plan: 'business',
               }
             : null,
         ),
       );
 
       await expect(
-        service.createCheckoutSession(userId, 'test@example.com', 'team'),
+        service.createCheckoutSession(userId, 'test@example.com', 'business'),
       ).rejects.toThrow(ConflictException);
       expect(mockRepository.findOne).toHaveBeenCalledWith({
         where: { organizationId: orgId },
@@ -379,7 +379,7 @@ describe('BillingService', () => {
       });
 
       await expect(
-        service.createCheckoutSession(userId, 'test@example.com', 'starter'),
+        service.createCheckoutSession(userId, 'test@example.com', 'pro'),
       ).resolves.toBe('https://checkout.stripe.com/session123');
     });
 
@@ -393,7 +393,7 @@ describe('BillingService', () => {
       });
 
       await expect(
-        service.createCheckoutSession(userId, 'test@example.com', 'starter'),
+        service.createCheckoutSession(userId, 'test@example.com', 'pro'),
       ).resolves.toBe('https://checkout.stripe.com/session123');
     });
 
@@ -405,8 +405,8 @@ describe('BillingService', () => {
       const now = jest.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000);
 
       try {
-        await service.createCheckoutSession(userId, 'a@b.c', 'starter');
-        await service.createCheckoutSession(userId, 'a@b.c', 'starter');
+        await service.createCheckoutSession(userId, 'a@b.c', 'pro');
+        await service.createCheckoutSession(userId, 'a@b.c', 'pro');
       } finally {
         now.mockRestore();
       }
@@ -424,7 +424,7 @@ describe('BillingService', () => {
       );
 
       await expect(
-        service.createCheckoutSession(userId, 'test@example.com', 'team'),
+        service.createCheckoutSession(userId, 'test@example.com', 'business'),
       ).rejects.toThrow(ConflictException);
     });
   });
@@ -466,7 +466,7 @@ describe('BillingService', () => {
         type: 'checkout.session.completed',
         data: {
           object: {
-            metadata: { userId, plan: 'starter' },
+            metadata: { userId, plan: 'pro' },
             subscription: 'sub_new123',
             customer: 'cus_test123',
           },
@@ -475,7 +475,7 @@ describe('BillingService', () => {
 
       expect(mockRepository.save).toHaveBeenCalledWith(
         expect.objectContaining({
-          plan: 'starter',
+          plan: 'pro',
           status: 'active',
           stripeSubscriptionId: 'sub_new123',
         }),
@@ -489,7 +489,7 @@ describe('BillingService', () => {
           data: {
             object: {
               id: 'cs_test_2',
-              metadata: { userId, plan: 'team' },
+              metadata: { userId, plan: 'business' },
               subscription,
               customer: 'cus_test123',
             },
@@ -557,7 +557,7 @@ describe('BillingService', () => {
         expect(mockRepository.save).toHaveBeenCalledWith(
           expect.objectContaining({
             stripeSubscriptionId: 'sub_new',
-            plan: 'team',
+            plan: 'business',
           }),
         );
       });
@@ -666,9 +666,91 @@ describe('BillingService', () => {
 
       expect(mockRepository.save).toHaveBeenCalledWith(
         expect.objectContaining({
-          plan: 'team',
+          plan: 'business',
         }),
       );
+    });
+  });
+
+  describe('legacy plan ids (starter, team)', () => {
+    const updated = (priceId?: string) =>
+      ({
+        type: 'customer.subscription.updated',
+        data: {
+          object: {
+            id: 'sub_test123',
+            status: 'active',
+            items: {
+              data: [
+                {
+                  current_period_end:
+                    Math.floor(Date.now() / 1000) + 86400 * 30,
+                  ...(priceId ? { price: { id: priceId } } : {}),
+                },
+              ],
+            },
+            cancel_at_period_end: false,
+          },
+        },
+      }) as any;
+
+    it('maps the Starter price to pro', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+      await service.handleWebhookEvent(updated('price_starter_123'));
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ plan: 'pro' }),
+      );
+    });
+
+    it('stores pro for a checkout opened before the rename', async () => {
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        current_period_end: Math.floor(Date.now() / 1000) + 86400 * 30,
+        cancel_at_period_end: false,
+      });
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        stripeSubscriptionId: null,
+        plan: 'free',
+      });
+      await service.handleWebhookEvent({
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            metadata: { userId, plan: 'starter' },
+            subscription: 'sub_new123',
+            customer: 'cus_test123',
+          },
+        },
+      } as any);
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ plan: 'pro' }),
+      );
+    });
+
+    it('rewrites a legacy row and keeps its organization', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        plan: 'team',
+        organizationId: 'org-1',
+      });
+      const dissolve = jest
+        .spyOn(service, 'queueDissolution')
+        .mockResolvedValue(undefined);
+      await service.handleWebhookEvent(updated('price_unknown'));
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ plan: 'business' }),
+      );
+      expect(dissolve).not.toHaveBeenCalled();
+    });
+
+    it('reads a legacy row as its replacement plan for limits', async () => {
+      mockUserRepo.findOne.mockResolvedValue({ id: userId });
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        plan: 'starter',
+        status: 'active',
+      });
+      await expect(service.resolveUserTier(userId)).resolves.toBe('pro');
     });
   });
 
@@ -714,7 +796,7 @@ describe('BillingService', () => {
         userId,
         email: 'owner@example.com',
         username: 'owner',
-        plan: 'starter',
+        plan: 'pro',
       });
       expect(ctx.graceEndsAt.getTime() - saved.pastDueSince.getTime()).toBe(
         14 * 24 * 60 * 60 * 1000,
@@ -788,7 +870,7 @@ describe('BillingService', () => {
         ...mockSubscription,
         userId: null,
         organizationId: 'org-1',
-        plan: 'team',
+        plan: 'business',
         pastDueSince: null,
       });
       mockOrgRepo.findOne.mockResolvedValue({
@@ -813,7 +895,7 @@ describe('BillingService', () => {
         expect.objectContaining({
           userId: 'owner-1',
           email: 'boss@example.com',
-          plan: 'team',
+          plan: 'business',
           organizationName: 'Acme',
         }),
       );
@@ -967,7 +1049,7 @@ describe('BillingService', () => {
   describe('previewUpgrade', () => {
     it('throws NotFoundException when no subscription exists', async () => {
       mockRepository.findOne.mockResolvedValue(null);
-      await expect(service.previewUpgrade(userId, 'team')).rejects.toThrow(
+      await expect(service.previewUpgrade(userId, 'business')).rejects.toThrow(
         NotFoundException,
       );
     });
@@ -977,7 +1059,7 @@ describe('BillingService', () => {
         ...mockSubscription,
         status: 'past_due',
       });
-      await expect(service.previewUpgrade(userId, 'team')).rejects.toThrow(
+      await expect(service.previewUpgrade(userId, 'business')).rejects.toThrow(
         BadRequestException,
       );
     });
@@ -985,16 +1067,16 @@ describe('BillingService', () => {
     it('throws BadRequestException when target plan is not higher', async () => {
       mockRepository.findOne.mockResolvedValue({
         ...mockSubscription,
-        plan: 'team',
+        plan: 'business',
       });
-      await expect(service.previewUpgrade(userId, 'starter')).rejects.toThrow(
+      await expect(service.previewUpgrade(userId, 'pro')).rejects.toThrow(
         BadRequestException,
       );
     });
 
     it('throws BadRequestException for same plan', async () => {
       mockRepository.findOne.mockResolvedValue(mockSubscription);
-      await expect(service.previewUpgrade(userId, 'starter')).rejects.toThrow(
+      await expect(service.previewUpgrade(userId, 'pro')).rejects.toThrow(
         BadRequestException,
       );
     });
@@ -1005,11 +1087,11 @@ describe('BillingService', () => {
         .mockResolvedValueOnce({ unit_amount: 2900, currency: 'usd' })
         .mockResolvedValueOnce({ unit_amount: 7900, currency: 'usd' });
 
-      const result = await service.previewUpgrade(userId, 'team');
+      const result = await service.previewUpgrade(userId, 'business');
       expect(result).toEqual({
         immediateAmountCents: 5000,
         currency: 'usd',
-        targetPlan: 'team',
+        targetPlan: 'business',
         currentPeriodEnd: mockSubscription.currentPeriodEnd!.toISOString(),
       });
       expect(mockStripe.prices.retrieve).toHaveBeenCalledWith(
@@ -1022,16 +1104,16 @@ describe('BillingService', () => {
   describe('upgradeSubscription', () => {
     it('throws NotFoundException when no subscription exists', async () => {
       mockRepository.findOne.mockResolvedValue(null);
-      await expect(service.upgradeSubscription(userId, 'team')).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.upgradeSubscription(userId, 'business'),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('throws BadRequestException when target plan is not higher', async () => {
       mockRepository.findOne.mockResolvedValue(mockSubscription);
-      await expect(
-        service.upgradeSubscription(userId, 'starter'),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.upgradeSubscription(userId, 'pro')).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('upgrades subscription with flat difference', async () => {
@@ -1048,11 +1130,11 @@ describe('BillingService', () => {
       mockStripe.invoices.pay.mockResolvedValue({});
       mockRepository.save.mockResolvedValue({
         ...mockSubscription,
-        plan: 'team',
+        plan: 'business',
       });
 
-      const result = await service.upgradeSubscription(userId, 'team');
-      expect(result.plan).toBe('team');
+      const result = await service.upgradeSubscription(userId, 'business');
+      expect(result.plan).toBe('business');
       expect(mockStripe.subscriptions.update).toHaveBeenCalledWith(
         'sub_test123',
         {
@@ -1064,7 +1146,7 @@ describe('BillingService', () => {
         customer: 'cus_test123',
         amount: 5000,
         currency: 'usd',
-        description: 'Plan upgrade: starter → team',
+        description: 'Plan upgrade: Pro → Business',
       });
       expect(mockStripe.invoices.create).toHaveBeenCalledWith({
         customer: 'cus_test123',
@@ -1072,7 +1154,7 @@ describe('BillingService', () => {
       });
       expect(mockStripe.invoices.pay).toHaveBeenCalledWith('inv_123');
       expect(mockRepository.save).toHaveBeenCalledWith(
-        expect.objectContaining({ plan: 'team' }),
+        expect.objectContaining({ plan: 'business' }),
       );
     });
   });
@@ -1129,7 +1211,7 @@ describe('BillingService', () => {
       userId: null,
       organizationId: orgId,
       stripeSubscriptionId: 'sub_org',
-      plan: 'team',
+      plan: 'business',
       status: 'active',
     });
 
@@ -1182,7 +1264,7 @@ describe('BillingService', () => {
         id: 'personal-sub',
         userId: ownerId,
         stripeSubscriptionId: 'sub_personal',
-        plan: 'starter',
+        plan: 'pro',
         status: 'active',
       });
 
@@ -1226,7 +1308,7 @@ describe('BillingService', () => {
         id: 'personal-sub',
         userId: ownerId,
         stripeSubscriptionId: 'sub_old',
-        plan: 'starter',
+        plan: 'pro',
         status: 'canceled',
       });
 
@@ -1244,7 +1326,7 @@ describe('BillingService', () => {
         id: 'personal-sub',
         userId: ownerId,
         stripeSubscriptionId: 'sub_personal',
-        plan: 'starter',
+        plan: 'pro',
         status: 'past_due',
       });
 
@@ -1267,7 +1349,7 @@ describe('BillingService', () => {
       stripeSubscriptionId: null,
       marketplaceSubscriptionId: 'mp-sub-1',
       marketplaceStatus: status === 'active' ? 'Subscribed' : 'Suspended',
-      plan: 'team',
+      plan: 'business',
       status,
     });
 
@@ -1277,7 +1359,7 @@ describe('BillingService', () => {
         mockRepository.findOne.mockResolvedValue(marketplaceSub(status));
 
         const err = await service
-          .createCheckoutSession(userId, 'test@example.com', 'team')
+          .createCheckoutSession(userId, 'test@example.com', 'business')
           .catch((e: unknown) => e);
 
         expect(err).toBeInstanceOf(ConflictException);
@@ -1297,7 +1379,7 @@ describe('BillingService', () => {
       });
 
       await expect(
-        service.createCheckoutSession(userId, 'test@example.com', 'starter'),
+        service.createCheckoutSession(userId, 'test@example.com', 'pro'),
       ).resolves.toBe('https://checkout.stripe.com/session123');
       // Only the customer column is written, so a Marketplace activation
       // that changed the row meanwhile isn't undone.
@@ -1320,7 +1402,7 @@ describe('BillingService', () => {
         updatedAt: new Date(),
       });
       await expect(
-        service.createCheckoutSession(userId, 'test@example.com', 'starter'),
+        service.createCheckoutSession(userId, 'test@example.com', 'pro'),
       ).rejects.toThrow(/being activated/);
       expect(mockStripe.customers.create).not.toHaveBeenCalled();
     });
@@ -1337,7 +1419,7 @@ describe('BillingService', () => {
         url: 'https://checkout.stripe.com/session123',
       });
       await expect(
-        service.createCheckoutSession(userId, 'test@example.com', 'starter'),
+        service.createCheckoutSession(userId, 'test@example.com', 'pro'),
       ).resolves.toBe('https://checkout.stripe.com/session123');
     });
 
@@ -1352,14 +1434,14 @@ describe('BillingService', () => {
     it('refuses a Stripe upgrade with 409', async () => {
       mockRepository.findOne.mockResolvedValue({
         ...marketplaceSub('active'),
-        plan: 'starter',
+        plan: 'pro',
       });
-      await expect(service.previewUpgrade(userId, 'team')).rejects.toThrow(
+      await expect(service.previewUpgrade(userId, 'business')).rejects.toThrow(
         ConflictException,
       );
-      await expect(service.upgradeSubscription(userId, 'team')).rejects.toThrow(
-        ConflictException,
-      );
+      await expect(
+        service.upgradeSubscription(userId, 'business'),
+      ).rejects.toThrow(ConflictException);
       expect(mockStripe.subscriptions.update).not.toHaveBeenCalled();
     });
 
@@ -1378,7 +1460,7 @@ describe('BillingService', () => {
         data: {
           object: {
             id: 'cs_late',
-            metadata: { userId, plan: 'starter' },
+            metadata: { userId, plan: 'pro' },
             subscription: 'sub_new',
             customer: 'cus_test123',
           },
@@ -1413,7 +1495,7 @@ describe('BillingService', () => {
         data: {
           object: {
             id: 'cs_race',
-            metadata: { userId, plan: 'starter' },
+            metadata: { userId, plan: 'pro' },
             subscription: 'sub_new',
             customer: 'cus_test123',
           },
@@ -1442,7 +1524,7 @@ describe('BillingService', () => {
         data: {
           object: {
             id: 'cs_new',
-            metadata: { userId, plan: 'starter' },
+            metadata: { userId, plan: 'pro' },
             subscription: 'sub_new',
             customer: 'cus_test123',
           },
@@ -1455,7 +1537,7 @@ describe('BillingService', () => {
           stripeSubscriptionId: 'sub_new',
           marketplaceSubscriptionId: null,
           marketplaceStatus: null,
-          plan: 'starter',
+          plan: 'pro',
         }),
       );
     });

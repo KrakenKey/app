@@ -230,15 +230,13 @@ KrakenKey uses Stripe for subscription billing. The integration supports checkou
 |----------|-------------|
 | `KK_STRIPE_SECRET_KEY` | Stripe secret API key |
 | `KK_STRIPE_WEBHOOK_SECRET` | Webhook signing secret |
-| `KK_STRIPE_PRICE_STARTER` | Price ID for Starter plan |
-| `KK_STRIPE_PRICE_TEAM` | Price ID for Team plan |
-| `KK_STRIPE_PRICE_BUSINESS` | Price ID for Business plan |
-| `KK_STRIPE_PRICE_ENTERPRISE` | Price ID for Enterprise plan |
+| `KK_STRIPE_PRICE_STARTER` | Price ID for the Pro plan (the variable kept its old name) |
+| `KK_STRIPE_PRICE_TEAM` | Price ID for the Business plan (the variable kept its old name) |
 
 ### Setting Up Stripe
 
 1. **Create Products and Prices** in the Stripe Dashboard
-   - Create a product for each plan (Starter, Team, Business, Enterprise)
+   - Create a product for each self-serve plan (Pro, Business)
    - Create a recurring price for each product
    - Copy each Price ID (e.g. `price_1ABC...`) to the corresponding env var
 
@@ -275,7 +273,7 @@ stripe listen --forward-to localhost:8080/billing/webhook
 
 **Source:** `src/billing/marketplace/`
 
-Organizations can buy Starter, Team or Business on their Microsoft invoice through a transactable SaaS offer. Microsoft bills the customer; KrakenKey implements the [SaaS fulfillment API v2](https://learn.microsoft.com/partner-center/marketplace-offers/pc-saas-fulfillment-apis). Everything is off until `KK_MARKETPLACE_ENABLED=true` (see [Configuration](./CONFIGURATION.md#billing-microsoft-marketplace)).
+Organizations can buy Pro or Business (and Enterprise through private offers) on their Microsoft invoice through a transactable SaaS offer. Microsoft bills the customer; KrakenKey implements the [SaaS fulfillment API v2](https://learn.microsoft.com/partner-center/marketplace-offers/pc-saas-fulfillment-apis). Everything is off until `KK_MARKETPLACE_ENABLED=true` (see [Configuration](./CONFIGURATION.md#billing-microsoft-marketplace)).
 
 ### Partner Center technical configuration
 
@@ -292,7 +290,7 @@ The app registration needs a client secret (`KK_MARKETPLACE_CLIENT_SECRET`), and
 
 1. Microsoft opens `/marketplace?token=...` after a purchase and again when the customer selects "Manage account" in the Azure portal or Microsoft 365 admin center.
 2. A signed-out buyer signs in (Microsoft sign-in, or email for an existing password account). The token is kept in session storage across the sign-in and the buyer comes back to the page.
-3. `POST /billing/marketplace/resolve` exchanges the token with Microsoft (Resolve) and returns the purchase and what can be done with it: activate it for this account, already active here (a "manage" visit), linked to another account, a conflict with an existing paid plan, not the organization owner, a Starter plan for an organization (organizations need Team or higher, as with Stripe), an unknown plan, suspended or canceled.
+3. `POST /billing/marketplace/resolve` exchanges the token with Microsoft (Resolve) and returns the purchase and what can be done with it: activate it for this account, already active here (a "manage" visit), linked to another account, a conflict with an existing paid plan, not the organization owner, a plan without organizations for an account in one (organizations need Business or higher, as with Stripe), an unknown plan, suspended or canceled.
 4. `POST /billing/marketplace/activate` resolves the token again on the server, then:
    1. claims the purchase on the user's row, or the organization's for an organization owner, as pending (`status` `incomplete`, Free limits). This is where a live subscription on the account is refused, before Microsoft bills anything;
    2. calls Activate while the purchase is `PendingFulfillmentStart` (billing starts here). If Microsoft refuses, the pending claim stays and opening the page again retries;
@@ -322,7 +320,7 @@ Subscription and operation ids are GUIDs and are stored and compared in lower ca
 | `Suspended` | `past_due` with `pastDueSince`; paid limits stay for Microsoft's 30-day grace |
 | `Unsubscribed` | Free plan, `canceled`; an organization subscription dissolves the organization |
 
-A plan change that drops an organization below Team dissolves it, as with Stripe. `ChangeQuantity` only stores the quantity (plans are not per seat). Calls for a purchase that isn't linked to an account yet are recorded and acknowledged. A redelivered operation re-sends the recorded answer while Microsoft still shows the operation `InProgress`, and re-queues the organization dissolution the first delivery recorded (if the organization still exists), in case that delivery failed after recording the operation. A purchase that is still being activated never dissolves an organization.
+A plan change to a plan without organizations dissolves the organization, as with Stripe. `ChangeQuantity` only stores the quantity (plans are not per seat). Calls for a purchase that isn't linked to an account yet are recorded and acknowledged. A redelivered operation re-sends the recorded answer while Microsoft still shows the operation `InProgress`, and re-queues the organization dissolution the first delivery recorded (if the organization still exists), in case that delivery failed after recording the operation. A purchase that is still being activated never dissolves an organization.
 
 The tenant's signing keys are downloaded once and kept for a day. A token with an unknown key id triggers at most one download every 5 minutes, and tokens for another tenant or audience never trigger one.
 

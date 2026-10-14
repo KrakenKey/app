@@ -23,19 +23,17 @@ export type TierRateLimits = Record<RateLimitCategory, RateLimitRule>;
  * Renewals (POST /certs/tls/:id/renew) have their own category, `renewal`,
  * with the per-tier numbers in RENEWAL_LIMITS_PER_HOUR.
  *
- * Tiers (aligned with planned pricing):
- *   free       — Free ACME automation
- *   starter    — Starter $29/mo CLM / Pro $29/mo API
- *   team       — Team $79/mo CLM
- *   business   — Business $99-199/mo (dedicated rate limits)
- *   enterprise — Enterprise $499+/mo
+ * Tiers are plan ids:
+ *   free       the free plan, shown as "Starter"
+ *   pro        Pro
+ *   business   Business
+ *   enterprise custom deals
  *
  * Summary:
  *   Tier        | Public   | Reads     | Writes   | Expensive | Renewals
  *   ------------|----------|-----------|----------|-----------|----------
  *   free        | 30/min   | 60/min    | 20/min   | 5/hr      | 10/hr
- *   starter     | 60/min   | 120/min   | 40/min   | 10/hr     | 30/hr
- *   team        | 60/min   | 300/min   | 60/min   | 30/hr     | 120/hr
+ *   pro         | 60/min   | 300/min   | 60/min   | 30/hr     | 120/hr
  *   business    | 120/min  | 600/min   | 120/min  | 60/hr     | 300/hr
  *   enterprise  | 120/min  | 1000/min  | 200/min  | 100/hr    | 600/hr
  */
@@ -50,12 +48,11 @@ export type TierRateLimits = Record<RateLimitCategory, RateLimitRule>;
  * at least twice the expensive allowance, and lets an account at its plan's
  * total active certificate limit renew everything within a few hours of
  * clustered daily timers (Free's 10 certificates in one hour, Business's
- * 1500 in five). `ifDue=true` requests count even when nothing is due.
+ * 1000 in under four). `ifDue=true` requests count even when nothing is due.
  */
 export const RENEWAL_LIMITS_PER_HOUR: Record<string, number> = {
   free: 10,
-  starter: 30,
-  team: 120,
+  pro: 120,
   business: 300,
   enterprise: 600,
 };
@@ -65,7 +62,7 @@ const renewal = (tier: string) => ({
   ttl: 3_600_000,
 });
 export const RATE_LIMIT_TIERS: Record<string, TierRateLimits> = {
-  // Free tier: basic ACME automation only
+  // Free plan (shown as Starter)
   free: {
     [RateLimitCategory.PUBLIC]: { limit: 30, ttl: 60_000 }, // 30 req/min
     [RateLimitCategory.PUBLIC_STRICT]: { limit: 10, ttl: 60_000 }, // 10 req/min
@@ -77,20 +74,8 @@ export const RATE_LIMIT_TIERS: Record<string, TierRateLimits> = {
     [RateLimitCategory.RENEWAL]: renewal('free'),
   },
 
-  // Starter / Pro ($29/mo): small projects, freelancers
-  starter: {
-    [RateLimitCategory.PUBLIC]: { limit: 60, ttl: 60_000 }, // 60 req/min
-    [RateLimitCategory.PUBLIC_STRICT]: { limit: 10, ttl: 60_000 }, // 10 req/min
-    [RateLimitCategory.CONNECTOR_TOKEN]: { limit: 60, ttl: 60_000 }, // 60 req/min per IP
-    [RateLimitCategory.CONNECTOR_REPORT]: { limit: 60, ttl: 3_600_000 }, // 60 req/hr per connector
-    [RateLimitCategory.AUTHENTICATED_READ]: { limit: 120, ttl: 60_000 }, // 120 req/min
-    [RateLimitCategory.AUTHENTICATED_WRITE]: { limit: 40, ttl: 60_000 }, // 40 req/min
-    [RateLimitCategory.EXPENSIVE]: { limit: 10, ttl: 3_600_000 }, // 10 req/hr
-    [RateLimitCategory.RENEWAL]: renewal('starter'),
-  },
-
-  // Team ($79/mo): SMEs, DevOps teams
-  team: {
+  // Pro: individuals and small teams
+  pro: {
     [RateLimitCategory.PUBLIC]: { limit: 60, ttl: 60_000 }, // 60 req/min
     [RateLimitCategory.PUBLIC_STRICT]: { limit: 10, ttl: 60_000 }, // 10 req/min
     [RateLimitCategory.CONNECTOR_TOKEN]: { limit: 60, ttl: 60_000 }, // 60 req/min per IP
@@ -98,10 +83,10 @@ export const RATE_LIMIT_TIERS: Record<string, TierRateLimits> = {
     [RateLimitCategory.AUTHENTICATED_READ]: { limit: 300, ttl: 60_000 }, // 300 req/min
     [RateLimitCategory.AUTHENTICATED_WRITE]: { limit: 60, ttl: 60_000 }, // 60 req/min
     [RateLimitCategory.EXPENSIVE]: { limit: 30, ttl: 3_600_000 }, // 30 req/hr
-    [RateLimitCategory.RENEWAL]: renewal('team'),
+    [RateLimitCategory.RENEWAL]: renewal('pro'),
   },
 
-  // Business ($99-199/mo): dedicated rate limits, mid-market
+  // Business: SaaS teams and agencies
   business: {
     [RateLimitCategory.PUBLIC]: { limit: 120, ttl: 60_000 }, // 120 req/min
     [RateLimitCategory.PUBLIC_STRICT]: { limit: 10, ttl: 60_000 }, // 10 req/min
@@ -113,7 +98,7 @@ export const RATE_LIMIT_TIERS: Record<string, TierRateLimits> = {
     [RateLimitCategory.RENEWAL]: renewal('business'),
   },
 
-  // Enterprise ($499+/mo): large orgs, MSPs, hosting providers
+  // Enterprise: custom deals
   enterprise: {
     [RateLimitCategory.PUBLIC]: { limit: 120, ttl: 60_000 }, // 120 req/min
     [RateLimitCategory.PUBLIC_STRICT]: { limit: 10, ttl: 60_000 }, // 10 req/min

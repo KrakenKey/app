@@ -74,7 +74,7 @@ export class ReportsController {
   @ApiOperation({
     summary: 'Create a portfolio TLS report for a list of hosts',
     description:
-      'Hosts are scanned in the background; poll GET /reports/:id until status is complete. Free plan: 25 hosts per report, paid plans: 250.',
+      'Hosts are scanned in the background; poll GET /reports/:id until status is complete. Starter plan: 25 hosts per report, Pro: 250, Business and Enterprise: 1000.',
   })
   @ApiResponse({ status: 201, description: 'Report created (pending)' })
   @ApiResponse({ status: 400, description: 'Invalid or private host' })

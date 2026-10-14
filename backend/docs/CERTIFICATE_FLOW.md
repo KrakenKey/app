@@ -349,8 +349,8 @@ If the current certificate has already expired when the renewal fails, the certi
 
 | Plan | Renewal Window |
 |------|---------------|
-| Free | 5 days before expiry |
-| Starter, Team, Business, Enterprise | 30 days before expiry |
+| Starter (`free`) | 10 days before expiry |
+| Pro, Business, Enterprise | 30 days before expiry |
 
 ### ACME Renewal Information (ARI)
 
@@ -362,7 +362,7 @@ The renewal windows above decide normal timing. KrakenKey also asks the CA for i
   - the first window seen starts in the first half of the certificate's lifetime (a normal Let's Encrypt window starts about two thirds in), or
   - the CA sent an `explanationURL`.
 - Then `ariReplacementRequestedAt` is set and the certificate is renewed as soon as the CA's window opens, whatever the plan's renewal window. Free-plan owners still need a current auto-renewal confirmation. `renew?ifDue=true` also treats such a certificate as due. Connector-managed certificates are not renewed here; the owner gets the `cert.replacement_requested` alert and the connector sees the earlier window through `renewAfter`.
-- A normal window (Let's Encrypt suggests renewing about 30 days before expiry for a 90-day certificate) changes nothing: Free still renews 5 days before expiry and paid plans 30 days before.
+- A normal window (Let's Encrypt suggests renewing about 30 days before expiry for a 90-day certificate) changes nothing: the free plan still renews 10 days before expiry and paid plans 30 days before.
 - Every renewal order sends `replaces: <ARI identifier of the old certificate>` so the CA links the two. If the CA refuses it (for example the certificate was already replaced), the order is retried without it.
 - Issuing a new certificate stores its identifier and clears the old window. Set `KK_ACME_ARI=false` to turn the checks off; `replaces` is still sent.
 
@@ -477,10 +477,11 @@ On an `issued` certificate whose last renewal failed (`renewalFailedAt` set), re
 
 Certificate operations are subject to plan-based quotas:
 
-| Limit | Free | Starter | Team | Business | Enterprise |
-|-------|------|---------|------|----------|------------|
-| Certificates per month | 5 | 50 | 250 | 1,000 | Unlimited |
-| Active certificates | 10 | 75 | 375 | 1,500 | Unlimited |
+| Limit | Starter (`free`) | Pro | Business | Enterprise |
+|-------|------------------|-----|----------|------------|
+| Certificates per month | 5 | 100 | 1,000 | Custom |
+| Active certificates | 10 | 150 | 1,000 | Custom |
+| Concurrent pending | 2 | 10 | 50 | Custom |
 
 Active certificates are `issued` ones plus [pending certificates](#pending-certificates) still `awaiting_csr`.
 

@@ -177,7 +177,7 @@ Returns the authenticated user's full profile including plan, resource counts, a
   "email": "alice@example.com",
   "displayName": "Alice",
   "groups": ["users"],
-  "plan": "team",
+  "plan": "business",
   "domainCount": 5,
   "certCount": 12,
   "apiKeyCount": 2,

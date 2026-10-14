@@ -20,7 +20,7 @@ export class CreateReportDto {
 
   @ApiProperty({
     description:
-      'Hostnames to scan, one per entry, optionally with :port (default 443). Duplicates are dropped. Free plan: up to 25 hosts, paid plans: up to 250.',
+      'Hostnames to scan, one per entry, optionally with :port (default 443). Duplicates are dropped. Starter plan: up to 25 hosts, Pro: up to 250, Business and Enterprise: up to 1000.',
     example: ['example.com', 'api.example.com:8443'],
   })
   @IsArray()

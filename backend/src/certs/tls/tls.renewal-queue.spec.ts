@@ -436,12 +436,12 @@ describe('Renewal claims and queue', () => {
     });
 
     it('auto-renewals of many certificates start up to the limit and queue the rest', async () => {
-      plans.u1 = 'starter'; // 5 concurrent pending
-      const ids = Array.from({ length: 8 }, () => issued());
+      plans.u1 = 'pro'; // 10 concurrent pending
+      const ids = Array.from({ length: 13 }, () => issued());
 
       for (const id of ids) await service.renewInternal(id);
 
-      expect(queue.renewals()).toEqual(ids.slice(0, 5));
+      expect(queue.renewals()).toEqual(ids.slice(0, 10));
       expect(
         [...table.rows.values()].filter((r) => r.renewalQueuedAt).length,
       ).toBe(3);

@@ -20,6 +20,13 @@ import { TlsCrt } from '../certs/tls/entities/tls-crt.entity';
 import { UserApiKey } from '../auth/entities/user-api-key.entity';
 import type { OrgDissolutionJobPayload } from './processors/org-dissolution.processor';
 import { EmailService } from '../notifications/email.service';
+import {
+  LEGACY_PLAN_ALIASES,
+  PLAN_ORDER,
+  normalizePlan,
+  planLabel,
+  type SubscriptionPlan,
+} from '@krakenkey/shared';
 import { effectivePlan, graceEndsAt } from './entitlement';
 import {
   BILLED_BY_MICROSOFT_MESSAGE,
@@ -29,14 +36,6 @@ import {
   hasLiveStripeSubscription,
   isActivatingMarketplacePurchase,
 } from './subscription-source';
-
-const PLAN_ORDER: Record<string, number> = {
-  free: 0,
-  starter: 1,
-  team: 2,
-  business: 3,
-  enterprise: 4,
-};
 
 const ENDED_STRIPE_STATUSES = new Set(['canceled', 'incomplete_expired']);
 
@@ -122,15 +121,16 @@ export class BillingService {
       '',
     );
 
-    // Map plan names to Stripe price IDs from env vars.
+    // Map plan names to Stripe price IDs from env vars. The Pro and Business
+    // plans replaced Starter and Team and still read their price variables.
     this.priceMap = {};
-    const starterPrice = this.configService.get<string>(
-      'KK_STRIPE_PRICE_STARTER',
-    );
-    if (starterPrice) this.priceMap['starter'] = starterPrice;
+    const proPrice = this.configService.get<string>('KK_STRIPE_PRICE_STARTER');
+    if (proPrice) this.priceMap['pro'] = proPrice;
 
-    const teamPrice = this.configService.get<string>('KK_STRIPE_PRICE_TEAM');
-    if (teamPrice) this.priceMap['team'] = teamPrice;
+    const businessPrice = this.configService.get<string>(
+      'KK_STRIPE_PRICE_TEAM',
+    );
+    if (businessPrice) this.priceMap['business'] = businessPrice;
 
     this.reversePriceMap = {};
     for (const [plan, priceId] of Object.entries(this.priceMap)) {
@@ -147,7 +147,7 @@ export class BillingService {
    * A past_due subscription keeps its plan during the grace period (see
    * entitlement.ts); anything else that isn't active counts as Free.
    */
-  async resolveUserTier(userId: string): Promise<string> {
+  async resolveUserTier(userId: string): Promise<SubscriptionPlan> {
     return effectivePlan(await this.getSubscription(userId));
   }
 
@@ -236,7 +236,7 @@ export class BillingService {
     const priceId = this.priceMap[plan];
     if (!priceId) {
       throw new BadRequestException(
-        `Plan "${plan}" is not available for purchase`,
+        `The ${planLabel(plan)} plan is not available for purchase`,
       );
     }
 
@@ -396,7 +396,7 @@ export class BillingService {
       customer: sub.stripeCustomerId!,
       amount: differenceCents,
       currency,
-      description: `Plan upgrade: ${sub.plan} \u2192 ${newPlan}`,
+      description: `Plan upgrade: ${planLabel(sub.plan)} \u2192 ${planLabel(newPlan)}`,
     });
 
     const invoice = await this.stripe.invoices.create({
@@ -426,7 +426,7 @@ export class BillingService {
     newPriceCents: number;
     currency: string;
   }> {
-    const currentPriceId = this.priceMap[currentPlan];
+    const currentPriceId = this.priceMap[normalizePlan(currentPlan)];
     const newPriceId = this.priceMap[newPlan];
 
     const [currentPrice, newPrice] = await Promise.all([
@@ -459,14 +459,16 @@ export class BillingService {
         'Cannot upgrade a subscription that is not active',
       );
     }
-    if ((PLAN_ORDER[newPlan] ?? 0) <= (PLAN_ORDER[sub.plan] ?? 0)) {
+    if (
+      PLAN_ORDER[normalizePlan(newPlan)] <= PLAN_ORDER[normalizePlan(sub.plan)]
+    ) {
       throw new BadRequestException(
-        `Cannot upgrade from ${sub.plan} to ${newPlan}`,
+        `Cannot upgrade from ${planLabel(sub.plan)} to ${planLabel(newPlan)}`,
       );
     }
     if (!this.priceMap[newPlan]) {
       throw new BadRequestException(
-        `Plan "${newPlan}" is not available for purchase`,
+        `The ${planLabel(newPlan)} plan is not available for purchase`,
       );
     }
     return sub;
@@ -743,7 +745,9 @@ export class BillingService {
   private async handleCheckoutCompleted(
     session: Stripe.Checkout.Session,
   ): Promise<void> {
-    const plan = session.metadata?.plan;
+    // A checkout opened before the plans were renamed carries the old id.
+    const rawPlan = session.metadata?.plan;
+    const plan = rawPlan ? (LEGACY_PLAN_ALIASES[rawPlan] ?? rawPlan) : rawPlan;
     const userId = session.metadata?.userId;
     const organizationId = session.metadata?.organizationId;
 
@@ -923,7 +927,7 @@ export class BillingService {
       return;
     }
 
-    const previousPlan = sub.plan;
+    const previousPlan = normalizePlan(sub.plan);
 
     sub.status = stripeSub.status === 'active' ? 'active' : stripeSub.status;
     // Stripe may send this before or after invoice.payment_failed, so
@@ -942,6 +946,9 @@ export class BillingService {
     const priceId = stripeSub.items?.data?.[0]?.price?.id;
     if (priceId && this.reversePriceMap[priceId]) {
       sub.plan = this.reversePriceMap[priceId];
+    } else {
+      // A row an older release wrote with a legacy plan id
+      sub.plan = LEGACY_PLAN_ALIASES[sub.plan] ?? sub.plan;
     }
 
     await this.subscriptionRepository.save(sub);
@@ -954,14 +961,14 @@ export class BillingService {
     );
     if (graceStarted) await this.notifyPaymentFailed(sub);
 
-    // Detect downgrade below team for org subscriptions
+    // Detect a downgrade to a plan that can't back an organization
     if (
       sub.organizationId &&
       ORG_ELIGIBLE_PLANS.has(previousPlan) &&
-      !ORG_ELIGIBLE_PLANS.has(sub.plan)
+      !ORG_ELIGIBLE_PLANS.has(normalizePlan(sub.plan))
     ) {
       this.logger.warn(
-        `Org subscription downgraded below team: org=${sub.organizationId} ${previousPlan} -> ${sub.plan}`,
+        `Org subscription downgraded below an organization plan: org=${sub.organizationId} ${previousPlan} -> ${sub.plan}`,
       );
       await this.queueDissolution(sub.organizationId);
     }

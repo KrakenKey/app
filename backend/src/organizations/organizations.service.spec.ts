@@ -67,7 +67,7 @@ describe('OrganizationsService', () => {
 
   describe('create', () => {
     it('should create an org and set the creator as owner', async () => {
-      mockBillingService.resolveUserTier.mockResolvedValue('team');
+      mockBillingService.resolveUserTier.mockResolvedValue('business');
       mockUserRepo.findOne.mockResolvedValue({
         id: ownerId,
         organizationId: null,
@@ -95,7 +95,7 @@ describe('OrganizationsService', () => {
     });
 
     it('should reject if user already belongs to an org', async () => {
-      mockBillingService.resolveUserTier.mockResolvedValue('team');
+      mockBillingService.resolveUserTier.mockResolvedValue('business');
       mockUserRepo.findOne.mockResolvedValue({
         id: ownerId,
         organizationId: 'other-org',
@@ -221,7 +221,7 @@ describe('OrganizationsService', () => {
         role: null,
       });
       mockBillingService.getSubscription.mockResolvedValue({
-        plan: 'starter',
+        plan: 'pro',
         status: 'active',
         cancelAtPeriodEnd: false,
       });
@@ -238,7 +238,7 @@ describe('OrganizationsService', () => {
         role: null,
       });
       mockBillingService.getSubscription.mockResolvedValue({
-        plan: 'starter',
+        plan: 'pro',
         status: 'past_due',
         pastDueSince: new Date(),
         cancelAtPeriodEnd: false,

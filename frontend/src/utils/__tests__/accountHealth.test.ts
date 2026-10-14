@@ -222,9 +222,9 @@ describe('computeAttention', () => {
 });
 
 describe('renewal window', () => {
-  it('is 5 days on Free and 30 on paid or unknown plans', () => {
-    expect(renewalWindowDays('free')).toBe(5);
-    expect(renewalWindowDays('team')).toBe(30);
+  it('is 10 days on the free plan and 30 on paid or unknown plans', () => {
+    expect(renewalWindowDays('free')).toBe(10);
+    expect(renewalWindowDays('business')).toBe(30);
     expect(renewalWindowDays(undefined)).toBe(30);
   });
 
@@ -601,7 +601,7 @@ describe('attention for a sparse account', () => {
   it('flags auto-renew off far from expiry, with a date and the id', () => {
     const items = computeAttention({
       ...empty,
-      plan: 'starter',
+      plan: 'pro',
       certs: ciCerts(),
       connectors: [ciConnector],
     });
@@ -636,7 +636,7 @@ describe('attention for a sparse account', () => {
 describe('renewalSchedule', () => {
   it('tells rows with the same name apart and names the connector', () => {
     const { rows, total } = renewalSchedule(ciCerts(), {
-      plan: 'starter',
+      plan: 'pro',
       connectors: [ciConnector],
       now: NOW,
     });

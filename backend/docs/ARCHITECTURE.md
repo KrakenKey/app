@@ -148,9 +148,9 @@ Approve, deny and lookup require a dashboard (JWT) session; an API key gets 403,
 - Plan limits enforced across all resource-creating modules
 - Flat-fee proration for upgrades (not day-based)
 - Organization subscriptions: personal ↔ org conversion on create/delete
-- Auto-dissolution of orgs when downgrading below Team tier
+- Auto-dissolution of orgs when downgrading to a plan without organizations
 
-**Plan tiers**: `free` → `starter` → `team` → `business` → `enterprise`
+**Plan ids**: `free` (shown as Starter) → `pro` → `business` → `enterprise`
 
 ---
 
@@ -164,7 +164,7 @@ Approve, deny and lookup require a dashboard (JWT) session; an API key gets 403,
 
 **Key behaviors**:
 - Role hierarchy: `owner` > `admin` > `member` > `viewer`
-- Requires Team+ plan to create
+- Requires the Business plan or higher to create
 - Users can only belong to one organization
 - Deletion queues async dissolution via BillingService
 
@@ -259,7 +259,7 @@ CertIssuerConsumer.process()
 ```
 CertMonitorService (daily 06:00 UTC)
   ├─ Query: status=issued, autoRenew=true, expiring within window
-  ├─ Filter by user tier (free: 5 days, paid: 30 days)
+  ├─ Filter by user tier (free: 10 days, paid: 30 days)
   ├─ For each cert: TlsService.renewInternal()
   │  ├─ Claim: UPDATE ... SET status 'renewing', renewalQueuedAt now WHERE status 'issued'
   │  └─ startQueuedRenewals(): under a per-account advisory lock, start waiting

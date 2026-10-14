@@ -51,12 +51,32 @@ describe('ScanResultCleanupService', () => {
     expect(mockExecute.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
+  it('cleans the free and pro plans, counting legacy ids with their replacement', async () => {
+    await service.cleanupExpiredResults();
+
+    const plans = mockWhere.mock.calls
+      .map(([, params]) => params?.plans)
+      .filter(Boolean);
+    expect(plans).toEqual([['free'], ['pro', 'starter']]);
+    const proCall = mockWhere.mock.calls.find(([, params]) =>
+      params?.plans?.includes('pro'),
+    );
+    expect(proCall![0]).toContain(
+      `COALESCE(s_org.plan, s_personal.plan, 'free') IN (:...plans)`,
+    );
+    // Pro keeps 30 days
+    const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+    expect(Date.now() - proCall![1].cutoff.getTime()).toBeGreaterThanOrEqual(
+      thirtyDays,
+    );
+  });
+
   it('keeps plan retention for past_due subscriptions in the grace period', async () => {
     const before = Date.now();
     await service.cleanupExpiredResults();
 
-    const tierCall = mockWhere.mock.calls.find(
-      ([, params]) => params?.tier === 'starter',
+    const tierCall = mockWhere.mock.calls.find(([, params]) =>
+      params?.plans?.includes('pro'),
     );
     expect(tierCall).toBeDefined();
     const [sql, params] = tierCall!;

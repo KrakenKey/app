@@ -25,7 +25,7 @@ const endpoint = (regions: string[]) =>
 
 describe('planUsage', () => {
   it('reads limits from the shared plan table, falling back to free', () => {
-    expect(planLimits('team')).toBe(PLAN_LIMITS.team);
+    expect(planLimits('business')).toBe(PLAN_LIMITS.business);
     expect(planLimits('nonsense')).toBe(PLAN_LIMITS.free);
     expect(planLimits(null)).toBe(PLAN_LIMITS.free);
   });
@@ -74,13 +74,15 @@ describe('planUsage', () => {
     expect(hostedRegions(eps)).toBe(2);
   });
 
-  it('leaves hosted rows out on plans without hosted monitoring', () => {
+  it('shows hosted rows on every plan, the free plan included', () => {
     const base = { domains: 1, apiKeys: 1, certs: [], endpoints: [] };
-    const free = usageRows({ ...base, plan: 'free' }).map((r) => r.key);
-    expect(free).not.toContain('hostedMonitoredEndpoints');
-    expect(free).not.toContain('hostedProbeRegions');
-    const team = usageRows({ ...base, plan: 'team' }).map((r) => r.key);
-    expect(team).toEqual([
+    const free = usageRows({ ...base, plan: 'free' });
+    expect(free.find((r) => r.key === 'hostedMonitoredEndpoints')?.limit).toBe(
+      1,
+    );
+    expect(free.find((r) => r.key === 'hostedProbeRegions')?.limit).toBe(1);
+    const business = usageRows({ ...base, plan: 'business' }).map((r) => r.key);
+    expect(business).toEqual([
       'domains',
       'certsPerMonth',
       'totalActiveCerts',
@@ -93,7 +95,7 @@ describe('planUsage', () => {
 
   it('reports null usage while lists are still loading', () => {
     const rows = usageRows({
-      plan: 'team',
+      plan: 'business',
       domains: 7,
       apiKeys: null,
       certs: null,

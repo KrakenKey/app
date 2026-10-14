@@ -4,7 +4,7 @@ Organizations allow teams to share domains, certificates, and endpoints under a 
 
 ## Requirements
 
-- Organizations require a **Team** plan or higher
+- Organizations require the **Business** plan or higher
 - A user can only belong to one organization at a time
 - Users with an active paid personal subscription cannot join an organization (cancel first or let it lapse)
 

@@ -12,16 +12,15 @@ import { Organization } from './entities/organization.entity';
 import { User } from '../users/entities/user.entity';
 import { BillingService } from '../billing/billing.service';
 import { hasPlanEntitlement } from '../billing/entitlement';
+import {
+  ORG_ELIGIBLE_PLANS,
+  ORG_MIN_PLAN_LABEL,
+} from '../billing/subscription-source';
+import { planLabel } from '@krakenkey/shared';
 import type { OrgRole } from '@krakenkey/shared';
 
 @Injectable()
 export class OrganizationsService {
-  private static readonly ORG_ELIGIBLE_PLANS = new Set([
-    'team',
-    'business',
-    'enterprise',
-  ]);
-
   constructor(
     @InjectRepository(Organization)
     private readonly orgRepo: Repository<Organization>,
@@ -37,11 +36,10 @@ export class OrganizationsService {
    */
   async create(ownerId: string, name: string): Promise<Organization> {
     const plan = await this.billingService.resolveUserTier(ownerId);
-    if (!OrganizationsService.ORG_ELIGIBLE_PLANS.has(plan)) {
+    if (!ORG_ELIGIBLE_PLANS.has(plan)) {
       throw new HttpException(
         {
-          message:
-            'Organizations require a Team plan or higher. Please upgrade to create an organization.',
+          message: `Organizations require the ${ORG_MIN_PLAN_LABEL} plan or higher. Please upgrade to create an organization.`,
           plan,
         },
         402,
@@ -140,7 +138,7 @@ export class OrganizationsService {
       !targetSub.cancelAtPeriodEnd
     ) {
       throw new ConflictException(
-        `This user has an active ${targetSub.plan} subscription. They must cancel it before joining your organization.`,
+        `This user has an active ${planLabel(targetSub.plan)} subscription. They must cancel it before joining your organization.`,
       );
     }
 

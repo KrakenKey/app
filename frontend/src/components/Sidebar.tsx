@@ -17,6 +17,7 @@ import {
   Plug,
   BookOpen,
 } from 'lucide-react';
+import { planLabel } from '@krakenkey/shared';
 import { useAuth } from '../hooks/useAuth';
 import { useHealth } from '../hooks/useHealth';
 import {
@@ -90,14 +91,6 @@ const navGroups: NavGroup[] = [
     ],
   },
 ];
-
-const PLAN_LABEL: Record<string, string> = {
-  free: 'Free plan',
-  starter: 'Starter plan',
-  team: 'Team plan',
-  business: 'Business plan',
-  enterprise: 'Enterprise plan',
-};
 
 function initials(name: string | undefined): string {
   if (!name) return '?';
@@ -272,7 +265,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
                 onClick={onClose}
                 className="text-xs text-cyan-300 hover:text-cyan-200"
               >
-                {PLAN_LABEL[plan] ?? 'Free plan'}
+                {planLabel(plan)} plan
               </Link>
             </div>
             <button

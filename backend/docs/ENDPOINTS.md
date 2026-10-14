@@ -15,13 +15,14 @@ KrakenKey can monitor TLS endpoints (servers) to track certificate expiry, trust
 
 ## Plan Limits
 
-| Feature | Free | Starter | Team | Business | Enterprise |
-|---------|------|---------|------|----------|------------|
-| Endpoints | 3 | 10 | 25 | 75 | Unlimited |
-| Hosted Probe Regions | — | 2 | 5 | 15 | Unlimited |
-| Hosted Endpoints | — | 5 | 25 | 100 | Unlimited |
-| Hosted Scan Interval | — | 30 min | 15 min | 5 min | 1 min |
-| Scan Interval | 60 min | 30 min | 5 min | 1 min | Custom |
+| Feature | Starter (`free`) | Pro | Business | Enterprise |
+|---------|------------------|-----|----------|------------|
+| Endpoints | 3 | 50 | 300 | Custom |
+| Hosted Probe Regions | 1 | All running | All running | All running |
+| Hosted Endpoints | 1 | 25 | 150 | Custom |
+| Hosted Scan Interval | 60 min | 30 min | 5 min | 1 min |
+| Connected scan interval (minimum) | 60 min | 15 min | 1 min | 1 min |
+| Scan result retention | 7 days | 30 days | 90 days | 90 days |
 
 ## API Endpoints
 

@@ -90,7 +90,7 @@ describe('AriMonitorService', () => {
       isEnabled: jest.fn().mockReturnValue(true),
       getRenewalInfo: jest.fn(),
     };
-    billing = { resolveUserTier: jest.fn().mockResolvedValue('starter') };
+    billing = { resolveUserTier: jest.fn().mockResolvedValue('pro') };
     metrics = { ariChecksTotal: { inc: jest.fn() } };
     alerts = { emit: jest.fn().mockResolvedValue(0) };
     lockStore = new InMemoryLockStore();

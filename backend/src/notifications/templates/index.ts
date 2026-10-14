@@ -1,3 +1,4 @@
+import { planLabel } from '@krakenkey/shared';
 import type {
   CertEmailContext,
   DomainVerificationFailedContext,
@@ -467,7 +468,7 @@ export function planLimitReachedTemplate(
   ctx: PlanLimitReachedContext,
   brand: EmailBranding,
 ): EmailContent {
-  const plan = ctx.plan.charAt(0).toUpperCase() + ctx.plan.slice(1);
+  const plan = planLabel(ctx.plan);
   return render(
     {
       tone: 'warning',
@@ -655,7 +656,7 @@ export function paymentFailedTemplate(
   ctx: PaymentFailedContext,
   brand: EmailBranding,
 ): EmailContent {
-  const plan = ctx.plan.charAt(0).toUpperCase() + ctx.plan.slice(1);
+  const plan = planLabel(ctx.plan);
   const until = formatDate(ctx.graceEndsAt);
   const subject = ctx.organizationName
     ? `the ${ctx.organizationName} organization's ${plan} subscription`
@@ -671,7 +672,7 @@ export function paymentFailedTemplate(
           `Hi ${ctx.username}, we couldn't charge your payment method for ${subject}. We'll retry the payment over the next few days.`,
         ),
         para(
-          `Your ${plan} limits, including the renewal window for your certificates, stay in place until ${until}. If the payment still hasn't gone through by then, your account moves to the Free plan limits.`,
+          `Your ${plan} limits, including the renewal window for your certificates, stay in place until ${until}. If the payment still hasn't gone through by then, your account moves to the Starter plan limits.`,
         ),
         details(['Plan', plan], ['Paid limits end', until]),
         button('Update payment method', `${brand.appUrl}/dashboard/billing`),

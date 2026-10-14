@@ -28,7 +28,7 @@ describe('AuthService API key scopes and restrictions', () => {
     certRepo = { find: jest.fn().mockResolvedValue([]) };
     const config = { get: jest.fn(() => HMAC_SECRET) };
     const billing = {
-      resolveUserTier: jest.fn().mockResolvedValue('team'),
+      resolveUserTier: jest.fn().mockResolvedValue('business'),
       getResourceCountUserIds: jest.fn().mockResolvedValue(['u1', 'u2']),
     };
     service = new AuthService(

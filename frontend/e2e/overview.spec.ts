@@ -19,7 +19,7 @@ test.describe('Dashboard overview', () => {
 
   test('counts live certificates, not revoked ones', async ({ page }) => {
     await authenticateAs(page, {
-      plan: 'starter',
+      plan: 'pro',
       resourceCounts: { domains: 1, certificates: 4, apiKeys: 0 },
     });
     const at = (days: number) =>
@@ -123,7 +123,7 @@ test.describe('Dashboard overview', () => {
   });
 
   test('hides auto-renewal banner for paid users', async ({ page }) => {
-    await authenticateAs(page, { plan: 'starter' });
+    await authenticateAs(page, { plan: 'pro' });
 
     await page.goto('/dashboard');
 

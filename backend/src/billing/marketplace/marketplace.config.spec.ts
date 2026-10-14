@@ -12,25 +12,30 @@ describe('parsePlanMap', () => {
   it('maps Marketplace plan ids to KrakenKey plans', () => {
     expect(
       parsePlanMap(
-        ' kk-starter-monthly=starter, kk-starter-yearly=starter,kk-team=team ,kk-biz=business',
+        ' kk-pro=pro, kk-pro-private=pro,kk-business=business ,kk-ent-acme=enterprise',
       ),
     ).toEqual({
       map: {
-        'kk-starter-monthly': 'starter',
-        'kk-starter-yearly': 'starter',
-        'kk-team': 'team',
-        'kk-biz': 'business',
+        'kk-pro': 'pro',
+        'kk-pro-private': 'pro',
+        'kk-business': 'business',
+        'kk-ent-acme': 'enterprise',
       },
       invalid: [],
     });
   });
 
+  it('reads the legacy plan names starter and team as pro and business', () => {
+    expect(parsePlanMap('kk-starter=starter,kk-team=team')).toEqual({
+      map: { 'kk-starter': 'pro', 'kk-team': 'business' },
+      invalid: [],
+    });
+  });
+
   it('leaves out entries that do not parse or name another plan', () => {
-    expect(
-      parsePlanMap('a=starter,b=enterprise,c=free,d,=team,e=team=x'),
-    ).toEqual({
-      map: { a: 'starter' },
-      invalid: ['b=enterprise', 'c=free', 'd', '=team', 'e=team=x'],
+    expect(parsePlanMap('a=pro,c=free,d,=team,e=team=x,f=gold')).toEqual({
+      map: { a: 'pro' },
+      invalid: ['c=free', 'd', '=team', 'e=team=x', 'f=gold'],
     });
   });
 
@@ -61,7 +66,7 @@ describe('MarketplaceConfig', () => {
 
   it('maps plans for any offer when no offer list is set', () => {
     const config = configFor({ KK_MARKETPLACE_PLAN_MAP: 'p1=team' });
-    expect(config.planFor('any-offer', 'p1')).toBe('team');
+    expect(config.planFor('any-offer', 'p1')).toBe('business');
     expect(config.planFor('any-offer', 'p2')).toBeNull();
   });
 
@@ -70,7 +75,7 @@ describe('MarketplaceConfig', () => {
       KK_MARKETPLACE_PLAN_MAP: 'p1=team',
       KK_MARKETPLACE_OFFER_IDS: 'krakenkey, krakenkey-dev',
     });
-    expect(config.planFor('krakenkey-dev', 'p1')).toBe('team');
+    expect(config.planFor('krakenkey-dev', 'p1')).toBe('business');
     expect(config.planFor('other-offer', 'p1')).toBeNull();
     expect(config.planFor(undefined, 'p1')).toBeNull();
   });

@@ -7,10 +7,10 @@ import type { SubscriptionPlan } from './subscription';
  */
 export const REPORT_HOST_LIMITS: Record<SubscriptionPlan, number> = {
   free: 25,
-  starter: 250,
-  team: 250,
-  business: 250,
-  enterprise: 250,
+  pro: 250,
+  business: 1000,
+  // The request body takes at most 1000 hosts (CreateReportDto)
+  enterprise: 1000,
 };
 
 /** Reports are deleted this many days after they are created. */

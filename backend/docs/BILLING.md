@@ -1,24 +1,33 @@
 # Billing & Subscriptions
 
-KrakenKey uses Stripe for subscription management with five plan tiers that control feature access and resource limits. Starter, Team and Business can also be bought through Microsoft Marketplace (see [Microsoft Marketplace](#microsoft-marketplace)).
+KrakenKey uses Stripe for subscription management with four plans that control feature access and resource limits. Pro, Business and Enterprise (through private offers) can also be bought through Microsoft Marketplace (see [Microsoft Marketplace](#microsoft-marketplace)).
 
-## Plan Tiers
+## Plans
 
-| Feature | Free | Starter | Team | Business | Enterprise |
-|---------|------|---------|------|----------|------------|
-| **Price** | $0 | — | — | — | Contact us |
-| **Domains** | 3 | 10 | 25 | 75 | Unlimited |
-| **API Keys** | 2 | 5 | 10 | 25 | Unlimited |
-| **Certificates / month** | 5 | 50 | 250 | 1,000 | Unlimited |
-| **Active Certificates** | 10 | 75 | 375 | 1,500 | Unlimited |
-| **Scan Interval** | 60 min | 30 min | 5 min | 1 min | Custom |
-| **Hosted Probe Regions** | — | 2 | 5 | 15 | Unlimited |
-| **Hosted Endpoints** | — | 5 | 25 | 100 | Unlimited |
-| **Hosted Scan Interval** | — | 30 min | 15 min | 5 min | 1 min |
-| **Hosts per Report** | 25 | 250 | 250 | 250 | 250 |
-| **Data Retention** | 5 days | 30 days | 90 days | 90 days | Custom |
-| **Auto-Renewal Window** | 5 days | 30 days | 30 days | 30 days | 30 days |
-| **Organizations** | — | — | Yes | Yes | Yes |
+Plan ids are `free`, `pro`, `business` and `enterprise`. The free plan is called **Starter** everywhere users see it (dashboard, emails, API messages); its id stays `free`. Enterprise is for custom deals and isn't sold self-serve. `PLAN_LABELS` and `PLAN_LIMITS` in `@krakenkey/shared` hold the names and numbers.
+
+| Feature | Starter (`free`) | Pro | Business | Enterprise |
+|---------|------------------|-----|----------|------------|
+| **Domains** | 3 | 15 | 100 | Custom |
+| **API Keys** | 2 | 10 | 50 | Custom |
+| **Certificates / month** | 5 | 100 | 1,000 | Custom |
+| **Active Certificates** | 10 | 150 | 1,000 | Custom |
+| **Concurrent pending** | 2 | 10 | 50 | Custom |
+| **Monitored endpoints** | 3 | 50 | 300 | Custom |
+| **Hosted Endpoints** | 1 | 25 | 150 | Custom |
+| **Hosted Probe Regions** | 1 | All running | All running | All running |
+| **Hosted Scan Interval** | 60 min | 30 min | 5 min | 1 min |
+| **Connected scan interval (minimum)** | 60 min | 15 min | 1 min | 1 min |
+| **Hosts per Report** | 25 | 250 | 1,000 | 1,000 |
+| **Scan result retention** | 7 days | 30 days | 90 days | 90 days |
+| **Auto-Renewal Window** | 10 days | 30 days | 30 days | 30 days |
+| **Organizations** | No | No | Yes | Yes |
+
+"Custom" limits are unlimited in code (`Infinity`) until per-account limits exist. A report takes at most 1,000 hosts on any plan (`CreateReportDto`).
+
+### Plan ids before the rename
+
+`starter` and `team` were renamed to `pro` and `business` by migration `RenamePlansToProAndBusiness1791600000000`. For the short overlap with the previous release during a deploy, and for Stripe checkouts opened before it, the API still reads the old ids: `normalizePlan()` maps them on every plan lookup, Stripe webhooks rewrite them, `POST /billing/checkout` and `/billing/upgrade` accept them, and `KK_MARKETPLACE_PLAN_MAP` accepts `starter` and `team` as names for `pro` and `business`. `KK_STRIPE_PRICE_STARTER` and `KK_STRIPE_PRICE_TEAM` hold the Pro and Business prices.
 
 ## API Endpoints
 
@@ -33,7 +42,7 @@ POST /billing/checkout
 **Request:**
 ```json
 {
-  "plan": "starter"
+  "plan": "pro"
 }
 ```
 
@@ -46,7 +55,7 @@ POST /billing/checkout
 
 Redirect the user to the returned URL. After payment, Stripe redirects back to KrakenKey and fires a `checkout.session.completed` webhook.
 
-Valid plan values: `starter`, `team`, `business`, `enterprise`
+Valid plan values: `pro`, `business`, `enterprise` (only plans with a Stripe price can be bought). The legacy `starter` and `team` are read as `pro` and `business`.
 
 Checkout is only for starting a subscription. If the user, or the organization they bill for, already has a subscription that is `active`, `past_due`, `trialing` or `unpaid`, the request fails with `409 Conflict`; use `POST /billing/upgrade` or the billing portal instead. Repeating the same request within about a minute returns the same Stripe session.
 
@@ -59,7 +68,7 @@ GET /billing/subscription
 **Response:**
 ```json
 {
-  "plan": "team",
+  "plan": "business",
   "status": "active",
   "stripeCustomerId": "cus_...",
   "stripeSubscriptionId": "sub_...",
@@ -105,7 +114,7 @@ POST /billing/upgrade/preview
 **Response:**
 ```json
 {
-  "currentPlan": "team",
+  "currentPlan": "pro",
   "newPlan": "business",
   "proratedAmount": 4500,
   "currency": "usd"
@@ -159,7 +168,7 @@ If the record already points at a different subscription that Stripe still repor
 1. User cancels via Stripe Customer Portal
 2. `customer.subscription.deleted` webhook fires
 3. Backend marks subscription as canceled
-4. User reverts to free tier limits
+4. User reverts to the free (Starter) plan limits
 
 ### Failed Payment
 1. `invoice.payment_failed` (or `customer.subscription.updated` with status `past_due`, whichever arrives first) fires
@@ -167,9 +176,9 @@ If the record already points at a different subscription that Stripe still repor
 3. The account owner (the organization owner for an org subscription) gets one "payment failed" email with a link to the billing page and the date the paid limits end. It is a billing notice and ignores email preferences.
 4. Stripe retries the payment per its dunning settings. Meanwhile the plan's limits, renewal window, rate limits and scan retention keep applying for a 14-day grace period from `pastDueSince` (`PAST_DUE_GRACE_DAYS` in `src/billing/entitlement.ts`). The billing page shows a banner with that date and a button to the Stripe portal.
 5. If a retry succeeds, `invoice.paid` or `customer.subscription.updated` restores `active` status and clears `pastDueSince`
-6. The account drops to Free limits when the grace period ends, when Stripe marks the subscription `unpaid`, or when it cancels it (`customer.subscription.deleted`)
+6. The account drops to the free (Starter) limits when the grace period ends, when Stripe marks the subscription `unpaid`, or when it cancels it (`customer.subscription.deleted`)
 
-Every tier lookup goes through `effectivePlan()` in `src/billing/entitlement.ts` (SQL queries use `entitledSubscriptionSql()`), so active subscriptions and past_due ones inside the grace period resolve to their plan and everything else resolves to Free. Subscriptions that were already `past_due` before `pastDueSince` existed get no grace until the next Stripe event for them records the start.
+Every tier lookup goes through `effectivePlan()` in `src/billing/entitlement.ts` (SQL queries use `entitledSubscriptionSql()`), so active subscriptions and past_due ones inside the grace period resolve to their plan and everything else resolves to `free`. Subscriptions that were already `past_due` before `pastDueSince` existed get no grace until the next Stripe event for them records the start.
 
 ## Microsoft Marketplace
 
@@ -186,9 +195,9 @@ Off unless `KK_MARKETPLACE_ENABLED=true`. A subscription row has a `source`: `st
 
 Organizations have their own billing relationship:
 
-- When a user creates an organization (requires Team+ plan), their personal subscription is converted to an organization subscription
+- When a user creates an organization (requires the Business plan or higher), their personal subscription is converted to an organization subscription
 - The organization owner controls billing — non-owners cannot access billing endpoints
-- If an organization is downgraded below the Team tier, the organization is automatically dissolved:
+- If an organization is downgraded to a plan that can't back one, the organization is automatically dissolved:
   1. Non-owner member resources (domains, certificates) are transferred to the organization owner
   2. Member associations are cleared
   3. The subscription reverts to a personal subscription
@@ -230,7 +239,7 @@ The error message names the owner, both subscription IDs and the organization, b
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | UUID | Primary key |
-| `plan` | varchar | Plan name (starter, team, business, enterprise) |
+| `plan` | varchar | Plan id (`free`, `pro`, `business`, `enterprise`) |
 | `status` | varchar | Subscription status |
 | `stripeCustomerId` | varchar | Stripe customer ID; null for an account that only bought through Microsoft |
 | `stripeSubscriptionId` | varchar | Stripe subscription ID (unique, indexed) |

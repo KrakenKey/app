@@ -10,10 +10,11 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, QueryFailedError, Repository } from 'typeorm';
-import type {
-  MarketplaceLandingResponse,
-  MarketplaceLandingState,
-  MarketplaceSaasStatus,
+import {
+  normalizePlan,
+  type MarketplaceLandingResponse,
+  type MarketplaceLandingState,
+  type MarketplaceSaasStatus,
 } from '@krakenkey/shared';
 import { Subscription } from '../entities/subscription.entity';
 import { User } from '../../users/entities/user.entity';
@@ -21,6 +22,7 @@ import { Organization } from '../../organizations/entities/organization.entity';
 import { BillingService } from '../billing.service';
 import {
   ORG_ELIGIBLE_PLANS,
+  ORG_MIN_PLAN_LABEL,
   hasLiveMarketplaceSubscription,
   hasLiveStripeSubscription,
 } from '../subscription-source';
@@ -361,8 +363,8 @@ export class MarketplaceService {
     if (user.organizationId && user.role !== 'owner') {
       return result('not_owner');
     }
-    // Organizations need Team or higher, as with Stripe; a Starter
-    // subscription on an organization would dissolve it.
+    // Organizations need a plan that can back one, as with Stripe; any
+    // other plan on an organization would dissolve it.
     if (user.organizationId && !ORG_ELIGIBLE_PLANS.has(plan)) {
       return result('needs_team');
     }
@@ -392,7 +394,7 @@ export class MarketplaceService {
       case 'unknown_plan':
         return 'This plan is not available. Contact support.';
       case 'needs_team':
-        return 'Organizations need the Team plan or higher. Change the plan in the Azure portal, or sign in with an account that is not in an organization.';
+        return `Organizations need the ${ORG_MIN_PLAN_LABEL} plan or higher. Change the plan in the Azure portal, or sign in with an account that is not in an organization.`;
       default:
         return 'This subscription cannot be activated for this account.';
     }
@@ -852,7 +854,7 @@ export class MarketplaceService {
     // A row still waiting for activation on the landing page has no paid
     // plan yet, so nothing it goes through dissolves an organization.
     const wasPending = sub.marketplaceStatus === PENDING;
-    const previousPlan = sub.plan;
+    const previousPlan = normalizePlan(sub.plan);
     let detail: string | null = null;
 
     if (saas) {
@@ -880,7 +882,7 @@ export class MarketplaceService {
         dissolveOrg = { id: sub.organizationId, cancel: true };
       } else if (
         ORG_ELIGIBLE_PLANS.has(previousPlan) &&
-        !ORG_ELIGIBLE_PLANS.has(sub.plan)
+        !ORG_ELIGIBLE_PLANS.has(normalizePlan(sub.plan))
       ) {
         dissolveOrg = { id: sub.organizationId, cancel: false };
       }
