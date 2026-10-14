@@ -58,7 +58,7 @@ The API reads one Stripe price per plan and interval (`src/billing/stripe-prices
 | `KK_STRIPE_PRICE_BUSINESS_YEARLY` | Business, yearly |
 | `KK_STRIPE_PORTAL_CONFIGURATION_ID` | Optional. The billing portal configuration to open; Stripe's default configuration when unset |
 
-There are no fallbacks to the old `KK_STRIPE_PRICE_STARTER` and `KK_STRIPE_PRICE_TEAM`: Team cost less than Business, and Starter's price isn't known to match Pro. A plan and interval without its own variable isn't sold: `GET /billing/plans` leaves it out, the dashboard doesn't offer it, and checkout answers `400`. A warning at startup lists the unset variables. Webhooks only recognize the configured prices; any other price leaves the row's plan as it is.
+There are no fallbacks to the old `KK_STRIPE_PRICE_STARTER` and `KK_STRIPE_PRICE_TEAM`: Team cost less than Business, and Starter's price isn't known to match Pro. A plan and interval without its own variable isn't sold: `GET /billing/plans` leaves it out, the dashboard doesn't offer it, and checkout answers `400`. A warning at startup lists the unset variables. Webhooks only recognize the configured prices; any other price leaves the row's plan as it is and logs a warning naming the price.
 
 The billing portal configuration (Stripe dashboard, Settings, Billing, Customer portal) must let customers switch plans and list the four prices, for the monthly/yearly switch below.
 
@@ -193,7 +193,7 @@ POST /billing/upgrade/preview
 }
 ```
 
-The amount is Stripe's preview (`invoices.createPreview`) of exactly the change the upgrade makes, so it is what will be charged. Keeping the interval, it is the new price for the rest of the period less the unused time on the current one, and the billing date stays. Changing the interval starts a new billing period today and `currentPeriodEnd` is one new interval from now.
+The amount is Stripe's preview (`invoices.createPreview`) of exactly the change the upgrade makes, so it is what will be charged. Keeping the interval, it is the new price for the rest of the period less the unused time on the current one, and the billing date stays. Changing the interval starts a new billing period today and `currentPeriodEnd` is one new interval from now. The response includes `prorationDate` (Unix time); send it with the upgrade so Stripe prorates from the same moment and charges the amount shown. An upgrade with a missing, future or more than an hour old `prorationDate` is prorated from now.
 
 ### Execute Upgrade
 
@@ -209,7 +209,7 @@ POST /billing/upgrade
 }
 ```
 
-Every upgrade is one Stripe subscription update with `proration_behavior: always_invoice` and `payment_behavior: error_if_incomplete` (plus `billing_cycle_anchor: now` when the interval changes), under a new idempotency key per request. Stripe invoices the prorated amount at once, and nothing changes, in Stripe or here, unless that payment succeeds: a declined card answers `402` and the plan stays, and trying again is a new attempt. The response includes the new `plan` and `interval`.
+Every upgrade is one Stripe subscription update with `proration_behavior: always_invoice` and `payment_behavior: error_if_incomplete` (plus `billing_cycle_anchor: now` when the interval changes), under a new idempotency key per request. Stripe invoices the prorated amount at once, and nothing changes, in Stripe or here, unless that payment succeeds: any `402` from Stripe (a declined card, no payment method) answers `402` with "Your plan hasn't changed", and trying again is a new attempt. When the bank wants the customer to confirm the payment (3D Secure), the answer is a `402` that sends them to the billing portal to make the change there; the update isn't sent `off_session`, because the customer is present when they upgrade. Switching to `pending_if_incomplete` would need `pending_update` checked before the plan is saved. The response includes the new `plan` and `interval`.
 
 ### Stripe Webhook
 
