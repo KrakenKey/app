@@ -1,8 +1,14 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import { AlertTriangle, Check, CreditCard, ExternalLink } from 'lucide-react';
 import axios from 'axios';
-import { normalizePlan, planLabel as labelFor } from '@krakenkey/shared';
+import {
+  PLAN_LIST_PRICES_CENTS,
+  normalizePlan,
+  planLabel as labelFor,
+} from '@krakenkey/shared';
 import type {
+  BillingInterval,
+  PurchasablePlan,
   Subscription,
   SubscriptionPlan,
   UpgradePreviewResponse,
@@ -15,6 +21,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useHealth } from '../hooks/useHealth';
 import {
   fetchSubscription,
+  fetchPlans,
   createCheckout,
   createPortalSession,
   previewUpgrade,
@@ -39,11 +46,18 @@ const PRICING_URL = 'https://krakenkey.io/pricing';
 const CONTACT_URL =
   'mailto:support@krakenkey.io?subject=KrakenKey%20Enterprise';
 
-/** Monthly list prices of the plans sold here. Enterprise is by quote. */
-const PLAN_PRICES: Partial<Record<SubscriptionPlan, string>> = {
-  pro: '$29/mo',
-  business: '$149/mo',
-};
+/** "$29/mo" or "$1,490/yr": the list price of a self-serve plan. */
+function planPrice(
+  plan: string,
+  interval: BillingInterval = 'month',
+): string | undefined {
+  const cents = PLAN_LIST_PRICES_CENTS[normalizePlan(plan)]?.[interval];
+  if (cents === undefined) return undefined;
+  const dollars = (cents / 100).toLocaleString('en-US', {
+    maximumFractionDigits: 0,
+  });
+  return `$${dollars}${interval === 'year' ? '/yr' : '/mo'}`;
+}
 
 /** Extras each plan adds beyond the numeric limits. */
 const PLAN_EXTRAS: Partial<Record<SubscriptionPlan, string[]>> = {
@@ -149,9 +163,11 @@ function UsageMeter({ row, plan }: { row: UsageRow; plan: string }) {
 
 function PlanCard({
   plan,
+  interval = 'month',
   action,
 }: {
   plan: SubscriptionPlan;
+  interval?: BillingInterval;
   action: ReactNode;
 }) {
   return (
@@ -159,7 +175,7 @@ function PlanCard({
       <div className="flex items-baseline justify-between gap-3 mb-4">
         <h3 className="text-base font-semibold text-text">{labelFor(plan)}</h3>
         <span className="text-sm text-text-muted tabular-nums">
-          {PLAN_PRICES[plan] ?? 'Contact us'}
+          {planPrice(plan, interval) ?? 'Contact us'}
         </span>
       </div>
       <ul className="space-y-2 text-sm text-text-secondary mb-6 flex-1">
@@ -183,12 +199,21 @@ export default function Billing() {
   const [actionLoading, setActionLoading] = useState(false);
   const [upgradeModal, setUpgradeModal] = useState<{
     plan: string;
+    interval: BillingInterval;
     preview: UpgradePreviewResponse;
   } | null>(null);
   const [upgradeError, setUpgradeError] = useState<string | null>(null);
+  // Plans with a Stripe price here, to offer yearly billing only once it is set up
+  const [purchasable, setPurchasable] = useState<PurchasablePlan[]>([]);
+  const [chosenInterval, setChosenInterval] = useState<BillingInterval | null>(
+    null,
+  );
 
   useEffect(() => {
     loadSubscription();
+    fetchPlans()
+      .then((res) => setPurchasable(res.plans))
+      .catch(() => setPurchasable([]));
   }, []);
 
   async function loadSubscription() {
@@ -252,6 +277,25 @@ export default function Billing() {
 
   const canChangePlanHere = canManageBilling && !billedByMicrosoft;
   const upgradeTargets = canChangePlanHere ? (UPGRADE_TARGETS[plan] ?? []) : [];
+  const currentInterval: BillingInterval = subscription?.interval ?? 'month';
+  const sellsYearly = (p: string) =>
+    purchasable.some((x) => x.plan === p && x.intervals.includes('year'));
+  const offerYearly = upgradeTargets.some(sellsYearly);
+  // The toggle starts on the account's own interval
+  const interval: BillingInterval = offerYearly
+    ? (chosenInterval ?? currentInterval)
+    : 'month';
+  const otherInterval: BillingInterval =
+    currentInterval === 'month' ? 'year' : 'month';
+  const canSwitchInterval =
+    isPaid &&
+    canManageBilling &&
+    !billedByMicrosoft &&
+    subscription?.status === 'active' &&
+    !!subscription?.interval &&
+    purchasable.some(
+      (x) => x.plan === plan && x.intervals.includes(otherInterval),
+    );
   const nextPlan = canChangePlanHere ? NEXT_PLAN[plan] : undefined;
 
   async function handleUpgrade(targetPlan: string) {
@@ -259,10 +303,10 @@ export default function Billing() {
     setUpgradeError(null);
     try {
       if (isPaid) {
-        const preview = await previewUpgrade(targetPlan);
-        setUpgradeModal({ plan: targetPlan, preview });
+        const preview = await previewUpgrade(targetPlan, interval);
+        setUpgradeModal({ plan: targetPlan, interval, preview });
       } else {
-        const { sessionUrl } = await createCheckout(targetPlan);
+        const { sessionUrl } = await createCheckout(targetPlan, interval);
         window.location.href = sessionUrl;
         return;
       }
@@ -287,7 +331,7 @@ export default function Billing() {
     setActionLoading(true);
     setUpgradeError(null);
     try {
-      await upgradeSubscription(upgradeModal.plan);
+      await upgradeSubscription(upgradeModal.plan, upgradeModal.interval);
       setUpgradeModal(null);
       await loadSubscription();
     } catch {
@@ -297,10 +341,10 @@ export default function Billing() {
     }
   }
 
-  async function handleManageSubscription() {
+  async function handleManageSubscription(flow?: 'switch_interval') {
     setActionLoading(true);
     try {
-      const { portalUrl } = await createPortalSession();
+      const { portalUrl } = await createPortalSession(flow);
       window.location.href = portalUrl;
     } catch {
       setActionLoading(false);
@@ -308,7 +352,10 @@ export default function Billing() {
   }
 
   function formatAmount(cents: number): string {
-    return `$${(cents / 100).toFixed(2)}`;
+    return `$${(cents / 100).toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
   }
 
   function formatDate(dateStr: string): string {
@@ -382,7 +429,7 @@ export default function Billing() {
             <Button
               variant="primary"
               icon={<ExternalLink className="w-4 h-4" />}
-              onClick={handleManageSubscription}
+              onClick={() => handleManageSubscription()}
               disabled={actionLoading}
               className="shrink-0 self-start sm:self-auto"
             >
@@ -403,11 +450,13 @@ export default function Billing() {
               <span className="text-lg font-semibold text-text">
                 {planLabel}
               </span>
-              {isPaid && !billedByMicrosoft && PLAN_PRICES[plan] && (
-                <span className="text-sm text-text-muted tabular-nums">
-                  {PLAN_PRICES[plan]}
-                </span>
-              )}
+              {isPaid &&
+                !billedByMicrosoft &&
+                planPrice(plan, currentInterval) && (
+                  <span className="text-sm text-text-muted tabular-nums">
+                    {planPrice(plan, currentInterval)}
+                  </span>
+                )}
               {isPastDue && (
                 <span className="text-xs text-red-400 font-medium">
                   Payment past due
@@ -427,8 +476,25 @@ export default function Billing() {
             )}
             {isPaid && subscription?.currentPeriodEnd && (
               <p className="text-sm text-text-muted mt-2">
+                {subscription.interval === 'year'
+                  ? 'Billed yearly. '
+                  : subscription.interval === 'month'
+                    ? 'Billed monthly. '
+                    : ''}
                 Current period ends {formatDate(subscription.currentPeriodEnd)}
               </p>
+            )}
+            {canSwitchInterval && (
+              <button
+                type="button"
+                onClick={() => handleManageSubscription('switch_interval')}
+                disabled={actionLoading}
+                className="mt-2 cursor-pointer border-none bg-transparent p-0 text-sm text-cyan-300 hover:text-cyan-200"
+              >
+                {otherInterval === 'year'
+                  ? 'Switch to yearly billing (2 months free)'
+                  : 'Switch to monthly billing'}
+              </button>
             )}
             {!canManageBilling && (
               <p className="text-sm text-text-muted mt-2">
@@ -451,7 +517,7 @@ export default function Billing() {
             <Button
               variant="secondary"
               icon={<ExternalLink className="w-4 h-4" />}
-              onClick={handleManageSubscription}
+              onClick={() => handleManageSubscription()}
               disabled={actionLoading}
               className="self-start sm:self-auto"
             >
@@ -485,6 +551,26 @@ export default function Billing() {
             <h2 className="text-sm font-semibold text-text">
               {upgradeTargets.length > 0 ? 'Upgrade' : 'Need more room?'}
             </h2>
+            {offerYearly && (
+              <div
+                role="radiogroup"
+                aria-label="Billing interval"
+                className="inline-flex rounded-lg border border-border-strong p-0.5 text-sm"
+              >
+                {(['month', 'year'] as const).map((i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    role="radio"
+                    aria-checked={interval === i}
+                    onClick={() => setChosenInterval(i)}
+                    className={`cursor-pointer rounded-md border-none px-3 py-1 ${interval === i ? 'bg-surface-elevated text-text' : 'bg-transparent text-text-muted hover:text-text'}`}
+                  >
+                    {i === 'month' ? 'Monthly' : 'Yearly, 2 months free'}
+                  </button>
+                ))}
+              </div>
+            )}
             {upgradeTargets.length > 0 && (
               <a
                 href={PRICING_URL}
@@ -502,6 +588,7 @@ export default function Billing() {
               <PlanCard
                 key={target}
                 plan={target}
+                interval={interval}
                 action={
                   <Button
                     variant="primary"
@@ -550,8 +637,21 @@ export default function Billing() {
               <span className="font-semibold text-zinc-100">
                 {formatAmount(upgradeModal.preview.immediateAmountCents)}
               </span>{' '}
-              immediately for the remaining days in your current billing period
-              (through {formatDate(upgradeModal.preview.currentPeriodEnd)}).
+              {upgradeModal.interval === currentInterval ? (
+                <>
+                  immediately for the remaining days in your current billing
+                  period (through{' '}
+                  {formatDate(upgradeModal.preview.currentPeriodEnd)}).
+                </>
+              ) : (
+                <>
+                  immediately: a new{' '}
+                  {upgradeModal.interval === 'year' ? 'yearly' : 'monthly'}{' '}
+                  billing period starts today (through{' '}
+                  {formatDate(upgradeModal.preview.currentPeriodEnd)}), less a
+                  credit for the unused time on your current plan.
+                </>
+              )}
             </p>
             <p className="text-sm text-zinc-300">
               Your subscription will then renew at the{' '}
@@ -560,7 +660,7 @@ export default function Billing() {
               </span>{' '}
               rate of{' '}
               <span className="font-semibold text-zinc-100">
-                {PLAN_PRICES[normalizePlan(upgradeModal.plan)]}
+                {planPrice(upgradeModal.plan, upgradeModal.interval)}
               </span>{' '}
               on your next billing date.
             </p>

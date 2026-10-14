@@ -5,13 +5,19 @@ import Billing from '../Billing';
 
 const {
   mockFetchSubscription,
+  mockFetchPlans,
   mockCreateCheckout,
   mockCreatePortalSession,
+  mockPreviewUpgrade,
+  mockUpgradeSubscription,
   authState,
   healthState,
 } = vi.hoisted(() => ({
   mockFetchSubscription: vi.fn(),
+  mockFetchPlans: vi.fn(),
   mockCreateCheckout: vi.fn(),
+  mockPreviewUpgrade: vi.fn(),
+  mockUpgradeSubscription: vi.fn(),
   mockCreatePortalSession: vi.fn(),
   authState: {
     user: null as {
@@ -51,10 +57,11 @@ vi.mock('../../hooks/useHealth', () => ({
 
 vi.mock('../../services/billingService', () => ({
   fetchSubscription: mockFetchSubscription,
+  fetchPlans: mockFetchPlans,
   createCheckout: mockCreateCheckout,
   createPortalSession: mockCreatePortalSession,
-  previewUpgrade: vi.fn(),
-  upgradeSubscription: vi.fn(),
+  previewUpgrade: mockPreviewUpgrade,
+  upgradeSubscription: mockUpgradeSubscription,
 }));
 
 const sub = (plan: string) => ({
@@ -67,10 +74,150 @@ const sub = (plan: string) => ({
 });
 
 describe('Billing', () => {
+  // Monthly prices only, as before yearly prices exist in Stripe
+  const monthlyOnly = {
+    plans: [
+      { plan: 'pro', intervals: ['month'] },
+      { plan: 'business', intervals: ['month'] },
+    ],
+  };
+  const withYearly = {
+    plans: [
+      { plan: 'pro', intervals: ['month', 'year'] },
+      { plan: 'business', intervals: ['month', 'year'] },
+    ],
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     authState.user = { organizationId: null, role: null };
     healthState.data = null;
+    mockFetchPlans.mockResolvedValue(monthlyOnly);
+  });
+
+  describe('annual billing', () => {
+    it('hides the interval toggle until yearly prices exist', async () => {
+      mockFetchSubscription.mockResolvedValue(sub('free'));
+      render(<Billing />);
+
+      await screen.findByRole('button', { name: 'Upgrade to Pro' });
+      expect(
+        screen.queryByRole('radiogroup', { name: 'Billing interval' }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('shows yearly prices and checks out yearly', async () => {
+      mockFetchPlans.mockResolvedValue(withYearly);
+      mockFetchSubscription.mockResolvedValue(sub('free'));
+      mockCreateCheckout.mockResolvedValue({ sessionUrl: 'https://x' });
+      const location = { href: '' };
+      vi.stubGlobal('location', location);
+      const user = userEvent.setup();
+      render(<Billing />);
+
+      await user.click(
+        await screen.findByRole('radio', { name: 'Yearly, 2 months free' }),
+      );
+      expect(screen.getByText('$290/yr')).toBeInTheDocument();
+      expect(screen.getByText('$1,490/yr')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Upgrade to Pro' }));
+      expect(mockCreateCheckout).toHaveBeenCalledWith('pro', 'year');
+      vi.unstubAllGlobals();
+    });
+
+    it('upgrades a yearly Pro account to yearly Business by default', async () => {
+      mockFetchPlans.mockResolvedValue(withYearly);
+      mockFetchSubscription.mockResolvedValue({
+        ...sub('pro'),
+        interval: 'year',
+      });
+      mockPreviewUpgrade.mockResolvedValue({
+        immediateAmountCents: 120000,
+        currency: 'usd',
+        targetPlan: 'business',
+        targetInterval: 'year',
+        currentPeriodEnd: '2027-04-20T00:00:00.000Z',
+      });
+      const user = userEvent.setup();
+      render(<Billing />);
+
+      expect(await screen.findByText(/Billed yearly\./)).toBeInTheDocument();
+      expect(screen.getByText('$290/yr')).toBeInTheDocument();
+      await user.click(
+        screen.getByRole('button', { name: 'Upgrade to Business' }),
+      );
+      expect(mockPreviewUpgrade).toHaveBeenCalledWith('business', 'year');
+      // On the plan card and in the confirmation
+      await waitFor(() =>
+        expect(screen.getAllByText('$1,490/yr')).toHaveLength(2),
+      );
+      await user.click(screen.getByRole('button', { name: 'Confirm Upgrade' }));
+      expect(mockUpgradeSubscription).toHaveBeenCalledWith('business', 'year');
+    });
+
+    it('explains a new billing period when the upgrade changes the interval', async () => {
+      mockFetchPlans.mockResolvedValue(withYearly);
+      mockFetchSubscription.mockResolvedValue({
+        ...sub('pro'),
+        interval: 'month',
+      });
+      mockPreviewUpgrade.mockResolvedValue({
+        immediateAmountCents: 147100,
+        currency: 'usd',
+        targetPlan: 'business',
+        targetInterval: 'year',
+        currentPeriodEnd: '2027-10-14T00:00:00.000Z',
+      });
+      const user = userEvent.setup();
+      render(<Billing />);
+
+      await user.click(
+        await screen.findByRole('radio', { name: 'Yearly, 2 months free' }),
+      );
+      await user.click(
+        screen.getByRole('button', { name: 'Upgrade to Business' }),
+      );
+      expect(
+        await screen.findByText(/a new yearly billing period starts today/),
+      ).toBeInTheDocument();
+      expect(screen.getByText('$1,471.00')).toBeInTheDocument();
+    });
+
+    it('offers a switch to yearly billing through the portal', async () => {
+      mockFetchPlans.mockResolvedValue(withYearly);
+      mockFetchSubscription.mockResolvedValue({
+        ...sub('business'),
+        interval: 'month',
+      });
+      mockCreatePortalSession.mockResolvedValue({ portalUrl: 'https://p' });
+      const location = { href: '' };
+      vi.stubGlobal('location', location);
+      const user = userEvent.setup();
+      render(<Billing />);
+
+      await user.click(
+        await screen.findByRole('button', {
+          name: 'Switch to yearly billing (2 months free)',
+        }),
+      );
+      expect(mockCreatePortalSession).toHaveBeenCalledWith('switch_interval');
+      await waitFor(() => expect(location.href).toBe('https://p'));
+      vi.unstubAllGlobals();
+    });
+
+    it('offers no switch without a yearly price', async () => {
+      mockFetchSubscription.mockResolvedValue({
+        ...sub('business'),
+        interval: 'month',
+      });
+      render(<Billing />);
+
+      await screen.findByText(/Billed monthly\./);
+      expect(
+        screen.queryByRole('button', { name: /switch to yearly/i }),
+      ).not.toBeInTheDocument();
+    });
   });
 
   it('shows manage subscription for a user without an org', async () => {
@@ -326,7 +473,7 @@ describe('Billing', () => {
       );
 
       expect(await screen.findByText(message)).toBeInTheDocument();
-      expect(mockCreateCheckout).toHaveBeenCalledWith('pro');
+      expect(mockCreateCheckout).toHaveBeenCalledWith('pro', 'month');
     });
 
     it('keeps the generic error for other checkout failures', async () => {

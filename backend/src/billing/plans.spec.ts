@@ -15,6 +15,7 @@ import { UpgradePlanDto } from './dto/upgrade-plan.dto';
 import { RATE_LIMIT_TIERS } from '../throttler/config/rate-limit-tiers.config';
 import { RenamePlansToProAndBusiness1791600000000 } from '../migrations/1791600000000-RenamePlansToProAndBusiness';
 import { planLimitReachedTemplate } from '../notifications/templates';
+import { AddSubscriptionBillingInterval1791700000000 } from '../migrations/1791700000000-AddSubscriptionBillingInterval';
 
 describe('plans', () => {
   it('has four plan ids, cheapest first', () => {
@@ -204,5 +205,22 @@ describe('plan names in emails', () => {
     );
     expect(text).toContain('your Starter plan has reached its limit');
     expect(text).not.toMatch(/\bFree\b/);
+  });
+});
+
+describe('AddSubscriptionBillingInterval migration', () => {
+  it('only adds a nullable column, under a lock timeout', async () => {
+    const queries: string[] = [];
+    const qr = {
+      query: jest.fn(async (sql: string) => {
+        queries.push(sql);
+        return [];
+      }),
+    };
+    await new AddSubscriptionBillingInterval1791700000000().up(qr as any);
+    expect(queries[0]).toBe(`SET LOCAL lock_timeout = '5s'`);
+    const sql = queries.join('\n');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS "billingInterval"');
+    expect(sql).not.toMatch(/NOT NULL|DEFAULT|UPDATE/);
   });
 });

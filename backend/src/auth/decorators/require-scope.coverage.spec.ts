@@ -137,6 +137,7 @@ describe('@RequireScope coverage', () => {
       'GET /auth/api-keys': 'account:read',
       'GET /auth/github-oidc/trusts': 'account:read',
       'GET /auth/profile': 'account:read',
+      'GET /billing/plans': 'account:read',
       'GET /billing/subscription': 'account:read',
       'GET /certs/tls': 'certs:read',
       'GET /connectors': 'account:read',

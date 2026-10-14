@@ -45,6 +45,13 @@ export class Subscription {
   @Column({ default: 'active' })
   status: string;
 
+  /**
+   * `month` or `year` for a Stripe subscription; null on the free plan, for
+   * Marketplace subscriptions and for rows from before annual billing.
+   */
+  @Column({ type: 'varchar', length: 10, nullable: true, default: null })
+  billingInterval: 'month' | 'year' | null;
+
   @Column({ type: 'timestamp', nullable: true })
   currentPeriodEnd: Date | null;
 

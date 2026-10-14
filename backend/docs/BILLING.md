@@ -42,9 +42,44 @@ Connectors (active, not revoked), alert channels, GitHub OIDC trust policies and
 
 ### Plan ids before the rename
 
-`starter` and `team` were renamed to `pro` and `business` by migration `RenamePlansToProAndBusiness1791600000000`. For the short overlap with the previous release during a deploy, and for Stripe checkouts opened before it, the API still reads the old ids: `normalizePlan()` maps them on every plan lookup, Stripe webhooks rewrite them, `POST /billing/checkout` and `/billing/upgrade` accept them, and `KK_MARKETPLACE_PLAN_MAP` accepts `starter` and `team` as names for `pro` and `business`. `KK_STRIPE_PRICE_STARTER` and `KK_STRIPE_PRICE_TEAM` hold the Pro and Business prices.
+`starter` and `team` were renamed to `pro` and `business` by migration `RenamePlansToProAndBusiness1791600000000`. For the short overlap with the previous release during a deploy, and for Stripe checkouts opened before it, the API still reads the old ids: `normalizePlan()` maps them on every plan lookup, Stripe webhooks rewrite them, `POST /billing/checkout` and `/billing/upgrade` accept them, and `KK_MARKETPLACE_PLAN_MAP` accepts `starter` and `team` as names for `pro` and `business`. `KK_STRIPE_PRICE_STARTER` and `KK_STRIPE_PRICE_TEAM` are read as the monthly Pro and Business prices when the new price variables are unset (see [Prices and annual billing](#prices-and-annual-billing)).
+
+## Prices and annual billing
+
+Pro and Business are sold monthly or yearly; a year costs ten months (two months free). Enterprise is sold by quote and has no Stripe price. The list prices shown in the dashboard are `PLAN_LIST_PRICES_CENTS` in `@krakenkey/shared`; Stripe holds the prices that are charged.
+
+The API reads one Stripe price per plan and interval (`src/billing/stripe-prices.ts`):
+
+| Variable | Price |
+|----------|-------|
+| `KK_STRIPE_PRICE_PRO_MONTHLY` | Pro, monthly. Falls back to `KK_STRIPE_PRICE_STARTER` when unset |
+| `KK_STRIPE_PRICE_PRO_YEARLY` | Pro, yearly |
+| `KK_STRIPE_PRICE_BUSINESS_MONTHLY` | Business, monthly. Falls back to `KK_STRIPE_PRICE_TEAM` when unset |
+| `KK_STRIPE_PRICE_BUSINESS_YEARLY` | Business, yearly |
+| `KK_STRIPE_PORTAL_CONFIGURATION_ID` | Optional. The billing portal configuration to open; Stripe's default configuration when unset |
+
+The fallbacks let a release deploy before the new variables are set: the monthly prices keep working, and yearly billing stays hidden (`GET /billing/plans` only lists intervals that have a price) until the yearly variables are set. A warning at startup names each fallback in use. The old prices also stay in the webhook's price lookup after the new variables are set, so subscriptions still on them keep mapping to Pro and Business, monthly.
+
+The billing portal configuration (Stripe dashboard, Settings, Billing, Customer portal) must let customers switch plans and list the four prices, for the monthly/yearly switch below.
 
 ## API Endpoints
+
+### List Purchasable Plans
+
+```
+GET /billing/plans
+```
+
+The plans and intervals that have a Stripe price on this installation (no price ids):
+
+```json
+{
+  "plans": [
+    { "plan": "pro", "intervals": ["month", "year"] },
+    { "plan": "business", "intervals": ["month", "year"] }
+  ]
+}
+```
 
 ### Create Checkout Session
 
@@ -57,22 +92,25 @@ POST /billing/checkout
 **Request:**
 ```json
 {
-  "plan": "pro"
+  "plan": "pro",
+  "interval": "year"
 }
 ```
+
+`interval` is `month` (default) or `year`.
 
 **Response:**
 ```json
 {
-  "url": "https://checkout.stripe.com/c/pay_..."
+  "sessionUrl": "https://checkout.stripe.com/c/pay_..."
 }
 ```
 
 Redirect the user to the returned URL. After payment, Stripe redirects back to KrakenKey and fires a `checkout.session.completed` webhook.
 
-Valid plan values: `pro`, `business`, `enterprise` (only plans with a Stripe price can be bought). The legacy `starter` and `team` are read as `pro` and `business`.
+Valid plan values: `pro`, `business`, `enterprise` (only plans with a Stripe price can be bought; a missing yearly price answers `400` `Yearly billing for the Pro plan is not available yet`). The legacy `starter` and `team` are read as `pro` and `business`.
 
-Checkout is only for starting a subscription. If the user, or the organization they bill for, already has a subscription that is `active`, `past_due`, `trialing` or `unpaid`, the request fails with `409 Conflict`; use `POST /billing/upgrade` or the billing portal instead. Repeating the same request within about a minute returns the same Stripe session.
+Checkout is only for starting a subscription. If the user, or the organization they bill for, already has a subscription that is `active`, `past_due`, `trialing` or `unpaid`, the request fails with `409 Conflict`; use `POST /billing/upgrade` or the billing portal instead. Repeating the same request (same plan and interval) within about a minute returns the same Stripe session.
 
 ### Get Current Subscription
 
@@ -83,37 +121,52 @@ GET /billing/subscription
 **Response:**
 ```json
 {
+  "id": "uuid",
   "plan": "business",
   "status": "active",
-  "stripeCustomerId": "cus_...",
-  "stripeSubscriptionId": "sub_...",
-  "currentPeriodStart": "2026-03-01T00:00:00.000Z",
-  "currentPeriodEnd": "2026-04-01T00:00:00.000Z"
+  "interval": "year",
+  "currentPeriodEnd": "2027-04-01T00:00:00.000Z",
+  "cancelAtPeriodEnd": false,
+  "organizationId": null,
+  "pastDueSince": null,
+  "graceEndsAt": null,
+  "source": "stripe",
+  "marketplaceStatus": null,
+  "createdAt": "2026-03-01T00:00:00.000Z"
 }
 ```
 
-Returns `null` for users on the free tier (no active subscription).
+Accounts without a subscription get the same shape with `plan: "free"`. `interval` is `month` or `year` for a Stripe subscription (rows from before annual billing read as `month` until their next Stripe event records it) and `null` on the free plan and for Microsoft Marketplace subscriptions.
 
 While a payment has failed, `status` is `past_due`, `pastDueSince` is the time of the first failure and `graceEndsAt` is when the paid limits stop applying unless the payment goes through. Both are `null` otherwise.
 
 ### Manage Subscription (Stripe Portal)
 
-Opens the Stripe Customer Portal where users can update payment methods, view invoices, and cancel.
+Opens the Stripe Customer Portal where users can update payment methods, view invoices, switch plans and cancel.
 
 ```
 POST /billing/portal
 ```
 
+**Request (optional):**
+```json
+{
+  "flow": "switch_interval"
+}
+```
+
+With `flow: "switch_interval"` the portal opens on confirming a move of the current plan to the other interval (monthly to yearly or back): Stripe shows the prorated amount, takes the payment and sends `customer.subscription.updated`, which records the new interval. `400` when the subscription isn't active, its price isn't one of the configured ones, or the other interval has no price.
+
 **Response:**
 ```json
 {
-  "url": "https://billing.stripe.com/p/session/..."
+  "portalUrl": "https://billing.stripe.com/p/session/..."
 }
 ```
 
 ### Preview Upgrade
 
-See the prorated cost before upgrading.
+See what an upgrade costs before confirming it.
 
 ```
 POST /billing/upgrade/preview
@@ -122,21 +175,25 @@ POST /billing/upgrade/preview
 **Request:**
 ```json
 {
-  "plan": "business"
+  "plan": "business",
+  "interval": "year"
 }
 ```
+
+`interval` defaults to the subscription's current interval.
 
 **Response:**
 ```json
 {
-  "currentPlan": "pro",
-  "newPlan": "business",
-  "proratedAmount": 4500,
-  "currency": "usd"
+  "immediateAmountCents": 120000,
+  "currency": "usd",
+  "targetPlan": "business",
+  "targetInterval": "year",
+  "currentPeriodEnd": "2027-04-01T00:00:00.000Z"
 }
 ```
 
-The `proratedAmount` is a flat fee difference (not day-based proration) in the smallest currency unit (cents for USD).
+Keeping the interval, the amount is the flat difference between the two prices (not day-based proration) and the billing date stays. Changing the interval starts a new billing period today: the amount is Stripe's prorated preview (`invoices.createPreview`: the new price less a credit for the unused time) and `currentPeriodEnd` is one new interval from now.
 
 ### Execute Upgrade
 
@@ -147,11 +204,12 @@ POST /billing/upgrade
 **Request:**
 ```json
 {
-  "plan": "business"
+  "plan": "business",
+  "interval": "year"
 }
 ```
 
-Immediately charges the prorated difference and switches the subscription to the new plan.
+Keeping the interval, it switches the price without proration and charges the flat difference at once. Changing the interval, it updates the subscription with `proration_behavior: always_invoice`, `billing_cycle_anchor: now` and `payment_behavior: error_if_incomplete`, so Stripe charges at once and nothing changes if the payment fails. The response includes the new `plan` and `interval`.
 
 ### Stripe Webhook
 
@@ -256,6 +314,7 @@ The error message names the owner, both subscription IDs and the organization, b
 | `id` | UUID | Primary key |
 | `plan` | varchar | Plan id (`free`, `pro`, `business`, `enterprise`) |
 | `status` | varchar | Subscription status |
+| `billingInterval` | varchar | `month` or `year` for a Stripe subscription; null otherwise and for rows from before annual billing |
 | `stripeCustomerId` | varchar | Stripe customer ID; null for an account that only bought through Microsoft |
 | `stripeSubscriptionId` | varchar | Stripe subscription ID (unique, indexed) |
 | `source` | varchar | `stripe` (default) or `marketplace` |

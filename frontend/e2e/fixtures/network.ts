@@ -34,6 +34,16 @@ const DEFAULT_GET_MOCKS: Array<[RegExp, unknown]> = [
   [/^\/endpoints\/[^/]+\/results\/latest$/, []],
   [/^\/connectors$/, []],
   [/^\/notifications\/channels$/, []],
+  // Billing page: monthly Stripe prices only, as before yearly ones exist
+  [
+    /^\/billing\/plans$/,
+    {
+      plans: [
+        { plan: 'pro', intervals: ['month'] },
+        { plan: 'business', intervals: ['month'] },
+      ],
+    },
+  ],
 ];
 
 const isLocal = (url: URL) =>

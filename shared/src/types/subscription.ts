@@ -12,6 +12,11 @@ export type SubscriptionStatus =
   | 'incomplete'
   | 'trialing';
 
+/** How often a paid plan is billed. A year costs ten months. */
+export type BillingInterval = 'month' | 'year';
+
+export const BILLING_INTERVALS: readonly BillingInterval[] = ['month', 'year'];
+
 /** Where a subscription is billed: directly by KrakenKey (Stripe) or by Microsoft Marketplace. */
 export type BillingSource = 'stripe' | 'marketplace';
 
@@ -40,11 +45,39 @@ export interface Subscription {
   source?: BillingSource;
   /** Microsoft's status for a Marketplace subscription, null for Stripe. */
   marketplaceStatus?: MarketplaceSaasStatus | null;
+  /**
+   * How often a Stripe subscription is billed; null on the free plan, for
+   * Marketplace subscriptions and for rows from before annual billing.
+   */
+  interval?: BillingInterval | null;
   createdAt: string;
 }
 
 export interface CreateCheckoutRequest {
   plan: SubscriptionPlan;
+  /** Defaults to `month`. */
+  interval?: BillingInterval;
+}
+
+export interface UpgradeRequest {
+  plan: SubscriptionPlan;
+  /** Defaults to the subscription's current interval. */
+  interval?: BillingInterval;
+}
+
+/** `switch_interval` opens the portal on a monthly/yearly switch to confirm. */
+export interface PortalRequest {
+  flow?: 'switch_interval';
+}
+
+/** A plan that can be bought here, and the intervals it has a price for. */
+export interface PurchasablePlan {
+  plan: SubscriptionPlan;
+  intervals: BillingInterval[];
+}
+
+export interface PlansResponse {
+  plans: PurchasablePlan[];
 }
 
 export interface CheckoutResponse {
@@ -59,11 +92,15 @@ export interface UpgradePreviewResponse {
   immediateAmountCents: number;
   currency: string;
   targetPlan: SubscriptionPlan;
+  /** The interval after the upgrade. Missing from older API versions. */
+  targetInterval?: BillingInterval;
+  /** When the next regular invoice is due after the upgrade. */
   currentPeriodEnd: string;
 }
 
 export interface UpgradeResponse {
   plan: SubscriptionPlan;
+  interval?: BillingInterval | null;
   status: SubscriptionStatus;
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;

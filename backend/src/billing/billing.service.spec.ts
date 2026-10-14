@@ -22,7 +22,7 @@ const mockStripe = {
   subscriptions: { retrieve: jest.fn(), update: jest.fn(), cancel: jest.fn() },
   prices: { retrieve: jest.fn() },
   invoiceItems: { create: jest.fn() },
-  invoices: { create: jest.fn(), pay: jest.fn() },
+  invoices: { create: jest.fn(), pay: jest.fn(), createPreview: jest.fn() },
   webhooks: { constructEvent: jest.fn() },
 };
 jest.mock('stripe', () => {
@@ -109,8 +109,12 @@ describe('BillingService', () => {
               const config: Record<string, string> = {
                 KK_STRIPE_SECRET_KEY: 'sk_test_123',
                 KK_STRIPE_WEBHOOK_SECRET: 'whsec_test',
+                // Monthly prices from the old variables (fallback), yearly
+                // prices from the new ones
                 KK_STRIPE_PRICE_STARTER: 'price_starter_123',
                 KK_STRIPE_PRICE_TEAM: 'price_team_456',
+                KK_STRIPE_PRICE_PRO_YEARLY: 'price_pro_year',
+                KK_STRIPE_PRICE_BUSINESS_YEARLY: 'price_business_year',
                 KK_APP_DOMAIN: 'app.krakenkey.io',
               };
               return config[key] ?? defaultValue ?? '';
@@ -311,7 +315,7 @@ describe('BillingService', () => {
         }),
         {
           idempotencyKey: expect.stringMatching(
-            new RegExp(`^checkout-user-${userId}-pro-\\d+$`),
+            new RegExp(`^checkout-user-${userId}-pro-month-\\d+$`),
           ),
         },
       );
@@ -1122,23 +1126,93 @@ describe('BillingService', () => {
       );
     });
 
-    it('returns preview for valid upgrade', async () => {
+    const monthlyPro = {
+      id: 'si_item1',
+      price: {
+        id: 'price_starter_123',
+        unit_amount: 2900,
+        recurring: { interval: 'month' },
+      },
+    };
+    const yearlyPro = {
+      id: 'si_item1',
+      price: {
+        id: 'price_pro_year',
+        unit_amount: 29000,
+        recurring: { interval: 'year' },
+      },
+    };
+
+    it('charges the flat difference when the interval stays', async () => {
       mockRepository.findOne.mockResolvedValue(mockSubscription);
-      mockStripe.prices.retrieve
-        .mockResolvedValueOnce({ unit_amount: 2900, currency: 'usd' })
-        .mockResolvedValueOnce({ unit_amount: 7900, currency: 'usd' });
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        items: { data: [monthlyPro] },
+      });
+      mockStripe.prices.retrieve.mockResolvedValue({
+        unit_amount: 14900,
+        currency: 'usd',
+      });
 
       const result = await service.previewUpgrade(userId, 'business');
       expect(result).toEqual({
-        immediateAmountCents: 5000,
+        immediateAmountCents: 12000,
         currency: 'usd',
         targetPlan: 'business',
+        targetInterval: 'month',
         currentPeriodEnd: mockSubscription.currentPeriodEnd!.toISOString(),
       });
-      expect(mockStripe.prices.retrieve).toHaveBeenCalledWith(
-        'price_starter_123',
-      );
       expect(mockStripe.prices.retrieve).toHaveBeenCalledWith('price_team_456');
+      expect(mockStripe.invoices.createPreview).not.toHaveBeenCalled();
+    });
+
+    it('keeps a yearly subscription yearly', async () => {
+      mockRepository.findOne.mockResolvedValue(mockSubscription);
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        items: { data: [yearlyPro] },
+      });
+      mockStripe.prices.retrieve.mockResolvedValue({
+        unit_amount: 149000,
+        currency: 'usd',
+      });
+
+      const result = await service.previewUpgrade(userId, 'business');
+      expect(result).toMatchObject({
+        immediateAmountCents: 120000,
+        targetInterval: 'year',
+      });
+      expect(mockStripe.prices.retrieve).toHaveBeenCalledWith(
+        'price_business_year',
+      );
+    });
+
+    it('asks Stripe for the prorated amount when the interval changes', async () => {
+      mockRepository.findOne.mockResolvedValue(mockSubscription);
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        items: { data: [monthlyPro] },
+      });
+      mockStripe.invoices.createPreview.mockResolvedValue({
+        amount_due: 147100,
+        currency: 'usd',
+      });
+
+      const result = await service.previewUpgrade(userId, 'business', 'year');
+      expect(result).toMatchObject({
+        immediateAmountCents: 147100,
+        targetPlan: 'business',
+        targetInterval: 'year',
+      });
+      expect(mockStripe.invoices.createPreview).toHaveBeenCalledWith({
+        customer: 'cus_test123',
+        subscription: 'sub_test123',
+        subscription_details: {
+          items: [{ id: 'si_item1', price: 'price_business_year' }],
+          proration_behavior: 'always_invoice',
+          billing_cycle_anchor: 'now',
+        },
+      });
+      // The new yearly period starts now
+      const end = new Date(result.currentPeriodEnd).getTime();
+      expect(end - Date.now()).toBeGreaterThan(360 * 86_400_000);
     });
   });
 
@@ -1159,11 +1233,23 @@ describe('BillingService', () => {
 
     it('upgrades subscription with flat difference', async () => {
       mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
-      mockStripe.prices.retrieve
-        .mockResolvedValueOnce({ unit_amount: 2900, currency: 'usd' })
-        .mockResolvedValueOnce({ unit_amount: 7900, currency: 'usd' });
+      mockStripe.prices.retrieve.mockResolvedValue({
+        unit_amount: 14900,
+        currency: 'usd',
+      });
       mockStripe.subscriptions.retrieve.mockResolvedValue({
-        items: { data: [{ id: 'si_item1' }] },
+        items: {
+          data: [
+            {
+              id: 'si_item1',
+              price: {
+                id: 'price_starter_123',
+                unit_amount: 2900,
+                recurring: { interval: 'month' },
+              },
+            },
+          ],
+        },
       });
       mockStripe.subscriptions.update.mockResolvedValue({});
       mockStripe.invoiceItems.create.mockResolvedValue({});
@@ -1176,6 +1262,7 @@ describe('BillingService', () => {
 
       const result = await service.upgradeSubscription(userId, 'business');
       expect(result.plan).toBe('business');
+      expect(result.interval).toBe('month');
       expect(mockStripe.subscriptions.update).toHaveBeenCalledWith(
         'sub_test123',
         {
@@ -1185,7 +1272,7 @@ describe('BillingService', () => {
       );
       expect(mockStripe.invoiceItems.create).toHaveBeenCalledWith({
         customer: 'cus_test123',
-        amount: 5000,
+        amount: 12000,
         currency: 'usd',
         description: 'Plan upgrade: Pro → Business',
       });
@@ -1195,8 +1282,224 @@ describe('BillingService', () => {
       });
       expect(mockStripe.invoices.pay).toHaveBeenCalledWith('inv_123');
       expect(mockRepository.save).toHaveBeenCalledWith(
-        expect.objectContaining({ plan: 'business' }),
+        expect.objectContaining({ plan: 'business', billingInterval: 'month' }),
       );
+    });
+
+    it('lets Stripe prorate and charge when moving to yearly', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        items: {
+          data: [
+            {
+              id: 'si_item1',
+              price: {
+                id: 'price_starter_123',
+                unit_amount: 2900,
+                recurring: { interval: 'month' },
+              },
+            },
+          ],
+        },
+      });
+      const periodEnd = Math.floor(Date.now() / 1000) + 365 * 86400;
+      mockStripe.subscriptions.update.mockResolvedValue({
+        current_period_end: periodEnd,
+        items: { data: [{ current_period_end: periodEnd }] },
+      });
+
+      const result = await service.upgradeSubscription(
+        userId,
+        'business',
+        'year',
+      );
+
+      expect(mockStripe.subscriptions.update).toHaveBeenCalledWith(
+        'sub_test123',
+        {
+          items: [{ id: 'si_item1', price: 'price_business_year' }],
+          proration_behavior: 'always_invoice',
+          billing_cycle_anchor: 'now',
+          payment_behavior: 'error_if_incomplete',
+        },
+      );
+      // No separate flat-difference charge on top of Stripe's invoice
+      expect(mockStripe.invoiceItems.create).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ plan: 'business', interval: 'year' });
+      expect(result.currentPeriodEnd).toBe(
+        new Date(periodEnd * 1000).toISOString(),
+      );
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ plan: 'business', billingInterval: 'year' }),
+      );
+    });
+
+    it('refuses an interval with no price', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        items: {
+          data: [{ id: 'si_item1', price: { id: 'price_starter_123' } }],
+        },
+      });
+      // Enterprise has no Stripe price at all
+      await expect(
+        service.upgradeSubscription(userId, 'enterprise', 'year'),
+      ).rejects.toThrow('The Enterprise plan is not available for purchase');
+    });
+  });
+
+  describe('annual billing', () => {
+    it('opens a yearly checkout with the yearly price', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        stripeSubscriptionId: null,
+        plan: 'free',
+      });
+      mockStripe.checkout.sessions.create.mockResolvedValue({
+        url: 'https://checkout.stripe.com/y',
+      });
+
+      await service.createCheckoutSession(
+        userId,
+        'test@example.com',
+        'business',
+        'year',
+      );
+
+      expect(mockStripe.checkout.sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          line_items: [{ price: 'price_business_year', quantity: 1 }],
+          metadata: expect.objectContaining({
+            plan: 'business',
+            interval: 'year',
+          }),
+        }),
+        {
+          idempotencyKey: expect.stringMatching(
+            new RegExp(`^checkout-user-${userId}-business-year-\\d+$`),
+          ),
+        },
+      );
+    });
+
+    it('stores the plan and interval from the paid price on checkout', async () => {
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        current_period_end: Math.floor(Date.now() / 1000) + 86400 * 365,
+        cancel_at_period_end: false,
+        cancel_at: null,
+        items: { data: [{ price: { id: 'price_pro_year' } }] },
+      });
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        stripeSubscriptionId: null,
+        plan: 'free',
+      });
+
+      await service.handleWebhookEvent({
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            metadata: { userId, plan: 'pro', interval: 'year' },
+            subscription: 'sub_new',
+            customer: 'cus_test123',
+          },
+        },
+      } as any);
+
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ plan: 'pro', billingInterval: 'year' }),
+      );
+    });
+
+    it('follows a switch to yearly made in the portal', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+
+      await service.handleWebhookEvent({
+        type: 'customer.subscription.updated',
+        data: {
+          object: {
+            id: 'sub_test123',
+            status: 'active',
+            items: {
+              data: [
+                {
+                  current_period_end:
+                    Math.floor(Date.now() / 1000) + 86400 * 365,
+                  price: { id: 'price_business_year' },
+                },
+              ],
+            },
+            cancel_at_period_end: false,
+            cancel_at: null,
+          },
+        },
+      } as any);
+
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          plan: 'business',
+          billingInterval: 'year',
+        }),
+      );
+    });
+
+    it('opens the portal on confirming the switch to yearly', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        items: {
+          data: [{ id: 'si_item1', price: { id: 'price_starter_123' } }],
+        },
+      });
+      mockStripe.billingPortal.sessions.create.mockResolvedValue({
+        url: 'https://billing.stripe.com/flow',
+      });
+
+      await expect(
+        service.createPortalSession(userId, 'switch_interval'),
+      ).resolves.toBe('https://billing.stripe.com/flow');
+      expect(mockStripe.billingPortal.sessions.create).toHaveBeenCalledWith({
+        customer: 'cus_test123',
+        return_url: 'https://app.krakenkey.io/dashboard/billing',
+        flow_data: {
+          type: 'subscription_update_confirm',
+          subscription_update_confirm: {
+            subscription: 'sub_test123',
+            items: [{ id: 'si_item1', price: 'price_pro_year', quantity: 1 }],
+          },
+          after_completion: {
+            type: 'redirect',
+            redirect: {
+              return_url: 'https://app.krakenkey.io/dashboard/billing',
+            },
+          },
+        },
+      });
+    });
+
+    it('switches yearly back to monthly', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        items: { data: [{ id: 'si_item1', price: { id: 'price_pro_year' } }] },
+      });
+      mockStripe.billingPortal.sessions.create.mockResolvedValue({ url: 'u' });
+
+      await service.createPortalSession(userId, 'switch_interval');
+      const params = mockStripe.billingPortal.sessions.create.mock.calls[0][0];
+      expect(params.flow_data.subscription_update_confirm.items[0].price).toBe(
+        'price_starter_123',
+      );
+    });
+
+    it('refuses a switch for an account without a subscription', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        stripeSubscriptionId: null,
+        plan: 'free',
+      });
+      await expect(
+        service.createPortalSession(userId, 'switch_interval'),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockStripe.billingPortal.sessions.create).not.toHaveBeenCalled();
     });
   });
 

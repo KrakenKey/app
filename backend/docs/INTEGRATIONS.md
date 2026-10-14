@@ -230,15 +230,18 @@ KrakenKey uses Stripe for subscription billing. The integration supports checkou
 |----------|-------------|
 | `KK_STRIPE_SECRET_KEY` | Stripe secret API key |
 | `KK_STRIPE_WEBHOOK_SECRET` | Webhook signing secret |
-| `KK_STRIPE_PRICE_STARTER` | Price ID for the Pro plan (the variable kept its old name) |
-| `KK_STRIPE_PRICE_TEAM` | Price ID for the Business plan (the variable kept its old name) |
+| `KK_STRIPE_PRICE_PRO_MONTHLY`, `KK_STRIPE_PRICE_PRO_YEARLY` | Pro prices, monthly and yearly |
+| `KK_STRIPE_PRICE_BUSINESS_MONTHLY`, `KK_STRIPE_PRICE_BUSINESS_YEARLY` | Business prices, monthly and yearly |
+| `KK_STRIPE_PRICE_STARTER`, `KK_STRIPE_PRICE_TEAM` | Old names for the monthly Pro and Business prices, read when the new monthly variables are unset |
+| `KK_STRIPE_PORTAL_CONFIGURATION_ID` | Optional billing portal configuration |
 
 ### Setting Up Stripe
 
 1. **Create Products and Prices** in the Stripe Dashboard
    - Create a product for each self-serve plan (Pro, Business)
-   - Create a recurring price for each product
+   - Create two recurring prices for each product, monthly and yearly (a year at ten times the monthly price)
    - Copy each Price ID (e.g. `price_1ABC...`) to the corresponding env var
+   - In the customer portal settings, let customers switch plans and add the four prices, so the dashboard's monthly/yearly switch works
 
 2. **Set Up Webhooks**
    - Go to Stripe Dashboard → Developers → Webhooks

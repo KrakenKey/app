@@ -92,3 +92,14 @@ export const PLAN_ORDER: Record<SubscriptionPlan, number> = {
   business: 2,
   enterprise: 3,
 };
+
+/**
+ * List prices of the self-serve plans in US cents, for display. Stripe holds
+ * the prices that are charged; a year costs ten months (two months free).
+ */
+export const PLAN_LIST_PRICES_CENTS: Readonly<
+  Partial<Record<SubscriptionPlan, { month: number; year: number }>>
+> = {
+  pro: { month: 2900, year: 29000 },
+  business: { month: 14900, year: 149000 },
+};

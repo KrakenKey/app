@@ -54,6 +54,7 @@ describe('BillingController', () => {
         userId,
         'test@example.com',
         'pro',
+        undefined,
       );
     });
   });
@@ -88,6 +89,41 @@ describe('BillingController', () => {
         graceEndsAt: null,
         source: 'stripe',
         marketplaceStatus: null,
+        interval: null,
+      });
+    });
+
+    it('reports the billing interval of a Stripe subscription', async () => {
+      mockBillingService.getSubscription.mockResolvedValue({
+        id: 's1',
+        plan: 'pro',
+        status: 'active',
+        stripeSubscriptionId: 'sub_1',
+        billingInterval: 'year',
+        source: 'stripe',
+      });
+      expect((await controller.getSubscription(mockReq)).interval).toBe('year');
+
+      mockBillingService.getSubscription.mockResolvedValue({
+        id: 's1',
+        plan: 'pro',
+        status: 'active',
+        stripeSubscriptionId: 'sub_1',
+        billingInterval: null,
+        source: 'stripe',
+      });
+      // Rows from before annual billing are monthly
+      expect((await controller.getSubscription(mockReq)).interval).toBe(
+        'month',
+      );
+    });
+
+    it('lists the purchasable plans', () => {
+      mockBillingService.purchasablePlans = jest
+        .fn()
+        .mockReturnValue([{ plan: 'pro', intervals: ['month', 'year'] }]);
+      expect(controller.plans()).toEqual({
+        plans: [{ plan: 'pro', intervals: ['month', 'year'] }],
       });
     });
 
@@ -151,7 +187,7 @@ describe('BillingController', () => {
         'https://billing.stripe.com/portal',
       );
 
-      const result = await controller.createPortal(mockReq);
+      const result = await controller.createPortal(mockReq, {});
       expect(result).toEqual({
         portalUrl: 'https://billing.stripe.com/portal',
       });
@@ -175,6 +211,7 @@ describe('BillingController', () => {
       expect(mockBillingService.previewUpgrade).toHaveBeenCalledWith(
         userId,
         'business',
+        undefined,
       );
     });
   });
@@ -194,6 +231,7 @@ describe('BillingController', () => {
       expect(mockBillingService.upgradeSubscription).toHaveBeenCalledWith(
         userId,
         'business',
+        undefined,
       );
     });
   });
