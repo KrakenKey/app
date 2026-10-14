@@ -71,6 +71,9 @@ describe('assertApiKeyScope', () => {
       [TlsController, 'getChain'],
       [TlsController, 'renew'],
       [TlsController, 'update'],
+      // Only to renew again after a failed renewal; TlsService refuses a
+      // new issuance without certs:issue
+      [TlsController, 'retry'],
       [AuthController, 'getProfile'],
     ])('can use %p.%s', (ctrl, method) => {
       expect(check(ctrl, method, user)).not.toThrow();
@@ -80,7 +83,6 @@ describe('assertApiKeyScope', () => {
       [TlsController, 'revoke'],
       [TlsController, 'remove'],
       [TlsController, 'create'],
-      [TlsController, 'retry'],
       [DomainsController, 'create'],
       [DomainsController, 'verify'],
       [DomainsController, 'remove'],

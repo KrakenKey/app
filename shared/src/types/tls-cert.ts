@@ -63,8 +63,20 @@ export interface TlsCert {
    */
   inFlightSince?: string | null;
   revocationReason: number | null;
-  /** Why the last issuance or renewal attempt failed; null otherwise. */
+  /**
+   * Why the last issuance or renewal attempt failed; null otherwise. For an
+   * `issued` certificate it is set together with `renewalFailedAt`.
+   */
   failureReason: string | null;
+  /**
+   * Set when the last renewal failed while the current certificate was
+   * still valid. The certificate stays `issued` with its PEM, chain and
+   * expiry, `failureReason` says why, and automatic renewal tries again
+   * once the certificate is due, not before `renewAfter`. Cleared when a renewal is
+   * requested again. Null otherwise. Optional because older API releases
+   * don't send it.
+   */
+  renewalFailedAt?: string | null;
   revokedAt: string | null;
   /**
    * The CA's suggested renewal window (ACME Renewal Information, RFC 9773)
@@ -84,6 +96,9 @@ export interface TlsCert {
    * is earlier. Connector-managed certificates use any ARI window and a
    * window of at least 30 days; other certificates use the plan window and
    * only an early-replacement ARI window (ariReplacementRequestedAt set).
+   * After a failed renewal (`renewalFailedAt`) it is never earlier than the
+   * next automatic attempt: 20 hours after the failure, or a quarter of the
+   * time left until expiry (at least 2 hours) when that is sooner.
    * Null when the certificate has no expiry yet (not issued) or is revoked.
    * For an `awaiting_csr` certificate it is the creation time: it is due now.
    */
@@ -139,6 +154,12 @@ export interface RenewTlsCertResponse {
   /** Current expiry (ISO 8601). Set when skipped as `not_due`. */
   expiresAt?: string;
   /**
+   * Set when skipped as `not_due` because the last renewal failed recently
+   * (`renewalFailedAt`): when `ifDue` renews again (ISO 8601). A request
+   * without `ifDue` renews right away.
+   */
+  retryAfter?: string;
+  /**
    * The renewal window in days: the plan's window, at least 30 for
    * connector-managed certificates. Set when skipped as `not_due`.
    */
@@ -153,9 +174,17 @@ export interface RenewTlsCertResponse {
   queued?: boolean;
 }
 
+/**
+ * Response of `POST /certs/tls/:id/retry`. A failed certificate is issued
+ * again (status `pending`). An `issued` certificate whose last renewal
+ * failed (`renewalFailedAt`) is renewed again (status `renewing`, with
+ * `queued` as for a renewal).
+ */
 export interface RetryTlsCertResponse {
   id: number;
   status: CertStatus;
+  /** Set when a renewal was retried; see RenewTlsCertResponse.queued. */
+  queued?: boolean;
 }
 
 export interface RevokeTlsCertRequest {

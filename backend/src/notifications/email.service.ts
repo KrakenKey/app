@@ -9,6 +9,7 @@ import {
   certRenewedTemplate,
   certExpiryWarningTemplate,
   certFailedTemplate,
+  certRenewalFailedTemplate,
   certRevokedTemplate,
   domainVerificationFailedTemplate,
   planLimitReachedTemplate,
@@ -33,6 +34,14 @@ export interface CertEmailContext {
   expiresAt?: Date;
   daysUntilExpiry?: number;
   errorMessage?: string;
+  /** Renewal failures: the CA asked for early replacement (ARI). */
+  replacementRequested?: boolean;
+  /**
+   * Renewal failures: who tries again, and the earliest time KrakenKey or
+   * the connector does. 'manual': auto-renewal is off.
+   */
+  retryBy?: 'krakenkey' | 'connector' | 'manual';
+  retryAt?: Date | null;
 }
 
 export interface DomainVerificationFailedContext {
@@ -272,6 +281,20 @@ export class EmailService {
       ctx.email,
       `Certificate issuance failed for ${ctx.commonName}`,
       certFailedTemplate(ctx, this.brand),
+    );
+  }
+
+  /**
+   * A renewal failed, but the current certificate (valid until
+   * ctx.expiresAt) stays in place. Same preference as sendCertFailed.
+   */
+  async sendCertRenewalFailed(ctx: CertEmailContext): Promise<void> {
+    if (!(await this.shouldSend(ctx.userId, NotificationType.CERT_FAILED)))
+      return;
+    await this.send(
+      ctx.email,
+      `Certificate renewal failed for ${ctx.commonName}`,
+      certRenewalFailedTemplate(ctx, this.brand),
     );
   }
 

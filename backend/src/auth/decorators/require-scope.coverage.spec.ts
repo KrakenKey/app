@@ -169,7 +169,7 @@ describe('@RequireScope coverage', () => {
       'POST /billing/upgrade/preview': 'account:read',
       'POST /certs/tls': 'certs:issue',
       'POST /certs/tls/:id/renew': 'certs:renew',
-      'POST /certs/tls/:id/retry': 'certs:issue',
+      'POST /certs/tls/:id/retry': 'certs:issue|certs:renew',
       'POST /certs/tls/:id/revoke': 'certs:revoke',
       'POST /connectors/report': 'certs:read',
       'POST /domains': 'domains:write',

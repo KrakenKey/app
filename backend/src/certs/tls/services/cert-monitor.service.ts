@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, LessThan, Repository } from 'typeorm';
+import { In, IsNull, LessThan, Not, Repository } from 'typeorm';
 import { TlsCrt } from '../entities/tls-crt.entity';
 import { TlsService } from '../tls.service';
 import { CertStatus } from '@krakenkey/shared';
@@ -10,7 +10,11 @@ import { MetricsService } from '../../../metrics/metrics.service';
 import { EmailService } from '../../../notifications/email.service';
 import { AlertsService } from '../../../notifications/channels/alerts.service';
 import { BillingService } from '../../../billing/billing.service';
-import { daysUntilExpiry, renewalWindowDays } from '../util/renewal-window';
+import {
+  daysUntilExpiry,
+  renewalRetryAt,
+  renewalWindowDays,
+} from '../util/renewal-window';
 import { User } from '../../../users/entities/user.entity';
 import { certDisplayName } from '../util/cert-names';
 import { ScheduledJobLock } from '../../../common/scheduling/scheduled-job-lock.service';
@@ -127,11 +131,7 @@ export class CertMonitorService {
           const user =
             cert.user ??
             (await this.userRepository.findOneBy({ id: cert.userId }));
-          const sixMonthsAgo = new Date();
-          sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-          lapsed =
-            !user?.autoRenewalConfirmedAt ||
-            user.autoRenewalConfirmedAt < sixMonthsAgo;
+          lapsed = confirmationLapsed(user);
           lapsedCache.set(cert.userId, lapsed);
           if (lapsed && user) {
             await this.maybeSendRenewalPausedReminder(user);
@@ -189,6 +189,83 @@ export class CertMonitorService {
     }
   }
 
+  /**
+   * Hourly: renews again the certificates whose last renewal failed (they
+   * stay issued with renewalFailedAt) once their retry time has passed (see
+   * renewalRetryAt: up to 20 hours after the failure, sooner near the
+   * deadline). The daily check above only runs at 6 AM, which alone would
+   * space retries a day or two apart and miss a deadline a few hours out.
+   *
+   * Only certificates KrakenKey renews on its own and that are due: inside
+   * the plan's renewal window, or past the start of a CA early-replacement
+   * window. A failed manual renewal before the window is not retried
+   * here; the daily check picks the certificate up once it is due. Free-plan
+   * owners need a current auto-renewal confirmation, as for the daily check.
+   * Runs once across API processes.
+   */
+  @Cron(CronExpression.EVERY_HOUR)
+  async retryFailedRenewals(now = new Date()): Promise<void> {
+    await this.jobLock.runOnce('renewal-retry', () => this.retryFailed(now), {
+      now,
+    });
+  }
+
+  private async retryFailed(now: Date): Promise<void> {
+    const failed = await this.tlsCrtRepository.find({
+      where: {
+        status: CertStatus.ISSUED,
+        autoRenew: true,
+        managedBy: IsNull(),
+        renewalFailedAt: Not(IsNull()),
+      },
+    });
+    const plans = new Map<string, SubscriptionPlan>();
+    const lapsed = new Map<string, boolean>();
+    for (const cert of failed) {
+      const retryAt = renewalRetryAt(cert);
+      if (!retryAt || retryAt > now || !cert.expiresAt) continue;
+
+      let plan = plans.get(cert.userId);
+      if (!plan) {
+        plan = (await this.billingService.resolveUserTier(
+          cert.userId,
+        )) as SubscriptionPlan;
+        plans.set(cert.userId, plan);
+      }
+      const inWindow =
+        daysUntilExpiry(cert.expiresAt, now.getTime()) <=
+        renewalWindowDays(plan);
+      const replacementOpen =
+        !!cert.ariReplacementRequestedAt &&
+        !!cert.ariWindowStart &&
+        cert.ariWindowStart <= now;
+      if (!inWindow && !replacementOpen) continue;
+
+      if (plan === 'free') {
+        let isLapsed = lapsed.get(cert.userId);
+        if (isLapsed === undefined) {
+          const user = await this.userRepository.findOneBy({
+            id: cert.userId,
+          });
+          isLapsed = confirmationLapsed(user, now);
+          lapsed.set(cert.userId, isLapsed);
+        }
+        if (isLapsed) continue;
+      }
+
+      try {
+        await this.tlsService.renewInternal(cert.id);
+        this.logger.log(
+          `Renewing certificate #${cert.id} again after a failed renewal`,
+        );
+      } catch (err) {
+        this.logger.error(
+          `Failed to queue the renewal retry for certificate #${cert.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
+
   private async maybeSendRenewalPausedReminder(user: User): Promise<void> {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -206,4 +283,13 @@ export class CertMonitorService {
     user.autoRenewalReminderSentAt = new Date();
     await this.userRepository.save(user);
   }
+}
+
+/** Free-plan auto-renewal needs a confirmation in the last six months. */
+function confirmationLapsed(user: User | null, now = new Date()): boolean {
+  const sixMonthsAgo = new Date(now);
+  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+  return (
+    !user?.autoRenewalConfirmedAt || user.autoRenewalConfirmedAt < sixMonthsAgo
+  );
 }

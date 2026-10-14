@@ -17,6 +17,8 @@ import {
   TlsService,
 } from './tls.service';
 import { RenewalQueueService } from './services/renewal-queue.service';
+import { CertIssuerConsumer } from './processors/tls-crt-issuer.processor';
+import { RENEWAL_RETRY_BACKOFF_MS } from './util/renewal-window';
 
 type Row = Record<string, any> & { id: number };
 type Where = Record<string, unknown> | Record<string, unknown>[];
@@ -128,12 +130,17 @@ class FakeCertTable {
     const where = typeof criteria === 'number' ? { id: criteria } : criteria;
     const hit = [...this.rows.values()].filter((r) => matches(r, where));
     for (const row of hit) {
+      // SQL expressions see the row as it was before this UPDATE
+      const before = { ...row };
       for (const [key, value] of Object.entries(changes)) {
         if (typeof value === 'function') {
-          // Only the `"col" + n` expressions TlsService uses
-          const m = /^"(\w+)" \+ (\d+)$/.exec((value as () => string)());
-          if (!m) throw new Error(`Fake table: unsupported SQL ${value}`);
-          row[key] = row[m[1]] + Number(m[2]);
+          // Only the `"col" + n` and `"col"` expressions TlsService uses
+          const sql = (value as () => string)();
+          const add = /^"(\w+)" \+ (\d+)$/.exec(sql);
+          const col = /^"(\w+)"$/.exec(sql);
+          if (add) row[key] = before[add[1]] + Number(add[2]);
+          else if (col) row[key] = before[col[1]];
+          else throw new Error(`Fake table: unsupported SQL ${sql}`);
         } else {
           row[key] = value;
         }
@@ -244,7 +251,11 @@ describe('Renewal claims and queue', () => {
   let csrUtil: { validateAndParse: jest.Mock; isAuthorized: jest.Mock };
   let acme: { revoke: jest.Mock };
   let alerts: { emit: jest.Mock };
-  let email: { sendCertRevoked: jest.Mock; sendCertFailed: jest.Mock };
+  let email: {
+    sendCertRevoked: jest.Mock;
+    sendCertFailed: jest.Mock;
+    sendCertRenewalFailed: jest.Mock;
+  };
   let metrics: { certIssuanceTotal: { inc: jest.Mock } };
 
   beforeEach(() => {
@@ -266,6 +277,7 @@ describe('Renewal claims and queue', () => {
     email = {
       sendCertRevoked: jest.fn().mockResolvedValue(undefined),
       sendCertFailed: jest.fn().mockResolvedValue(undefined),
+      sendCertRenewalFailed: jest.fn().mockResolvedValue(undefined),
     };
     metrics = { certIssuanceTotal: { inc: jest.fn() } };
     const billing = {
@@ -288,7 +300,12 @@ describe('Renewal claims and queue', () => {
       } as any,
       queue as any,
       csrUtil as any,
-      {} as any,
+      {
+        getChainInfo: (crt: string, chain: string | null) => ({
+          leafCert: { subject: crt },
+          fullChainPem: `${crt}\n${chain ?? ''}`,
+        }),
+      } as any,
       {
         findAllVerified: () => Promise.resolve([{ hostname: 'example.com' }]),
       } as any,
@@ -859,11 +876,37 @@ describe('Renewal claims and queue', () => {
       );
     });
 
-    it('puts a lost renewal back to issued while the old certificate is still there', async () => {
+    it('queues a lost renewal again, keeping its current certificate meanwhile', async () => {
       const id = table.insert({
         userId: 'u1',
         status: 'renewing',
         crtPem: 'old-leaf',
+        chainPem: 'old-chain',
+        expiresAt: later(20 * 86_400_000),
+        inFlightSince: old(),
+      }).id;
+
+      expect(await service.recoverStuck()).toEqual([id]);
+
+      expect(table.row(id)).toMatchObject({
+        status: 'renewing',
+        crtPem: 'old-leaf',
+        chainPem: 'old-chain',
+        recoveryCount: 1,
+      });
+      expect(queue.renewals()).toEqual([id]);
+      expect(email.sendCertRenewalFailed).not.toHaveBeenCalled();
+    });
+
+    it(`keeps a still valid certificate when a renewal is stopped after ${MAX_RECOVERIES} recoveries`, async () => {
+      const expiresAt = later(20 * 86_400_000);
+      const id = table.insert({
+        userId: 'u1',
+        status: 'renewing',
+        crtPem: 'old-leaf',
+        chainPem: 'old-chain',
+        expiresAt,
+        recoveryCount: MAX_RECOVERIES - 1,
         inFlightSince: old(),
       }).id;
 
@@ -872,11 +915,53 @@ describe('Renewal claims and queue', () => {
       expect(table.row(id)).toMatchObject({
         status: 'issued',
         crtPem: 'old-leaf',
+        chainPem: 'old-chain',
+        expiresAt,
         inFlightSince: null,
+        renewalFailedAt: expect.any(Date),
       });
+      expect(table.row(id).failureReason).toMatch(
+        new RegExp(`interrupted ${MAX_RECOVERIES} times.*renew`, 'i'),
+      );
+      expect(email.sendCertRenewalFailed).toHaveBeenCalledWith(
+        expect.objectContaining({ certId: id, expiresAt }),
+      );
+      expect(email.sendCertFailed).not.toHaveBeenCalled();
+      expect(alerts.emit).toHaveBeenCalledWith(
+        'u1',
+        'cert.failed',
+        expect.objectContaining({
+          details: expect.objectContaining({
+            renewal: true,
+            currentCertificateExpiresAt: expiresAt.toISOString(),
+          }),
+        }),
+      );
+      expect(queue.renewals()).toEqual([]);
     });
 
-    it('queues a lost renewal again once its old certificate was cleared, and starts it', async () => {
+    it('marks a stopped renewal failed when its certificate has expired', async () => {
+      const id = table.insert({
+        userId: 'u1',
+        status: 'renewing',
+        crtPem: 'old-leaf',
+        chainPem: 'old-chain',
+        expiresAt: new Date(Date.now() - 60_000),
+        recoveryCount: MAX_RECOVERIES - 1,
+        inFlightSince: old(),
+      }).id;
+
+      await service.recoverStuck();
+
+      expect(table.row(id)).toMatchObject({
+        status: 'failed',
+        crtPem: null,
+        chainPem: null,
+      });
+      expect(email.sendCertFailed).toHaveBeenCalledTimes(1);
+    });
+
+    it('queues a lost renewal again when an older release cleared its certificate, and starts it', async () => {
       const id = table.insert({
         userId: 'u1',
         status: 'renewing',
@@ -926,7 +1011,8 @@ describe('Renewal claims and queue', () => {
       expect(await service.recoverStuck(later(STUCK_AFTER_MS + 1000))).toEqual([
         id,
       ]);
-      expect(table.row(id).status).toBe('issued');
+      expect(table.row(id)).toMatchObject({ status: 'renewing', crtPem: 'x' });
+      expect(queue.renewals()).toEqual([id]);
     });
 
     it('does nothing when it cannot list BullMQ jobs', async () => {
@@ -937,7 +1023,7 @@ describe('Renewal claims and queue', () => {
 
     it('frees the slots so waiting renewals start', async () => {
       // Two renewals stuck from before (they hold both free-plan slots)
-      table.insert({ userId: 'u1', status: 'renewing', crtPem: 'a' });
+      const a = table.insert({ userId: 'u1', status: 'renewing', crtPem: 'a' });
       table.insert({ userId: 'u1', status: 'renewing', crtPem: 'b' });
       const waiting = issued();
       expect((await service.renew(waiting, 'u1')).queued).toBe(true);
@@ -947,15 +1033,15 @@ describe('Renewal claims and queue', () => {
       await new RenewalQueueService(service).startQueuedRenewals();
       expect(queue.renewals()).toEqual([]); // timed from now, not yet stale
 
+      // Both go back in the queue, behind the renewal that was waiting
       await service.recoverStuck(later(STUCK_AFTER_MS + 1000));
-      expect(queue.renewals()).toEqual([waiting]);
+      expect(queue.renewals()).toEqual([waiting, a.id]);
     });
 
     it("cleans up after a final job failure that couldn't record itself", async () => {
       const id = issued();
       await service.renewInternal(id);
       const token = queue.jobs[0].data.inFlightSince;
-      await table.update(id, { crtPem: null }); // the worker had started
       await new Promise((resolve) => setTimeout(resolve, 5)); // a new token
 
       await service.recoverAfterFailedJob(id, token! + 1, 'db down');
@@ -971,6 +1057,442 @@ describe('Renewal claims and queue', () => {
       await service.recoverAfterFailedJob(id, undefined, 'boom');
       expect(table.row(id).status).toBe('failed');
       expect(alerts.emit).not.toHaveBeenCalled();
+    });
+  });
+  describe('a renewal that fails while the certificate is still valid', () => {
+    const DAY = 86_400_000;
+    const inDays = (n: number) => new Date(Date.now() + n * DAY);
+    let worker: CertIssuerConsumer;
+    let acmeIssue: jest.Mock;
+
+    beforeEach(() => {
+      acmeIssue = jest.fn();
+      worker = new CertIssuerConsumer(
+        service,
+        { issue: acmeIssue } as any,
+        {} as any,
+        { formatPem: (pem: string) => pem } as any,
+        {
+          splitChain: (full: string) => ({
+            leaf: full.split('|')[0],
+            intermediates: full.split('|')[1] ?? null,
+          }),
+          getExpirationDate: () => inDays(90),
+        } as any,
+        metrics as any,
+        {
+          sendCertRenewed: jest.fn().mockResolvedValue(undefined),
+          sendCertFailed: email.sendCertFailed,
+          sendCertRenewalFailed: email.sendCertRenewalFailed,
+        } as any,
+        { findOneBy: jest.fn(), save: jest.fn() } as any,
+        alerts as any,
+      );
+    });
+
+    const PEM =
+      '-----BEGIN CERTIFICATE REQUEST-----x-----END CERTIFICATE REQUEST-----';
+    const current = (extra: Partial<Row> = {}) =>
+      table.insert({
+        userId: 'u1',
+        status: 'issued',
+        rawCsr: PEM,
+        crtPem: 'old-leaf',
+        chainPem: 'old-chain',
+        expiresAt: inDays(20),
+        ...extra,
+      }).id;
+
+    /** Runs the renewal job the queue holds for `id` to its final attempt. */
+    const runFinalAttempt = (id: number) => {
+      const job = queue.jobs.filter((j) => j.data.certId === id).pop()!;
+      queue.finish(id);
+      return worker
+        .process({
+          name: job.name,
+          data: job.data,
+          attemptsMade: 2,
+          opts: { attempts: 3 },
+        } as any)
+        .catch(() => undefined);
+    };
+
+    it('keeps the previous certificate readable, and a successful renewal replaces it', async () => {
+      const id = current();
+      const expiresAt = table.row(id).expiresAt;
+      await service.renewInternal(id);
+      // While the renewal runs, the current certificate stays readable
+      expect(table.row(id)).toMatchObject({
+        status: 'renewing',
+        crtPem: 'old-leaf',
+      });
+
+      acmeIssue.mockRejectedValue(new Error('DNS propagation timeout'));
+      await runFinalAttempt(id);
+
+      const cert = await service.findOne(id, 'u1');
+      expect(cert).toMatchObject({
+        status: 'issued',
+        crtPem: 'old-leaf',
+        chainPem: 'old-chain',
+        expiresAt,
+        failureReason: 'DNS propagation timeout',
+        renewalFailedAt: expect.any(Date),
+        inFlightSince: null,
+      });
+      await expect(service.getChain(id, 'u1')).resolves.toMatchObject({
+        fullChainPem: 'old-leaf\nold-chain',
+      });
+      expect(email.sendCertRenewalFailed).toHaveBeenCalledTimes(1);
+
+      // Renewing again clears the failure; success replaces the certificate
+      await service.renew(id, 'u1');
+      expect(table.row(id)).toMatchObject({
+        status: 'renewing',
+        renewalFailedAt: null,
+        failureReason: null,
+        crtPem: 'old-leaf',
+      });
+      acmeIssue.mockResolvedValue('new-leaf|new-chain');
+      await runFinalAttempt(id);
+      expect(table.row(id)).toMatchObject({
+        status: 'issued',
+        crtPem: 'new-leaf',
+        chainPem: 'new-chain',
+        renewalFailedAt: null,
+        failureReason: null,
+      });
+    });
+
+    it('a stale job cannot overwrite the result of the job that replaced it', async () => {
+      const id = current();
+      await service.renew(id, 'u1');
+      const stale = queue.jobs.find((j) => j.data.certId === id)!;
+
+      // The first job starts, then hangs at the CA
+      let failStale!: (err: Error) => void;
+      acmeIssue.mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            failStale = reject;
+          }),
+      );
+      const staleRun = worker
+        .process({
+          name: stale.name,
+          data: stale.data,
+          attemptsMade: 2,
+          opts: { attempts: 3 },
+        } as any)
+        .catch(() => undefined);
+      for (let i = 0; i < 50 && !acmeIssue.mock.calls.length; i++) {
+        await roundTrip();
+      }
+      expect(acmeIssue).toHaveBeenCalledTimes(1);
+
+      // BullMQ gives up on it; half an hour later the reaper queues the
+      // renewal again with a new token
+      queue.finish(id);
+      await new Promise((resolve) => setTimeout(resolve, 3));
+      await service.recoverStuck(new Date(Date.now() + STUCK_AFTER_MS + 1000));
+      expect(queue.renewals()).toEqual([id, id]);
+
+      // The replacement succeeds, then the stale job finally fails
+      acmeIssue.mockResolvedValueOnce('new-leaf|new-chain');
+      await runFinalAttempt(id);
+      failStale(new Error('late failure'));
+      await staleRun;
+
+      expect(table.row(id)).toMatchObject({
+        status: 'issued',
+        crtPem: 'new-leaf',
+        chainPem: 'new-chain',
+        renewalFailedAt: null,
+        failureReason: null,
+      });
+      expect(email.sendCertRenewalFailed).not.toHaveBeenCalled();
+      expect(email.sendCertFailed).not.toHaveBeenCalled();
+    });
+
+    it('a new certificate that fails still ends failed with no PEM', async () => {
+      const id = table.insert({
+        userId: 'u1',
+        status: 'failed',
+        rawCsr: PEM,
+      }).id;
+      await service.retry(id, 'u1');
+      acmeIssue.mockRejectedValue(new Error('DNS propagation timeout'));
+      const job = queue.jobs.find((j) => j.data.certId === id)!;
+      await worker
+        .process({
+          name: job.name,
+          data: job.data,
+          attemptsMade: 2,
+          opts: { attempts: 3 },
+        } as any)
+        .catch(() => undefined);
+
+      expect(table.row(id)).toMatchObject({
+        status: 'failed',
+        crtPem: null,
+        failureReason: 'DNS propagation timeout',
+      });
+      expect(table.row(id).renewalFailedAt ?? null).toBeNull();
+      expect(email.sendCertFailed).toHaveBeenCalledTimes(1);
+    });
+
+    it('retry renews again, without plan limits, and needs certs:renew on a scoped key', async () => {
+      const id = current({
+        renewalFailedAt: new Date(),
+        failureReason: 'CAA record forbids',
+      });
+      // Free plan, already at its total active limit: a renewal is still fine
+      for (let i = 0; i < 10; i++) issued();
+
+      await expect(
+        service.retry(id, 'u1', { issue: true, renew: false }),
+      ).rejects.toThrow('certs:renew');
+      expect(table.row(id).status).toBe('issued');
+
+      const res = await service.retry(id, 'u1', { issue: false, renew: true });
+      expect(res).toEqual({ id, status: 'renewing', queued: false });
+      expect(table.row(id)).toMatchObject({
+        status: 'renewing',
+        renewalFailedAt: null,
+        failureReason: null,
+        crtPem: 'old-leaf',
+      });
+      expect(queue.renewals()).toEqual([id]);
+    });
+
+    it('retry still refuses an issued certificate whose renewal did not fail', async () => {
+      const id = current();
+      await expect(service.retry(id, 'u1')).rejects.toThrow(/failed/);
+    });
+
+    it('a scoped key without certs:issue cannot issue a failed certificate again', async () => {
+      const id = table.insert({
+        userId: 'u1',
+        status: 'failed',
+        rawCsr: PEM,
+      }).id;
+      await expect(
+        service.retry(id, 'u1', { issue: false, renew: true }),
+      ).rejects.toThrow('certs:issue');
+    });
+
+    it('automatic renewal waits about a day before trying again', async () => {
+      const id = current({ renewalFailedAt: new Date(Date.now() - 60_000) });
+
+      await service.renewInternal(id);
+      expect(table.row(id).status).toBe('issued');
+      expect(queue.renewals()).toEqual([]);
+
+      await table.update(id, {
+        renewalFailedAt: new Date(Date.now() - RENEWAL_RETRY_BACKOFF_MS - 1),
+      });
+      await service.renewInternal(id);
+      expect(queue.renewals()).toEqual([id]);
+    });
+
+    it('renewAfter shows when it will be tried again', async () => {
+      const failedAt = new Date();
+      const id = current({ renewalFailedAt: failedAt, expiresAt: inDays(4) });
+
+      const res = await service.toResponse(table.row(id) as any);
+      expect(res.renewAfter).toBe(
+        new Date(failedAt.getTime() + RENEWAL_RETRY_BACKOFF_MS).toISOString(),
+      );
+    });
+
+    it('ifDue skips a recently failed renewal; a plain renew goes ahead', async () => {
+      const id = current({
+        renewalFailedAt: new Date(),
+        expiresAt: inDays(2),
+      });
+
+      const skipped = await service.renew(id, 'u1', { ifDue: true });
+      expect(skipped).toMatchObject({
+        skipped: true,
+        reason: 'not_due',
+        status: 'issued',
+        retryAfter: expect.any(String),
+      });
+      expect(queue.renewals()).toEqual([]);
+
+      const renewed = await service.renew(id, 'u1');
+      expect(renewed).toMatchObject({ skipped: false, status: 'renewing' });
+      expect(queue.renewals()).toEqual([id]);
+    });
+
+    it('a failed renewal with a new key puts back the CSR of the kept certificate', async () => {
+      const oldParsed = parsedFor(['example.com']);
+      const id = current({ rawCsr: PEM, parsedCsr: oldParsed });
+      csrUtil.validateAndParse.mockResolvedValue({
+        raw: `${PEM}new`,
+        parsed: parsedFor(['example.com']),
+        domains: ['example.com'],
+        publicKeyLength: 256,
+      });
+
+      await service.renew(id, 'u1', { csrPem: 'new key CSR' });
+      expect(table.row(id)).toMatchObject({
+        rawCsr: `${PEM}new`,
+        previousRawCsr: PEM,
+        previousParsedCsr: oldParsed,
+      });
+
+      acmeIssue.mockRejectedValue(new Error('CAA record forbids'));
+      await runFinalAttempt(id);
+      expect(table.row(id)).toMatchObject({
+        status: 'issued',
+        crtPem: 'old-leaf',
+        rawCsr: PEM,
+        parsedCsr: oldParsed,
+        previousRawCsr: null,
+        previousParsedCsr: null,
+      });
+      // The API never shows the saved copy
+      const res = await service.toResponse(table.row(id) as any);
+      expect(res).not.toHaveProperty('previousRawCsr');
+      expect(res).not.toHaveProperty('previousParsedCsr');
+
+      // Automatic renewal later uses the restored CSR, not the new key's
+      await table.update(id, {
+        renewalFailedAt: new Date(Date.now() - 2 * DAY),
+      });
+      await service.renewInternal(id);
+      expect(table.row(id)).toMatchObject({ status: 'renewing', rawCsr: PEM });
+    });
+
+    it('a successful renewal with a new key keeps the new CSR', async () => {
+      const id = current({
+        rawCsr: PEM,
+        parsedCsr: parsedFor(['example.com']),
+      });
+      csrUtil.validateAndParse.mockResolvedValue({
+        raw: `${PEM}new`,
+        parsed: parsedFor(['example.com']),
+        domains: ['example.com'],
+        publicKeyLength: 256,
+      });
+      await service.renew(id, 'u1', { csrPem: 'new key CSR' });
+      acmeIssue.mockResolvedValue('new-leaf|new-chain');
+      await runFinalAttempt(id);
+      expect(table.row(id)).toMatchObject({
+        crtPem: 'new-leaf',
+        rawCsr: `${PEM}new`,
+        previousRawCsr: null,
+      });
+    });
+
+    it('only a renewal a user asks for starts the recovery count over', async () => {
+      const id = current({
+        recoveryCount: 2,
+        renewalFailedAt: new Date(Date.now() - 2 * DAY),
+      });
+      await service.renewInternal(id);
+      expect(table.row(id)).toMatchObject({
+        status: 'renewing',
+        recoveryCount: 2,
+      });
+
+      const other = current({ recoveryCount: 2 });
+      await service.renew(other, 'u1');
+      expect(table.row(other).recoveryCount).toBe(0);
+    });
+
+    it('revoking clears a recorded renewal failure', async () => {
+      const id = current({
+        renewalFailedAt: new Date(),
+        failureReason: 'CAA record forbids',
+      });
+      await service.revoke(id, 'u1');
+      expect(table.row(id)).toMatchObject({
+        status: 'revoked',
+        renewalFailedAt: null,
+        failureReason: null,
+      });
+    });
+
+    it('retry checks the status before the scope', async () => {
+      const id = current();
+      await service.renew(id, 'u1');
+      await expect(
+        service.retry(id, 'u1', { issue: false, renew: true }),
+      ).rejects.toThrow(/must be in 'failed' state/);
+    });
+
+    it('ignores a failure left over from a renewal an older release finished', async () => {
+      const id = current({
+        renewalFailedAt: new Date(Date.now() - 60 * 60_000),
+        failureReason: 'CAA record forbids',
+        lastRenewedAt: new Date(),
+      });
+
+      const res = await service.toResponse(table.row(id) as any);
+      expect(res).toMatchObject({ renewalFailedAt: null, failureReason: null });
+      await expect(service.retry(id, 'u1')).rejects.toThrow(/'failed' state/);
+      await service.renewInternal(id);
+      expect(table.row(id).status).toBe('renewing');
+    });
+
+    it('emails a failed renewal at most once a day, and alerts every time', async () => {
+      const id = current();
+      const failOnce = async () => {
+        await table.update(id, { renewalFailedAt: null });
+        await service.renew(id, 'u1');
+        await new Promise((resolve) => setTimeout(resolve, 3)); // a new token
+        acmeIssue.mockRejectedValue(new Error('CAA record forbids'));
+        await runFinalAttempt(id);
+        expect(table.row(id).status).toBe('issued');
+      };
+
+      await failOnce();
+      await failOnce();
+      expect(email.sendCertRenewalFailed).toHaveBeenCalledTimes(1);
+      expect(
+        alerts.emit.mock.calls.filter((c) => c[1] === 'cert.failed'),
+      ).toHaveLength(2);
+      expect(table.row(id).renewalFailedEmailAt).toBeInstanceOf(Date);
+
+      // A day later the next failure is emailed again
+      await table.update(id, {
+        renewalFailedEmailAt: new Date(Date.now() - DAY - 60_000),
+      });
+      await failOnce();
+      expect(email.sendCertRenewalFailed).toHaveBeenCalledTimes(2);
+
+      // The API never shows the bookkeeping
+      const res = await service.toResponse(table.row(id) as any);
+      expect(res).not.toHaveProperty('renewalFailedEmailAt');
+    });
+
+    it('always emails a renewal that ended failed because the certificate expired', async () => {
+      const id = current({
+        expiresAt: new Date(Date.now() + 60 * 60_000),
+        renewalFailedEmailAt: new Date(),
+      });
+      await service.renew(id, 'u1');
+      // The certificate expires while the renewal runs
+      await table.update(id, { expiresAt: new Date(Date.now() - 60_000) });
+      acmeIssue.mockRejectedValue(new Error('CAA record forbids'));
+      await runFinalAttempt(id);
+
+      expect(table.row(id).status).toBe('failed');
+      expect(email.sendCertFailed).toHaveBeenCalledTimes(1);
+      expect(email.sendCertRenewalFailed).not.toHaveBeenCalled();
+    });
+
+    it('a connector timer sees the same wait through ifDue', async () => {
+      const id = current({
+        managedBy: 'connector',
+        renewalFailedAt: new Date(),
+        expiresAt: inDays(2),
+      });
+      await expect(
+        service.renew(id, 'u1', { ifDue: true }),
+      ).resolves.toMatchObject({ skipped: true, reason: 'not_due' });
     });
   });
 });

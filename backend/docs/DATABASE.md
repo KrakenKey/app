@@ -88,6 +88,8 @@ CREATE TABLE "tls_crt" (
   "id" SERIAL PRIMARY KEY,
   "rawCsr" VARCHAR,                               -- Original CSR PEM (hidden from API); NULL while awaiting_csr
   "parsedCsr" JSONB,                              -- Parsed CSR metadata; NULL while awaiting_csr
+  "previousRawCsr" VARCHAR,                       -- CSR of the current cert while a renewal with a new CSR runs (hidden from API)
+  "previousParsedCsr" JSONB,                      -- Parsed form of previousRawCsr
   "requestedNames" TEXT[],                        -- Names a pending certificate was created with; NULL for CSR requests
   "crtPem" TEXT,                                  -- Issued certificate PEM
   "status" VARCHAR DEFAULT 'pending',             -- awaiting_csr/pending/issuing/issued/failed/renewing/revoking/revoked
@@ -100,6 +102,9 @@ CREATE TABLE "tls_crt" (
   "inFlightSince" TIMESTAMP,                      -- When the current issuance/renewal job was queued; job fencing token
   "recoveryCount" INTEGER DEFAULT 0,              -- Times the current request was recovered after losing its job
   "revocationReason" INTEGER,                     -- RFC 5280 reason code (0-10)
+  "failureReason" TEXT,                           -- Why the last issuance or renewal failed
+  "renewalFailedAt" TIMESTAMP,                    -- Last renewal failed; the issued certificate was kept
+  "renewalFailedEmailAt" TIMESTAMP,               -- Last renewal-failed email (at most one per day; hidden from API)
   "revokedAt" TIMESTAMP,
   "managedBy" TEXT,                               -- 'connector' or NULL (KrakenKey renews)
   "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

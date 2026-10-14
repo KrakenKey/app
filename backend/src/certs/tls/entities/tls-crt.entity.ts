@@ -38,6 +38,21 @@ export class TlsCrt {
   parsedCsr: ParsedCsr | null;
 
   /**
+   * The CSR the current certificate was issued with, kept while a renewal
+   * with a new CSR (a new key) is in flight. If that renewal fails and the
+   * current certificate is kept, rawCsr/parsedCsr go back to these, so the
+   * stored CSR always matches the certificate's key. Cleared when the
+   * renewal finishes. Never returned by the API.
+   */
+  @ApiHideProperty()
+  @Column({ type: 'varchar', nullable: true })
+  previousRawCsr: string | null;
+
+  @ApiHideProperty()
+  @Column('jsonb', { nullable: true })
+  previousParsedCsr: ParsedCsr | null;
+
+  /**
    * The names a certificate was requested with when created without a CSR
    * (lowercased, deduplicated); a connector's CSR must have exactly these.
    * Null for certificates requested with a CSR.
@@ -97,9 +112,30 @@ export class TlsCrt {
   @Column({ type: 'int', nullable: true })
   revocationReason: number | null;
 
-  /** Why the last issuance or renewal attempt failed; cleared on the next attempt. */
+  /**
+   * Why the last issuance or renewal attempt failed; cleared when the
+   * certificate is issued, retried or renewed again.
+   */
   @Column({ type: 'text', nullable: true })
   failureReason: string | null;
+
+  /**
+   * When the last renewal failed while the current certificate was still
+   * valid. The certificate then stays 'issued' with its PEM, chain and
+   * expiry (failureReason says why), and automatic renewal waits until
+   * renewalRetryAt before trying again. Cleared when a renewal is
+   * requested again.
+   */
+  @Column({ type: 'timestamp', nullable: true })
+  renewalFailedAt: Date | null;
+
+  /**
+   * When the owner was last emailed about a failed renewal that kept the
+   * certificate; at most one such email per day. Never returned by the API.
+   */
+  @ApiHideProperty()
+  @Column({ type: 'timestamp', nullable: true })
+  renewalFailedEmailAt: Date | null;
 
   @Column({ type: 'timestamp', nullable: true })
   revokedAt: Date | null;

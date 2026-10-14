@@ -1,6 +1,6 @@
 import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job, UnrecoverableError } from 'bullmq';
-import { TlsService } from '../tls.service';
+import { TlsService, hasValidCert, restoredCsr } from '../tls.service';
 import { TlsCrt } from '../entities/tls-crt.entity';
 import { InternalUpdateTlsCrtDto } from '../dto/update-tls-crt.dto';
 import { CsrUtilService } from '../util/csr-util.service';
@@ -57,9 +57,16 @@ const PERMANENT_FAILURE_PATTERNS: RegExp[] = [
  *
  * Job retries are configured in tls.service.ts (3 attempts, exponential
  * backoff). Only transient errors (DNS propagation, network, ACME 5xx) are
- * retried; permanent errors abort retries via UnrecoverableError. The cert
- * is marked failed and the user emailed once — when no retry will follow —
- * instead of on every attempt.
+ * retried; permanent errors abort retries via UnrecoverableError. The
+ * failure is recorded and the user emailed once, when no retry will
+ * follow, instead of on every attempt.
+ *
+ * A renewal never removes the current certificate: it is replaced only when
+ * the new one is issued. If the renewal fails for good while the current
+ * certificate is still valid, the certificate goes back to 'issued' with
+ * renewalFailedAt and failureReason set, so it stays downloadable, keeps
+ * its expiry alerts, and is renewed again later. Only a new certificate,
+ * or a renewal whose certificate has already expired, ends 'failed'.
  */
 @Processor('tlsCertIssuance')
 export class CertIssuerConsumer extends WorkerHost {
@@ -90,7 +97,9 @@ export class CertIssuerConsumer extends WorkerHost {
    * 4. Parse expiration date from issued certificate
    * 5. Update database with certificate and status
    *
-   * On failure, updates status to 'failed' and job retries automatically.
+   * Transient failures are retried by BullMQ. On the final failure a new
+   * certificate goes to 'failed'; a renewal keeps the current certificate
+   * (see the class comment).
    */
   async process(job: Job<TlsCertJobPayload>): Promise<{ success: boolean }> {
     const isRenewal = job.name === 'tlsCertRenewal';
@@ -150,8 +159,7 @@ export class CertIssuerConsumer extends WorkerHost {
         `Processing certificate ${certId} with status: ${statusDuringProcess}`,
       );
 
-      // A renewal tells the CA which certificate it replaces (RFC 9773).
-      // csrRecord was loaded before crtPem was cleared above.
+      // A renewal tells the CA which certificate it replaces (RFC 9773)
       const replaces = isRenewal
         ? (csrRecord.ariCertId ?? safeAriCertId(csrRecord.crtPem))
         : null;
@@ -182,6 +190,12 @@ export class CertIssuerConsumer extends WorkerHost {
         ariExplanationUrl: null,
         ariNextCheckAt: null,
         ariReplacementRequestedAt: null,
+        // A new certificate: no failure to report any more
+        failureReason: null,
+        renewalFailedAt: null,
+        // The new CSR is now the certificate's
+        previousRawCsr: null,
+        previousParsedCsr: null,
         inFlightSince: null,
       };
       if (isRenewal) {
@@ -269,18 +283,37 @@ export class CertIssuerConsumer extends WorkerHost {
 
       // No retry will follow: record the failure and notify the owner once,
       // unless the certificate was taken over meanwhile (this job stalled
-      // and was replaced), so a stale failure can't overwrite a new result
-      const recorded = await this.tlsService.finishProcessing(
-        csrRecord.id,
-        guard,
-        {
-          crtPem: null,
-          chainPem: null,
-          failureReason: message.slice(0, MAX_FAILURE_REASON_LENGTH),
-          inFlightSince: null,
-        },
-        CertStatus.FAILED,
-      );
+      // and was replaced), so a stale failure can't overwrite a new result.
+      // A renewal keeps the current certificate while it is still valid.
+      const failureReason = message.slice(0, MAX_FAILURE_REASON_LENGTH);
+      const keepsCert = isRenewal && hasValidCert(csrRecord);
+      const failedAt = new Date();
+      const recorded = keepsCert
+        ? await this.tlsService.finishProcessing(
+            csrRecord.id,
+            guard,
+            {
+              failureReason,
+              renewalFailedAt: failedAt,
+              inFlightSince: null,
+              // Back to the CSR the kept certificate was issued with
+              ...restoredCsr(csrRecord),
+            },
+            CertStatus.ISSUED,
+          )
+        : await this.tlsService.finishProcessing(
+            csrRecord.id,
+            guard,
+            {
+              crtPem: null,
+              chainPem: null,
+              failureReason,
+              inFlightSince: null,
+              previousRawCsr: null,
+              previousParsedCsr: null,
+            },
+            CertStatus.FAILED,
+          );
       if (!recorded) {
         this.logger.warn(
           `Not recording ${job.name} failure for cert #${certId}: the certificate was taken over meanwhile`,
@@ -291,31 +324,19 @@ export class CertIssuerConsumer extends WorkerHost {
             ? err
             : new Error(message);
       }
+      if (keepsCert) {
+        this.logger.warn(
+          `Renewal of cert #${certId} failed; keeping the current certificate (valid until ${csrRecord.expiresAt!.toISOString()})`,
+        );
+      }
       this.metricsService.certIssuanceTotal.inc({ status: 'failed' });
       await this.startWaitingRenewals(csrRecord);
-      if (csrRecord.user) {
-        await this.emailService.sendCertFailed({
-          userId: csrRecord.user.id,
-          username: csrRecord.user.username,
-          email: csrRecord.user.email,
-          certId,
-          commonName,
-          errorMessage: message,
-        });
-      }
-      await this.alerts.emit(
-        csrRecord.user?.id ?? csrRecord.userId,
-        'cert.failed',
-        {
-          subject: commonName,
-          resource: { type: 'certificate', id: certId },
-          details: {
-            certificateId: certId,
-            renewal: isRenewal,
-            error: message.slice(0, MAX_FAILURE_REASON_LENGTH),
-          },
-        },
-      );
+      await this.tlsService.notifyFailure(csrRecord, {
+        renewal: isRenewal,
+        error: failureReason,
+        currentExpiresAt: keepsCert ? csrRecord.expiresAt : null,
+        failedAt,
+      });
 
       if (permanent) {
         // UnrecoverableError stops BullMQ from consuming remaining attempts.

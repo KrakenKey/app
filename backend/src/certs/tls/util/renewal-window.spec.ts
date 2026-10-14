@@ -1,6 +1,10 @@
 import {
+  RENEWAL_RETRY_BACKOFF_MS,
+  RENEWAL_RETRY_MIN_BACKOFF_MS,
   certRenewalWindowDays,
+  hasRenewalFailure,
   renewAfter,
+  renewalRetryAt,
   renewalWindowDays,
 } from './renewal-window';
 
@@ -168,6 +172,92 @@ describe('renewal window', () => {
     it('is null for a revoked certificate', () => {
       expect(renewAfter({ status: 'revoked', expiresAt }, 30)).toBeNull();
       expect(renewAfter({ status: 'revoking', expiresAt }, 30)).toBeNull();
+    });
+
+    it('waits the retry backoff after a failed renewal', () => {
+      const failedAt = daysBefore(10);
+      expect(
+        renewAfter(
+          { status: 'issued', expiresAt, renewalFailedAt: failedAt },
+          30,
+        ),
+      ).toEqual(new Date(failedAt.getTime() + RENEWAL_RETRY_BACKOFF_MS));
+    });
+
+    it('ignores an old failure once the window is later anyway', () => {
+      expect(
+        renewAfter(
+          { status: 'issued', expiresAt, renewalFailedAt: daysBefore(60) },
+          30,
+        ),
+      ).toEqual(daysBefore(30));
+    });
+  });
+
+  describe('renewalRetryAt', () => {
+    const HOUR = 3_600_000;
+    const failedAt = new Date('2026-10-14T06:03:00.000Z');
+    const after = (hoursLeft: number, extra = {}) =>
+      (renewalRetryAt({
+        renewalFailedAt: failedAt.toISOString(),
+        expiresAt: new Date(failedAt.getTime() + hoursLeft * HOUR),
+        ...extra,
+      })!.getTime() -
+        failedAt.getTime()) /
+      HOUR;
+
+    it('is null when the last renewal did not fail', () => {
+      expect(renewalRetryAt({ renewalFailedAt: null })).toBeNull();
+    });
+
+    it('waits 20 hours with plenty of time left', () => {
+      expect(after(30 * 24)).toBe(20);
+      expect(after(80)).toBe(20);
+    });
+
+    it('waits a quarter of the time left near the deadline', () => {
+      expect(after(24)).toBe(6);
+      expect(after(12)).toBe(3);
+    });
+
+    it('waits at least 2 hours, even past the deadline', () => {
+      expect(after(8)).toBe(2);
+      expect(after(1)).toBe(2);
+      expect(after(-5)).toBe(2);
+      expect(RENEWAL_RETRY_MIN_BACKOFF_MS).toBe(2 * HOUR);
+    });
+
+    it('uses the end of an early-replacement window when it comes first', () => {
+      const windowEnd = new Date(failedAt.getTime() + 24 * HOUR);
+      expect(
+        after(30 * 24, {
+          ariReplacementRequestedAt: failedAt,
+          ariWindowEnd: windowEnd,
+        }),
+      ).toBe(6);
+      // A routine window (no replacement requested) doesn't count
+      expect(after(30 * 24, { ariWindowEnd: windowEnd })).toBe(20);
+    });
+
+    it('ignores a failure older than the last successful renewal', () => {
+      expect(
+        hasRenewalFailure({
+          renewalFailedAt: failedAt,
+          lastRenewedAt: new Date(failedAt.getTime() + HOUR),
+        }),
+      ).toBe(false);
+      expect(
+        renewalRetryAt({
+          renewalFailedAt: failedAt,
+          lastRenewedAt: new Date(failedAt.getTime() + HOUR),
+        }),
+      ).toBeNull();
+      expect(
+        hasRenewalFailure({
+          renewalFailedAt: failedAt,
+          lastRenewedAt: new Date(failedAt.getTime() - HOUR),
+        }),
+      ).toBe(true);
     });
   });
 });

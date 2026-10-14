@@ -356,20 +356,55 @@ export class TlsController {
   }
 
   @Post(':id/retry')
-  @RequireScope('certs:issue')
-  @ApiOperation({ summary: 'Retry a failed certificate issuance' })
+  @RequireScope('certs:issue', 'certs:renew')
+  @ApiOperation({
+    summary: 'Retry a failed certificate issuance or renewal',
+    description:
+      "A 'failed' certificate is issued again with its stored CSR " +
+      "(status 'pending'; plan limits apply; needs certs:issue on a scoped key). " +
+      "An 'issued' certificate whose last renewal failed (renewalFailedAt set) " +
+      "is renewed again, like POST /certs/tls/:id/renew (status 'renewing', " +
+      'queued as for a renewal; needs certs:renew on a scoped key).',
+  })
   @ApiParam({ name: 'id', description: 'Certificate ID' })
-  @ApiResponse({ status: 200, description: 'Certificate retry initiated' })
-  @ApiResponse({ status: 400, description: 'Certificate not in failed state' })
+  @ApiResponse({ status: 201, description: 'Certificate retry initiated' })
+  @ApiResponse({
+    status: 202,
+    description:
+      "Renewal retry accepted but waiting for a free slot under the plan's " +
+      "concurrent pending limit (queued: true, status 'renewing')",
+  })
+  @ApiResponse({
+    status: 400,
+    description:
+      "Certificate neither 'failed' nor 'issued' with a failed renewal, or missing CSR data",
+  })
   @ApiResponse({
     status: 403,
-    description: 'Viewers cannot retry certificates',
+    description:
+      'Viewers cannot retry certificates, or the API key lacks the scope for this retry',
   })
   @ApiResponse({ status: 404, description: 'Certificate not found' })
+  @ApiResponse({
+    status: 409,
+    description: 'A renewal of the certificate started meanwhile',
+  })
   @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.EXPENSIVE)
-  async retry(@Request() req: RequestWithUser, @Param('id') id: string) {
+  async retry(
+    @Request() req: RequestWithUser,
+    @Param('id') id: string,
+    @Res({ passthrough: true }) res?: Response,
+  ) {
     await this.checkKeyAccess(req, +id);
-    return this.tlsService.retry(+id, req.user.userId);
+    // A scoped key needs certs:issue to issue again, certs:renew to renew
+    const scopes = req.user.apiKey?.scopes;
+    const result = await this.tlsService.retry(+id, req.user.userId, {
+      issue: !scopes || scopes.includes('certs:issue'),
+      renew: !scopes || scopes.includes('certs:renew'),
+    });
+    // A renewal waiting for a slot is accepted but not started, as for renew
+    if (result.queued) res?.status(HttpStatus.ACCEPTED);
+    return result;
   }
 }

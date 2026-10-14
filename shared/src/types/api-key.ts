@@ -23,7 +23,8 @@ export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];
 export const API_KEY_SCOPE_DESCRIPTIONS: Record<ApiKeyScope, string> = {
   'certs:read': 'List and show certificates, download the chain',
   'certs:issue': 'Submit CSRs and retry failed issuance',
-  'certs:renew': 'Renew certificates and change auto-renew',
+  'certs:renew':
+    'Renew certificates, retry failed renewals and change auto-renew',
   'certs:revoke': 'Revoke and delete certificates',
   'domains:read': 'List and show domains',
   'domains:write': 'Add, verify and delete domains',

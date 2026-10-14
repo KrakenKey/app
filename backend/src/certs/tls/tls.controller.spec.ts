@@ -299,7 +299,32 @@ describe('TlsController', () => {
         id: 1,
         status: 'pending',
       });
-      expect(mockService.retry).toHaveBeenCalledWith(1, userId);
+      expect(mockService.retry).toHaveBeenCalledWith(1, userId, {
+        issue: true,
+        renew: true,
+      });
+    });
+
+    it('passes on what a scoped key may retry', async () => {
+      mockService.retry.mockReturnValue({ id: 1, status: 'renewing' });
+      const req = {
+        ...mockReq,
+        user: {
+          ...mockReq.user,
+          apiKey: {
+            id: 'k1',
+            scopes: ['certs:read', 'certs:renew'],
+            allowedDomainIds: null,
+            allowedCertIds: null,
+          },
+        },
+      };
+
+      await controller.retry(req as any, '1');
+      expect(mockService.retry).toHaveBeenCalledWith(1, userId, {
+        issue: false,
+        renew: true,
+      });
     });
   });
 });

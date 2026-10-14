@@ -380,6 +380,58 @@ export function certFailedTemplate(
   );
 }
 
+/**
+ * A renewal failed for good, but the current certificate hasn't expired
+ * and stays in place (ctx.expiresAt is its expiry).
+ */
+export function certRenewalFailedTemplate(
+  ctx: CertEmailContext,
+  brand: EmailBranding,
+): EmailContent {
+  const until = ctx.expiresAt ? formatDate(ctx.expiresAt) : null;
+  const after = ctx.retryAt ? formatDate(ctx.retryAt) : null;
+  const current = ctx.replacementRequested
+    ? `Your current certificate stays in place${until ? ` until it expires on ${until}` : ''}, but the CA has asked for it to be replaced early, so renew it as soon as you can.`
+    : `Your current certificate stays in place${until ? ` and is valid until ${until}` : ''}, so nothing you have deployed changes.`;
+  const next =
+    ctx.retryBy === 'connector'
+      ? `Your connector renews it again on its next check${after ? ` after ${after}` : ''}.`
+      : ctx.retryBy === 'krakenkey'
+        ? `KrakenKey also renews it again on its own once it is due for renewal${after ? `, not before ${after}` : ''}.`
+        : 'Auto-renewal is off for this certificate, so renew it again yourself.';
+  return render(
+    {
+      tone: 'danger',
+      label: 'Renewal failed',
+      title: `We couldn't renew the certificate for ${ctx.commonName}`,
+      preheader: until
+        ? `Your current certificate stays in place until ${until}. Fix the cause, then renew again.`
+        : 'Your current certificate stays in place. Fix the cause, then renew again.',
+      blocks: [
+        para(
+          `Hi ${ctx.username}, the renewal of your TLS certificate failed. ${current}`,
+        ),
+        details(
+          ['Domain', ctx.commonName, true],
+          ['Certificate ID', String(ctx.certId), true],
+          ['Valid until', until ?? undefined],
+          ['Error', ctx.errorMessage, true],
+        ),
+        para(
+          `Check that the \`_acme-challenge\` CNAME record for this domain is still in place, then renew from the dashboard or run \`krakenkey cert renew ${ctx.certId}\`. ${next}`,
+        ),
+        button(
+          'Renew from dashboard',
+          `${brand.appUrl}/dashboard/certificates`,
+        ),
+      ],
+      reason: CERT_REASON,
+      manageable: true,
+    },
+    brand,
+  );
+}
+
 export function certRevokedTemplate(
   ctx: CertEmailContext,
   brand: EmailBranding,
