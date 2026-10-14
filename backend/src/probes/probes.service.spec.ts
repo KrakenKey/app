@@ -10,6 +10,9 @@ import { EndpointProbeAssignment } from '../endpoints/entities/endpoint-probe-as
 import { AlertsService } from '../notifications/channels/alerts.service';
 import { scanFailureReason } from './scan-failure';
 import { BillingService } from '../billing/billing.service';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
+import { MAX_REPORT_RESULTS, SubmitReportDto } from './dto/submit-report.dto';
 
 describe('ProbesService', () => {
   let service: ProbesService;
@@ -68,11 +71,31 @@ describe('ProbesService', () => {
       }),
     };
 
+    // findOne stands for "the previous result": the DISTINCT ON query
+    // returns it for every endpoint asked about
     scanResultRepo = {
       findOne: jest.fn().mockResolvedValue(null),
       create: jest.fn((dto) => ({ id: 'sr-1', ...dto })),
       save: jest.fn((entities) => Promise.resolve(entities)),
     };
+    scanResultRepo.createQueryBuilder = jest.fn(() => {
+      let ids: string[] = [];
+      const qb = {
+        distinctOn: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn((_sql: string, params: { endpointIds: string[] }) => {
+          ids = params.endpointIds;
+          return qb;
+        }),
+        orderBy: jest.fn().mockReturnThis(),
+        addOrderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn(async () => {
+          const row = await scanResultRepo.findOne();
+          return row ? ids.map((endpointId) => ({ ...row, endpointId })) : [];
+        }),
+      };
+      return qb;
+    });
 
     endpointRepo = {
       findOne: jest.fn(),
@@ -85,7 +108,8 @@ describe('ProbesService', () => {
         andWhere: jest.fn().mockReturnThis(),
         getRawMany: jest.fn().mockResolvedValue([]),
         getMany: jest.fn().mockResolvedValue([]),
-        getOne: jest.fn().mockResolvedValue(null),
+        // Connected matching goes through the probe assignment join
+        getOne: jest.fn(() => endpointRepo.findOne()),
       }),
     };
 
@@ -257,10 +281,13 @@ describe('ProbesService', () => {
 
         await service.submitReport(failing, connectedUser);
 
-        expect(scanResultRepo.findOne).toHaveBeenCalledWith({
-          where: { endpointId: 'ep-1', probeId: 'probe-1' },
-          order: { scannedAt: 'DESC' },
+        // The previous result is the last one received from this probe
+        const qb = scanResultRepo.createQueryBuilder.mock.results[0].value;
+        expect(qb.distinctOn).toHaveBeenCalledWith(['r.endpointId']);
+        expect(qb.where).toHaveBeenCalledWith('r.probeId = :probeId', {
+          probeId: 'probe-1',
         });
+        expect(qb.addOrderBy).toHaveBeenCalledWith('r.createdAt', 'DESC');
         expect(alerts.emit).toHaveBeenCalledTimes(1);
         expect(alerts.emit).toHaveBeenCalledWith(
           'user-123',
@@ -384,6 +411,68 @@ describe('ProbesService', () => {
         await expect(service.submitReport(dto, connectedUser)).resolves.toEqual(
           { accepted: 1, tooSoon: 0 },
         );
+      });
+
+      it('counts at most one result per endpoint in a report', async () => {
+        const res = await service.submitReport(
+          { ...dto, results: [dto.results[0], dto.results[0]] },
+          connectedUser,
+        );
+        expect(res).toEqual({ accepted: 1, tooSoon: 1 });
+        expect(scanResultRepo.save.mock.calls[0][0]).toHaveLength(1);
+      });
+
+      it('ignores results for endpoints not assigned to the connected probe', async () => {
+        endpointRepo.findOne.mockResolvedValue(null);
+        const res = await service.submitReport(dto, connectedUser);
+        expect(res).toEqual({ accepted: 0, tooSoon: 0 });
+        const qb = endpointRepo.createQueryBuilder();
+        expect(qb.innerJoin).toHaveBeenCalledWith(
+          expect.anything(),
+          'epa',
+          'epa."endpointId" = e.id',
+        );
+        expect(qb.andWhere).toHaveBeenCalledWith('epa."probeId" = :probeId', {
+          probeId: 'probe-1',
+        });
+      });
+
+      it('never stores a scan time later than when the result arrived', async () => {
+        const future = new Date(Date.now() + 86_400_000).toISOString();
+        await service.submitReport(
+          { ...dto, timestamp: future },
+          connectedUser,
+        );
+        const saved = scanResultRepo.save.mock.calls[0][0][0];
+        expect(saved.scannedAt.getTime()).toBeLessThanOrEqual(Date.now());
+      });
+
+      it('ties hosted results to the region the probe registered with', async () => {
+        probeRepo.findOne.mockResolvedValue({
+          ...mockProbe,
+          mode: 'hosted',
+          region: 'eu-west-1',
+          userId: null,
+        });
+        const qb = endpointRepo.createQueryBuilder();
+        qb.getMany.mockResolvedValue([]);
+        await service.submitReport(
+          { ...dto, mode: 'hosted', region: 'us-east-1' },
+          serviceKeyUser,
+        );
+        expect(qb.andWhere).toHaveBeenCalledWith('ehr.region = :region', {
+          region: 'eu-west-1',
+        });
+      });
+
+      it('takes no hosted results from a probe registered as connected', async () => {
+        probeRepo.findOne.mockResolvedValue({ ...mockProbe, userId: null });
+        const res = await service.submitReport(
+          { ...dto, mode: 'hosted' },
+          serviceKeyUser,
+        );
+        expect(res).toEqual({ accepted: 0, tooSoon: 0 });
+        expect(scanResultRepo.save).not.toHaveBeenCalled();
       });
 
       it('uses the hosted interval for hosted results', async () => {
@@ -534,6 +623,45 @@ describe('ProbesService', () => {
       expect(billing.resolveTiers).toHaveBeenCalledTimes(1);
     });
 
+    it('returns when each endpoint was last scanned by this probe, and scanNow only until it is', async () => {
+      probeRepo.findOne.mockResolvedValue({
+        ...mockProbe,
+        mode: 'hosted',
+        userId: null,
+      });
+      const lastScan = new Date(Date.now() - 10 * 60_000);
+      scanResultRepo.findOne.mockResolvedValue({ createdAt: lastScan });
+      const row = (id: string, requestedMinutesAgo: number | null) => ({
+        id,
+        host: `${id}.example.com`,
+        port: 443,
+        sni: `${id}.example.com`,
+        userId: 'u1',
+        lastScanRequestedAt:
+          requestedMinutesAgo === null
+            ? null
+            : new Date(Date.now() - requestedMinutesAgo * 60_000),
+      });
+      endpointRepo.createQueryBuilder().getRawMany.mockResolvedValue([
+        row('a', null), // never requested
+        row('b', 2), // requested after the last scan
+        row('c', 20), // requested before the last scan
+        row('d', 9), // after the last scan, but more than 5 minutes ago
+      ]);
+
+      const result = await service.getConfig('probe-1', serviceKeyUser);
+
+      for (const e of result.endpoints) {
+        expect(e.lastScanAt).toBe(lastScan.toISOString());
+      }
+      expect(result.endpoints.map((e) => !!e.scanNow)).toEqual([
+        false,
+        true,
+        false,
+        false,
+      ]);
+    });
+
     it('answers 60m with no endpoints', async () => {
       probeRepo.findOne.mockResolvedValue({
         ...mockProbe,
@@ -583,5 +711,24 @@ describe('scanFailureReason', () => {
     expect(
       scanFailureReason({ connectionSuccess: true, certTrusted: false }),
     ).toBe('Certificate chain is not trusted');
+  });
+});
+
+describe('SubmitReportDto', () => {
+  it(`takes at most ${MAX_REPORT_RESULTS} results`, async () => {
+    const result = {
+      endpoint: { host: 'example.com', port: 443 },
+      connection: { success: true },
+    };
+    const body = (n: number) =>
+      plainToInstance(SubmitReportDto, {
+        probeId: 'p',
+        mode: 'connected',
+        timestamp: new Date().toISOString(),
+        results: Array.from({ length: n }, () => result),
+      });
+    expect(await validate(body(MAX_REPORT_RESULTS))).toHaveLength(0);
+    const errors = await validate(body(MAX_REPORT_RESULTS + 1));
+    expect(errors.map((e) => e.property)).toContain('results');
   });
 });

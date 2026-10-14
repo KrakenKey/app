@@ -32,11 +32,14 @@ const DEFAULT_INTERVAL_MINUTES = 60;
 
 /**
  * Slack for a result that arrives a little early (probe timers, network):
- * 10% of the interval, at least 10 seconds.
+ * 10% of the interval, at least 20 seconds.
  */
 export function earlyResultSlackMs(intervalMinutes: number): number {
-  return Math.max(intervalMinutes * 6_000, 10_000);
+  return Math.max(intervalMinutes * 6_000, 20_000);
 }
+
+/** How long an on-demand scan request keeps `scanNow` set for probes. */
+const SCAN_NOW_WINDOW_MS = 5 * 60 * 1000;
 
 /**
  * True when a result arrives too soon after the previous one from the same
@@ -67,8 +70,27 @@ export interface HostedEndpoint {
    * hosted probe, the shortest accepted interval for a connected probe.
    */
   interval: string;
+  /**
+   * When the API received the last accepted result from this probe for
+   * this endpoint (ISO 8601), so a restarted probe keeps its schedule.
+   */
+  lastScanAt?: string;
+  /**
+   * A scan was requested (POST /endpoints/:id/scan) in the last 5 minutes
+   * and this probe hasn't delivered a result since.
+   */
   scanNow?: boolean;
 }
+
+/** Endpoint rows the config is built from, before the plan interval. */
+type ConfigRow = {
+  id: string;
+  host: string;
+  port: number;
+  sni: string;
+  userId: string;
+  lastScanRequestedAt: Date | null;
+};
 
 interface ProbeAuthUser {
   /** Present when authenticated via user API key */
@@ -147,26 +169,30 @@ export class ProbesService {
     probe.lastSeenAt = new Date();
     await this.probeRepo.save(probe);
 
-    const scannedAt = new Date(dto.timestamp);
+    // The probe's timestamp is kept as the scan time, but every interval
+    // check uses the time the API received the result (stored as
+    // createdAt), which a probe can't set.
+    const receivedAt = new Date();
+    // A scan can't happen after the API received it; a future timestamp
+    // would also keep the row past its retention.
+    const reported = new Date(dto.timestamp);
+    const scannedAt = reported > receivedAt ? receivedAt : reported;
     const probeMode = dto.mode;
     const probeRegion = dto.region;
-
-    // For connected/hosted probes, resolve the userId to look up endpoints
-    const probeUserId = user.isServiceKey ? undefined : user.userId;
 
     const entities: ProbeScanResult[] = [];
     const newlyFailing: { endpoint: Endpoint; result: ProbeScanResult }[] = [];
 
-    // Match host:port to registered Endpoint(s). Hosted mode may return
-    // several endpoints (different users, same host:port).
+    // Match host:port to registered Endpoint(s): a connected probe's
+    // results only count for endpoints assigned to it, a hosted probe's for
+    // endpoints with a hosted region that is the probe's registered region.
+    // Hosted mode may match several endpoints (different users, same
+    // host:port). Each endpoint takes at most one result per report.
     const matched: { r: ScanResultDto; endpoint: Endpoint }[] = [];
+    const seen = new Set<string>();
+    let tooSoon = 0;
     for (const r of dto.results) {
-      const endpoints = await this.resolveEndpoints(
-        r,
-        probeMode,
-        probeRegion,
-        probeUserId,
-      );
+      const endpoints = await this.resolveEndpoints(r, probe, probeMode);
 
       if (endpoints.length === 0) {
         this.logger.warn(
@@ -174,19 +200,31 @@ export class ProbesService {
         );
         continue;
       }
-      for (const endpoint of endpoints) matched.push({ r, endpoint });
+      for (const endpoint of endpoints) {
+        if (seen.has(endpoint.id)) {
+          tooSoon++;
+          continue;
+        }
+        seen.add(endpoint.id);
+        matched.push({ r, endpoint });
+      }
     }
 
     // Each owner's plan sets how often their endpoints may be scanned
     const scanMode: ScanMode = probeMode === 'hosted' ? 'hosted' : 'connected';
-    const tiers = await this.billing.resolveTiers(
-      matched.map((m) => m.endpoint.userId),
-    );
-    const receivedAt = new Date();
-    let tooSoon = 0;
+    const [tiers, previousByEndpoint] = await Promise.all([
+      this.billing.resolveTiers(matched.map((m) => m.endpoint.userId)),
+      this.previousResults(
+        dto.probeId,
+        matched.map((m) => m.endpoint.id),
+      ),
+    ]);
 
     for (const { r, endpoint } of matched) {
-      const previous = await this.previousResult(endpoint.id, dto.probeId);
+      // undefined when the lookup failed: accept without a check or alert
+      const previous = previousByEndpoint
+        ? (previousByEndpoint.get(endpoint.id) ?? null)
+        : undefined;
       const interval = scanIntervalMinutes(
         tiers.get(endpoint.userId) ?? 'free',
         scanMode,
@@ -273,22 +311,34 @@ export class ProbesService {
   }
 
   /**
-   * The latest stored result from this probe for this endpoint: null when
-   * there is none, undefined when the lookup fails (the report is still
-   * accepted, without an interval check or a failure alert).
+   * The latest stored result from this probe for each endpoint, by when the
+   * API received it, in one query. Undefined when the lookup fails (the
+   * report is still accepted, without an interval check or a failure alert).
    */
-  private async previousResult(
-    endpointId: string,
+  private async previousResults(
     probeId: string,
-  ): Promise<ProbeScanResult | null | undefined> {
+    endpointIds: string[],
+  ): Promise<Map<string, ProbeScanResult> | undefined> {
+    const byEndpoint = new Map<string, ProbeScanResult>();
+    if (endpointIds.length === 0) return byEndpoint;
     try {
-      return await this.scanResultRepo.findOne({
-        where: { endpointId, probeId },
-        order: { scannedAt: 'DESC' },
-      });
+      const rows = await this.scanResultRepo
+        .createQueryBuilder('r')
+        .distinctOn(['r.endpointId'])
+        .where('r.probeId = :probeId', { probeId })
+        .andWhere('r.endpointId IN (:...endpointIds)', {
+          endpointIds: [...new Set(endpointIds)],
+        })
+        .orderBy('r.endpointId')
+        .addOrderBy('r.createdAt', 'DESC')
+        .getMany();
+      for (const row of rows) {
+        if (row.endpointId) byEndpoint.set(row.endpointId, row);
+      }
+      return byEndpoint;
     } catch (err) {
       this.logger.warn(
-        `Could not load previous scan for endpoint ${endpointId}: ${err instanceof Error ? err.message : String(err)}`,
+        `Could not load previous scans for probe ${probeId}: ${err instanceof Error ? err.message : String(err)}`,
       );
       return undefined;
     }
@@ -321,7 +371,7 @@ export class ProbesService {
     }
     this.assertProbeAccess(probe.mode, user, probe);
 
-    let rows: Omit<HostedEndpoint, 'interval'>[];
+    let rows: ConfigRow[];
     let mode: ScanMode;
 
     if (user.isServiceKey) {
@@ -334,19 +384,42 @@ export class ProbesService {
       mode = 'connected';
     }
 
-    const tiers = await this.billing.resolveTiers(rows.map((r) => r.userId));
+    const [tiers, previous] = await Promise.all([
+      this.billing.resolveTiers(rows.map((r) => r.userId)),
+      this.previousResults(
+        probeId,
+        rows.map((r) => r.id),
+      ),
+    ]);
     const minutes = (userId: string) =>
       scanIntervalMinutes(
         tiers.get(userId) ?? ('free' as SubscriptionPlan),
         mode,
       );
-    const endpoints = rows.map((r) => ({
-      ...r,
-      interval: formatInterval(minutes(r.userId)),
-    }));
-    const shortest = rows.length
-      ? Math.min(...rows.map((r) => minutes(r.userId)))
-      : DEFAULT_INTERVAL_MINUTES;
+    const scanNowCutoff = Date.now() - SCAN_NOW_WINDOW_MS;
+    const endpoints: HostedEndpoint[] = rows.map((r) => {
+      const last = previous?.get(r.id)?.createdAt;
+      const requested = r.lastScanRequestedAt
+        ? new Date(r.lastScanRequestedAt)
+        : null;
+      return {
+        host: r.host,
+        port: r.port,
+        sni: r.sni,
+        userId: r.userId,
+        interval: formatInterval(minutes(r.userId)),
+        ...(last ? { lastScanAt: new Date(last).toISOString() } : {}),
+        ...(requested &&
+        requested.getTime() > scanNowCutoff &&
+        (!last || requested > new Date(last))
+          ? { scanNow: true }
+          : {}),
+      };
+    });
+    const shortest = rows.reduce(
+      (min, r) => Math.min(min, minutes(r.userId)),
+      rows.length ? Infinity : DEFAULT_INTERVAL_MINUTES,
+    );
 
     return { endpoints, interval: formatInterval(shortest) };
   }
@@ -372,13 +445,12 @@ export class ProbesService {
     }
   }
 
-  private async getHostedEndpoints(
-    probeRegion?: string,
-  ): Promise<Omit<HostedEndpoint, 'interval'>[]> {
+  private async getHostedEndpoints(probeRegion?: string): Promise<ConfigRow[]> {
     const query = this.endpointRepo
       .createQueryBuilder('e')
       .innerJoin(EndpointHostedRegion, 'ehr', 'ehr."endpointId" = e.id')
-      .select('e.host', 'host')
+      .select('e.id', 'id')
+      .addSelect('e.host', 'host')
       .addSelect('e.port', 'port')
       .addSelect('COALESCE(e.sni, e.host)', 'sni')
       .addSelect('e."userId"', 'userId')
@@ -389,32 +461,13 @@ export class ProbesService {
       query.andWhere('ehr.region = :region', { region: probeRegion });
     }
 
-    const rows: {
-      host: string;
-      port: number;
-      sni: string;
-      userId: string;
-      lastScanRequestedAt: Date | null;
-    }[] = await query.getRawMany();
-
-    const scanNowCutoff = new Date(Date.now() - 5 * 60 * 1000);
-
-    return rows.map((r) => ({
-      host: r.host,
-      port: r.port,
-      sni: r.sni,
-      userId: r.userId,
-      ...(r.lastScanRequestedAt &&
-      new Date(r.lastScanRequestedAt) > scanNowCutoff
-        ? { scanNow: true }
-        : {}),
-    }));
+    return query.getRawMany<ConfigRow>();
   }
 
   private async getConnectedEndpoints(
     userId: string,
     probeId: string,
-  ): Promise<Omit<HostedEndpoint, 'interval'>[]> {
+  ): Promise<ConfigRow[]> {
     // Return only endpoints explicitly assigned to this probe
     const endpoints = await this.endpointRepo
       .createQueryBuilder('e')
@@ -424,16 +477,13 @@ export class ProbesService {
       .andWhere('epa."probeId" = :probeId', { probeId })
       .getMany();
 
-    const scanNowCutoff = new Date(Date.now() - 5 * 60 * 1000);
-
     return endpoints.map((e) => ({
+      id: e.id,
       host: e.host,
       port: e.port,
       sni: e.sni ?? e.host,
       userId: e.userId,
-      ...(e.lastScanRequestedAt && e.lastScanRequestedAt > scanNowCutoff
-        ? { scanNow: true }
-        : {}),
+      lastScanRequestedAt: e.lastScanRequestedAt ?? null,
     }));
   }
 
@@ -444,26 +494,33 @@ export class ProbesService {
    */
   private async resolveEndpoints(
     result: ScanResultDto,
+    probe: Probe,
     probeMode: string,
-    probeRegion: string | undefined,
-    probeUserId: string | undefined,
   ): Promise<Endpoint[]> {
     const host = result.endpoint.host;
     const port = result.endpoint.port;
 
-    if (probeMode === 'connected' && probeUserId) {
-      const ep = await this.endpointRepo.findOne({
-        where: { userId: probeUserId, host, port },
-      });
+    // A connected probe's results count only for the owner's endpoints
+    // that are assigned to this probe
+    if (probeMode === 'connected' && probe.userId) {
+      const ep = await this.endpointRepo
+        .createQueryBuilder('e')
+        .innerJoin(EndpointProbeAssignment, 'epa', 'epa."endpointId" = e.id')
+        .where('e."userId" = :userId', { userId: probe.userId })
+        .andWhere('e.host = :host AND e.port = :port', { host, port })
+        .andWhere('epa."probeId" = :probeId', { probeId: probe.id })
+        .getOne();
       return ep ? [ep] : [];
     }
 
-    if (probeMode === 'hosted' && probeRegion) {
+    // A hosted probe's results count for endpoints with a hosted region
+    // matching the region it registered with, not the one it reports
+    if (probeMode === 'hosted' && probe.mode === 'hosted' && probe.region) {
       return this.endpointRepo
         .createQueryBuilder('e')
         .innerJoin(EndpointHostedRegion, 'ehr', 'ehr."endpointId" = e.id')
         .where('e.host = :host AND e.port = :port', { host, port })
-        .andWhere('ehr.region = :region', { region: probeRegion })
+        .andWhere('ehr.region = :region', { region: probe.region })
         .andWhere('e."isActive" = true')
         .getMany();
     }

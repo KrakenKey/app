@@ -111,9 +111,11 @@ export const PLAN_LIMITS: Record<SubscriptionPlan, PlanLimits> = {
     hostedScanInterval: 1,
     scanResultRetentionDays: 90,
     reportHosts: REPORT_HOST_LIMITS.enterprise,
-    connectors: Infinity,
-    alertChannels: Infinity,
-    githubOidcTrusts: Infinity,
+    // Backstops rather than unlimited: far above any real account, but
+    // they stop a runaway script from creating resources without end.
+    connectors: 1000,
+    alertChannels: 500,
+    githubOidcTrusts: 1000,
     orgMembers: Infinity,
   },
 } as const;

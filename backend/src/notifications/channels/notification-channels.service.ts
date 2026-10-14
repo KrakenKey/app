@@ -62,7 +62,11 @@ export class NotificationChannelsService {
       lastDeliveryStatus: null,
       lastError: null,
     });
-    const saved = await this.repo.save(channel);
+    const saved = await this.planLimits.addWithinLimit(
+      userId,
+      'alertChannels',
+      (manager) => manager.getRepository(NotificationChannel).save(channel),
+    );
     const view: CreateNotificationChannelResponse = this.toView(saved);
     if (secret) view.secret = secret;
     return view;

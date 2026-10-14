@@ -148,3 +148,11 @@ describe('planUsage', () => {
     ).toBe(false);
   });
 });
+
+describe('planLimits', () => {
+  it('reads legacy plan ids as their replacement', () => {
+    expect(planLimits('starter')).toBe(PLAN_LIMITS.pro);
+    expect(planLimits('team')).toBe(PLAN_LIMITS.business);
+    expect(planLimits('gold')).toBe(PLAN_LIMITS.free);
+  });
+});

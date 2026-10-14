@@ -140,7 +140,9 @@ export class ConnectorsService {
       configHash: null,
       configReportedAt: null,
     });
-    await this.connectorRepo.save(connector);
+    await this.planLimits.addWithinLimit(userId, 'connectors', (manager) =>
+      manager.getRepository(Connector).save(connector),
+    );
     this.logger.log(`Connector ${connector.id} created by user ${userId}`);
     return {
       connector: toDto(connector),

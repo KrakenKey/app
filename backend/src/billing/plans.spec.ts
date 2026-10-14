@@ -100,9 +100,10 @@ describe('plans', () => {
     ['scanResultRetentionDays', 7, 30, 90, 90],
     ['reportHosts', 25, 250, 1000, 1000],
     ['apiKeys', 2, 10, 50, Infinity],
-    ['connectors', 1, 5, 50, Infinity],
-    ['alertChannels', 1, 5, 25, Infinity],
-    ['githubOidcTrusts', 2, 10, 50, Infinity],
+    // Enterprise: backstops, not unlimited
+    ['connectors', 1, 5, 50, 1000],
+    ['alertChannels', 1, 5, 25, 500],
+    ['githubOidcTrusts', 2, 10, 50, 1000],
     ['orgMembers', 1, 3, Infinity, Infinity],
   ] as const)(
     '%s is %s / %s / %s / %s',
