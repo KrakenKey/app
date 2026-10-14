@@ -973,7 +973,7 @@ function CertDetailsPanel({
               {cert.managedBy === 'connector'
                 ? 'The connector tries again on its next check after about a day.'
                 : cert.autoRenew
-                  ? 'KrakenKey tries again in about a day, or renew it now.'
+                  ? 'KrakenKey tries again on its own, at the earliest in about a day, or renew it now.'
                   : 'Renew it to try again.'}
             </span>
           </DetailRow>
