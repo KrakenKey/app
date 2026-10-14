@@ -17,7 +17,6 @@ import {
   ALERT_EVENTS,
   ALERT_EVENT_DESCRIPTIONS,
   DEFAULT_ALERT_EVENTS,
-  MAX_NOTIFICATION_CHANNELS,
   NOTIFICATION_CHANNEL_TYPES,
 } from '@krakenkey/shared';
 import type {
@@ -28,6 +27,7 @@ import type {
   UpdateNotificationChannelRequest,
 } from '@krakenkey/shared';
 import * as channelService from '../services/notificationChannelService';
+import { usePlanLimit } from '../hooks/usePlanLimit';
 import { useActionSet } from '../hooks/useActionSet';
 import { useConfirm } from '../hooks/useConfirm';
 import { copyToClipboard } from '../utils/clipboard';
@@ -143,7 +143,8 @@ const AlertChannels: React.FC = () => {
     load();
   }, [load]);
 
-  const atLimit = channels.length >= MAX_NOTIFICATION_CHANNELS;
+  const plan = usePlanLimit('alertChannels', channels.length);
+  const atLimit = plan.atLimit;
 
   const replaceChannel = (updated: NotificationChannel) =>
     setChannels((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
@@ -331,8 +332,7 @@ const AlertChannels: React.FC = () => {
         description={
           <>
             Send alerts to Slack, Microsoft Teams or your own HTTPS endpoint, in
-            addition to email. {channels.length} of {MAX_NOTIFICATION_CHANNELS}{' '}
-            channels used.
+            addition to email. {plan.used} of {plan.limitText} channels used.
           </>
         }
         actions={
@@ -702,8 +702,9 @@ const AlertChannels: React.FC = () => {
 
       {atLimit && (
         <p className="px-5 pb-4 text-xs text-amber-400">
-          You have reached the limit of {MAX_NOTIFICATION_CHANNELS} channels.
-          Delete one to add another.
+          Your plan includes {plan.limitText} channel
+          {plan.limit === 1 ? '' : 's'}. Delete one to add another.
+          {plan.hint && ` ${plan.hint}`}
         </p>
       )}
     </Card>

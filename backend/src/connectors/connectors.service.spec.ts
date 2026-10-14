@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { ConnectorsService } from './connectors.service';
+import { PlanLimitsService } from '../billing/limits/plan-limits.service';
 import { rotateMessage, tokenMessage } from './connector-crypto';
 
 const ID = '3f1c2b9e-1111-4111-8111-111111111111';
@@ -46,7 +47,10 @@ describe('ConnectorsService', () => {
   let qb: Record<string, jest.Mock>;
   let repo: Record<string, jest.Mock>;
   let auth: Record<string, jest.Mock>;
-  let billing: { resolveUserTier: jest.Mock };
+  let billing: {
+    resolveUserTier: jest.Mock;
+    getResourceCountUserIds: jest.Mock;
+  };
   let nonces: { claim: jest.Mock };
   let svc: ConnectorsService;
 
@@ -111,12 +115,23 @@ describe('ConnectorsService', () => {
       }),
       revokeConnectorKeys: jest.fn().mockResolvedValue(2),
     };
-    billing = { resolveUserTier: jest.fn().mockResolvedValue('free') };
+    billing = {
+      resolveUserTier: jest.fn().mockResolvedValue('free'),
+      getResourceCountUserIds: jest.fn().mockResolvedValue(['u1']),
+    };
     nonces = { claim: jest.fn().mockResolvedValue(true) };
+    // The real limit check, counting through the connector repository
+    const planLimits = new PlanLimitsService(
+      billing as any,
+      {} as any,
+      repo as any,
+      {} as any,
+      {} as any,
+    );
     svc = new ConnectorsService(
       repo as any,
       auth as any,
-      billing as any,
+      planLimits,
       nonces as any,
     );
   });
@@ -179,20 +194,22 @@ describe('ConnectorsService', () => {
       );
     });
 
-    it('caps active connectors at 50 with a 402', async () => {
-      repo.count.mockResolvedValue(50);
+    it('allows one active connector on the free plan, then answers 402 naming Pro', async () => {
+      repo.count.mockResolvedValue(1);
       const err = await svc.create('u1', dto()).catch((e) => e);
       expect(err).toBeInstanceOf(HttpException);
       expect(err.getStatus()).toBe(402);
       expect(err.getResponse()).toEqual({
-        message: 'Connector limit reached',
+        message:
+          'Connector limit reached: the Starter plan includes 1. Upgrade to Pro for 5.',
         code: 'plan_limit_exceeded',
-        limit: 50,
-        current: 50,
+        limit: 1,
+        current: 1,
         plan: 'free',
+        upgradeTo: 'pro',
       });
       expect(repo.count).toHaveBeenCalledWith({
-        where: { userId: 'u1', revokedAt: expect.anything() },
+        where: { userId: expect.anything(), revokedAt: expect.anything() },
       });
       expect(repo.save).not.toHaveBeenCalled();
     });

@@ -9,6 +9,7 @@ import {
   planLimits,
   usageLevel,
   usagePercent,
+  upgradeHint,
   usageRows,
 } from '../planUsage';
 
@@ -90,6 +91,9 @@ describe('planUsage', () => {
       'monitoredEndpoints',
       'hostedMonitoredEndpoints',
       'hostedProbeRegions',
+      'connectors',
+      'alertChannels',
+      'githubOidcTrusts',
     ]);
   });
 
@@ -108,5 +112,39 @@ describe('planUsage', () => {
   it('formats unlimited limits', () => {
     expect(formatLimit(1500)).toBe('1,500');
     expect(formatLimit(Infinity)).toBe('Unlimited');
+  });
+
+  it('names the plan that raises a limit', () => {
+    expect(upgradeHint('free', 'connectors')).toBe('Pro includes 5.');
+    expect(upgradeHint('pro', 'githubOidcTrusts')).toBe(
+      'Business includes 50.',
+    );
+    expect(upgradeHint('pro', 'orgMembers')).toBe('Business has no limit.');
+    expect(upgradeHint('business', 'alertChannels')).toBe(
+      'Contact us about Enterprise for more.',
+    );
+    expect(upgradeHint('enterprise', 'domains')).toBeNull();
+    // Pro and Business both include every hosted region
+    expect(upgradeHint('pro', 'hostedProbeRegions')).toBeNull();
+  });
+
+  it('shows the new limits, and organization members only inside one', () => {
+    const base = { domains: 1, apiKeys: 1, certs: [], endpoints: [] };
+    const rows = usageRows({
+      ...base,
+      plan: 'pro',
+      connectors: 2,
+      alertChannels: 5,
+      githubOidcTrusts: null,
+      orgMembers: 3,
+    });
+    const row = (key: string) => rows.find((r) => r.key === key);
+    expect(row('connectors')).toMatchObject({ used: 2, limit: 5 });
+    expect(row('alertChannels')).toMatchObject({ used: 5, limit: 5 });
+    expect(row('githubOidcTrusts')).toMatchObject({ used: null, limit: 10 });
+    expect(row('orgMembers')).toMatchObject({ used: 3, limit: 3 });
+    expect(
+      usageRows({ ...base, plan: 'pro' }).some((r) => r.key === 'orgMembers'),
+    ).toBe(false);
   });
 });

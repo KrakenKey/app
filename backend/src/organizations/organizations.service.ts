@@ -11,6 +11,7 @@ import { Repository } from 'typeorm';
 import { Organization } from './entities/organization.entity';
 import { User } from '../users/entities/user.entity';
 import { BillingService } from '../billing/billing.service';
+import { PlanLimitsService } from '../billing/limits/plan-limits.service';
 import { hasPlanEntitlement } from '../billing/entitlement';
 import {
   ORG_ELIGIBLE_PLANS,
@@ -27,6 +28,7 @@ export class OrganizationsService {
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     private readonly billingService: BillingService,
+    private readonly planLimits: PlanLimitsService,
   ) {}
 
   /**
@@ -40,6 +42,7 @@ export class OrganizationsService {
       throw new HttpException(
         {
           message: `Organizations require the ${ORG_MIN_PLAN_LABEL} plan or higher. Please upgrade to create an organization.`,
+          code: 'plan_limit_exceeded',
           plan,
         },
         402,
@@ -140,6 +143,12 @@ export class OrganizationsService {
       throw new ConflictException(
         `This user has an active ${planLabel(targetSub.plan)} subscription. They must cancel it before joining your organization.`,
       );
+    }
+
+    // Re-inviting a member only changes their role; a new member needs a
+    // free seat on the organization's plan.
+    if (target.organizationId !== orgId) {
+      await this.planLimits.assertCanAddMember(orgId, actorId);
     }
 
     await this.userRepo.update(target.id, { organizationId: orgId, role });

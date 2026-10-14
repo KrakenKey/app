@@ -61,9 +61,6 @@ export const NOTIFICATION_CHANNEL_TYPES = [
 export type NotificationChannelType =
   (typeof NOTIFICATION_CHANNEL_TYPES)[number];
 
-/** Channels a single user may create. */
-export const MAX_NOTIFICATION_CHANNELS = 10;
-
 export type NotificationDeliveryStatus = 'ok' | 'failed';
 
 /**

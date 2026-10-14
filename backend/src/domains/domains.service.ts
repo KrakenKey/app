@@ -63,6 +63,7 @@ export class DomainsService {
         throw new HttpException(
           {
             message: 'Domain limit reached',
+            code: 'plan_limit_exceeded',
             limit: limits.domains,
             current: count,
             plan,

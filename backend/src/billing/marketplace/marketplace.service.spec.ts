@@ -388,19 +388,12 @@ describe('MarketplaceService', () => {
       });
     });
 
-    it('refuses a Starter purchase for an organization', async () => {
+    it('accepts a Pro purchase for an organization: every Marketplace plan can back one', async () => {
       user.organizationId = 'org-1';
       user.role = 'owner';
       client.resolve.mockResolvedValue(purchase({}, 'kk-starter'));
 
-      expect((await service.describe(USER_ID, 'token')).state).toBe(
-        'needs_team',
-      );
-      await expect(service.activate(USER_ID, 'token')).rejects.toThrow(
-        /Business plan or higher/,
-      );
-      expect(client.activate).not.toHaveBeenCalled();
-      expect(manager.save).not.toHaveBeenCalled();
+      expect((await service.describe(USER_ID, 'token')).state).toBe('ready');
     });
 
     it('allows a Starter purchase for a user without an organization', async () => {
@@ -1063,7 +1056,7 @@ describe('MarketplaceService', () => {
       expect(client.updateOperation).not.toHaveBeenCalled();
     });
 
-    it('ChangePlan below Team dissolves the organization, like Stripe', async () => {
+    it('ChangePlan from Business to Pro keeps the organization', async () => {
       rows.linked = linkedRow({ userId: null, organizationId: 'org-1' });
       client.getOperation.mockResolvedValue(
         op({
@@ -1077,11 +1070,7 @@ describe('MarketplaceService', () => {
         body({ action: 'ChangePlan', planId: 'kk-starter' }),
       );
       expect(savedRow().plan).toBe('pro');
-      expect(billing.queueDissolution).toHaveBeenCalledWith('org-1', false);
-      expect(recorded()).toMatchObject({
-        dissolveOrganizationId: 'org-1',
-        dissolveCancel: false,
-      });
+      expect(billing.queueDissolution).not.toHaveBeenCalled();
     });
 
     it('never dissolves an organization whose purchase is still being activated', async () => {

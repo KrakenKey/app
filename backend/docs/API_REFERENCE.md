@@ -909,7 +909,7 @@ Remove a hosted region.
 
 A connector is an agent that runs on your own machines. It keeps private keys there, renews certificates with fresh CSRs, and installs them on local targets. It has no long-lived credential: it enrolls once with a single-use token, keeps an Ed25519 key pair, and signs a request for a short-lived API key whenever it needs one.
 
-Connectors belong to the user who creates them, like API keys and GitHub trust policies. Up to 50 active (not revoked) connectors per user; the 51st returns `402` `Connector limit reached`.
+Connectors belong to the user who creates them, like API keys and GitHub trust policies. Active (not revoked) connectors are limited by plan and counted across the organization's members (Starter 1, Pro 5, Business 50, Enterprise unlimited); one more returns `402` with `code: "plan_limit_exceeded"` and a message naming the plan that raises the limit. See [Billing](./BILLING.md#per-plan-feature-limits).
 
 | Method | Path | Auth | Rate limit | Description |
 |--------|------|------|------------|-------------|

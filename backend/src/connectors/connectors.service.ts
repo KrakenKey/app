@@ -2,7 +2,6 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
-  HttpException,
   Injectable,
   Logger,
   NotFoundException,
@@ -16,7 +15,6 @@ import {
   CONNECTOR_ENROLLMENT_TOKEN_TTL_SECONDS,
   CONNECTOR_KEY_TTL_SECONDS,
   CONNECTOR_MAX_CLOCK_SKEW_SECONDS,
-  MAX_CONNECTORS_PER_USER,
   type Connector as ConnectorDto,
   type ConnectorConfigSummary,
   type ConnectorEnrollResponse,
@@ -27,7 +25,7 @@ import {
 } from '@krakenkey/shared';
 import { Connector } from './entities/connector.entity';
 import { AuthService } from '../auth/auth.service';
-import { BillingService } from '../billing/billing.service';
+import { PlanLimitsService } from '../billing/limits/plan-limits.service';
 import { ConnectorNonceStore } from './connector-nonce.store';
 import {
   parsePublicKey,
@@ -67,7 +65,7 @@ export class ConnectorsService {
     @InjectRepository(Connector)
     private readonly connectorRepo: Repository<Connector>,
     private readonly authService: AuthService,
-    private readonly billingService: BillingService,
+    private readonly planLimits: PlanLimitsService,
     private readonly nonces: ConnectorNonceStore,
   ) {}
 
@@ -119,22 +117,7 @@ export class ConnectorsService {
       );
     }
 
-    const current = await this.connectorRepo.count({
-      where: { userId, revokedAt: IsNull() },
-    });
-    if (current >= MAX_CONNECTORS_PER_USER) {
-      const plan = await this.billingService.resolveUserTier(userId);
-      throw new HttpException(
-        {
-          message: 'Connector limit reached',
-          code: 'plan_limit_exceeded',
-          limit: MAX_CONNECTORS_PER_USER,
-          current,
-          plan,
-        },
-        402,
-      );
-    }
+    await this.planLimits.assertCanAdd(userId, 'connectors');
 
     const enrollmentToken = newEnrollmentToken();
     const connector = this.connectorRepo.create({

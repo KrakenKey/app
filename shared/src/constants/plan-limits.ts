@@ -4,7 +4,9 @@ import type { SubscriptionPlan } from '../types/subscription';
 /**
  * What each plan allows. The API enforces these, and the dashboard reads the
  * same numbers to show usage on the billing page. `Infinity` means unlimited.
- * Resource counts are pooled across an organization's members.
+ * Resource counts are pooled across an organization's members. A new limit
+ * never removes or disables what an account already has: only new
+ * resources past the limit are refused.
  */
 export interface PlanLimits {
   domains: number;
@@ -22,6 +24,14 @@ export interface PlanLimits {
   scanResultRetentionDays: number;
   /** Most hosts in one portfolio report (shared REPORT_HOST_LIMITS) */
   reportHosts: number;
+  /** Active (not revoked) connectors */
+  connectors: number;
+  /** Alert channels (Slack, Teams, signed webhook) */
+  alertChannels: number;
+  /** GitHub Actions OIDC trust policies */
+  githubOidcTrusts: number;
+  /** Organization members, owner included. 1 = no organization. */
+  orgMembers: number;
 }
 
 export const PLAN_LIMITS: Record<SubscriptionPlan, PlanLimits> = {
@@ -40,6 +50,10 @@ export const PLAN_LIMITS: Record<SubscriptionPlan, PlanLimits> = {
     hostedScanInterval: 60,
     scanResultRetentionDays: 7,
     reportHosts: REPORT_HOST_LIMITS.free,
+    connectors: 1,
+    alertChannels: 1,
+    githubOidcTrusts: 2,
+    orgMembers: 1,
   },
   pro: {
     domains: 15,
@@ -55,6 +69,10 @@ export const PLAN_LIMITS: Record<SubscriptionPlan, PlanLimits> = {
     hostedScanInterval: 30,
     scanResultRetentionDays: 30,
     reportHosts: REPORT_HOST_LIMITS.pro,
+    connectors: 5,
+    alertChannels: 5,
+    githubOidcTrusts: 10,
+    orgMembers: 3,
   },
   business: {
     domains: 100,
@@ -70,6 +88,10 @@ export const PLAN_LIMITS: Record<SubscriptionPlan, PlanLimits> = {
     hostedScanInterval: 5,
     scanResultRetentionDays: 90,
     reportHosts: REPORT_HOST_LIMITS.business,
+    connectors: 50,
+    alertChannels: 25,
+    githubOidcTrusts: 50,
+    orgMembers: Infinity,
   },
   // Custom deals: limits are set per agreement; until per-account limits
   // exist, the plan is unlimited under fair-use terms.
@@ -87,5 +109,9 @@ export const PLAN_LIMITS: Record<SubscriptionPlan, PlanLimits> = {
     hostedScanInterval: 1,
     scanResultRetentionDays: 90,
     reportHosts: REPORT_HOST_LIMITS.enterprise,
+    connectors: Infinity,
+    alertChannels: Infinity,
+    githubOidcTrusts: Infinity,
+    orgMembers: Infinity,
   },
 } as const;

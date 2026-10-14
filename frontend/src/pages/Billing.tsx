@@ -24,9 +24,11 @@ import { AZURE_PORTAL_SAAS_URL } from '../services/marketplaceService';
 import {
   formatLimit,
   planLimits,
+  upgradeHint,
   usageLevel,
   usagePercent,
   usageRows,
+  type CountedLimitKey,
   type UsageLevel,
   type UsageRow,
 } from '../utils/planUsage';
@@ -45,9 +47,12 @@ const PLAN_PRICES: Partial<Record<SubscriptionPlan, string>> = {
 
 /** Extras each plan adds beyond the numeric limits. */
 const PLAN_EXTRAS: Partial<Record<SubscriptionPlan, string[]>> = {
-  pro: ['30-day renewal window', '30-minute hosted scans'],
+  pro: [
+    '30-day renewal window, 30-minute hosted scans',
+    'Organizations with up to 3 members',
+  ],
   business: [
-    'Organizations with roles',
+    'Organizations with unlimited members',
     '5-minute hosted scans, 90-day scan history',
   ],
   enterprise: ['Custom limits', 'Annual invoice or Microsoft Marketplace'],
@@ -72,6 +77,7 @@ function planFeatures(plan: SubscriptionPlan): string[] {
   const lines = [
     `${formatLimit(l.domains)} domains, ${formatLimit(l.totalActiveCerts)} active certificates`,
     `${formatLimit(l.monitoredEndpoints)} monitored endpoints, ${regions}`,
+    `${formatLimit(l.connectors)} connectors, ${formatLimit(l.alertChannels)} alert channels`,
   ];
   return [...lines, ...(PLAN_EXTRAS[plan] ?? [])];
 }
@@ -82,7 +88,7 @@ const BAR_CLASS: Record<UsageLevel, string> = {
   full: 'bg-red-400',
 };
 
-function UsageMeter({ row }: { row: UsageRow }) {
+function UsageMeter({ row, plan }: { row: UsageRow; plan: string }) {
   const unlimited = !Number.isFinite(row.limit);
   const used = row.used;
   const level = used == null ? 'normal' : usageLevel(used, row.limit);
@@ -130,6 +136,8 @@ function UsageMeter({ row }: { row: UsageRow }) {
         {level === 'full' && used != null ? (
           <span className="text-red-300">
             {used > row.limit ? 'Over the plan limit' : 'Limit reached'}
+            {upgradeHint(plan, row.key as CountedLimitKey) &&
+              `. ${upgradeHint(plan, row.key as CountedLimitKey)}`}
           </span>
         ) : (
           row.hint
@@ -218,7 +226,12 @@ export default function Billing() {
   const canManageBilling = !user?.organizationId || user.role === 'owner';
 
   const counts = (
-    user as { resourceCounts?: { domains: number; apiKeys: number } } | null
+    user as {
+      resourceCounts?: Partial<Record<CountedLimitKey, number>> & {
+        domains: number;
+        apiKeys: number;
+      };
+    } | null
   )?.resourceCounts;
   const rows = usageRows({
     plan,
@@ -231,6 +244,10 @@ export default function Billing() {
     certs: health && healthStatus.certs === 'loaded' ? health.certs : null,
     endpoints:
       health && healthStatus.endpoints === 'loaded' ? health.endpoints : null,
+    connectors: counts?.connectors ?? null,
+    alertChannels: counts?.alertChannels ?? null,
+    githubOidcTrusts: counts?.githubOidcTrusts ?? null,
+    orgMembers: user?.organizationId ? (counts?.orgMembers ?? null) : undefined,
   });
 
   const canChangePlanHere = canManageBilling && !billedByMicrosoft;
@@ -456,7 +473,7 @@ export default function Billing() {
         />
         <div className="grid grid-cols-1 py-1 sm:grid-cols-2 lg:grid-cols-3">
           {rows.map((row) => (
-            <UsageMeter key={row.key} row={row} />
+            <UsageMeter key={row.key} row={row} plan={plan} />
           ))}
         </div>
       </Card>

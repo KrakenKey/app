@@ -8,6 +8,18 @@ import { API_URL } from '../../services/api';
 import GithubOidcTrusts from '../GithubOidcTrusts';
 import { toast } from '../../utils/toast';
 
+// Business: 50 connectors, 25 alert channels, 50 trust policies
+const authState = vi.hoisted(() => ({
+  user: { plan: 'business', organizationId: null } as {
+    plan: string;
+    organizationId: string | null;
+    resourceCounts?: Record<string, number>;
+  },
+}));
+vi.mock('../../hooks/useAuth', () => ({
+  useAuth: () => ({ user: authState.user }),
+}));
+
 const TRUSTS = `${API_URL}/auth/github-oidc/trusts`;
 
 const base: GithubOidcTrust = {
@@ -70,7 +82,7 @@ describe('GithubOidcTrusts', () => {
 
     await screen.findByText('website deploy');
     const table = within(screen.getByRole('table'));
-    expect(screen.getByText('Trust Policies (2 of 20)')).toBeInTheDocument();
+    expect(screen.getByText('Trust Policies (2 of 50)')).toBeInTheDocument();
     expect(table.getByText('pinned to repo id 123456')).toBeInTheDocument();
     expect(table.getByText('pins on its first run')).toBeInTheDocument();
     expect(
@@ -119,7 +131,7 @@ describe('GithubOidcTrusts', () => {
     expect(snippet).toHaveTextContent('uses: krakenkey/cert-action@v1');
     expect(snippet.textContent).not.toContain('trust-id');
     expect(
-      await screen.findByText('Trust Policies (3 of 20)'),
+      await screen.findByText('Trust Policies (3 of 50)'),
     ).toBeInTheDocument();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
@@ -263,7 +275,7 @@ describe('GithubOidcTrusts', () => {
     await waitFor(() =>
       expect(screen.queryByText('website deploy')).toBeNull(),
     );
-    expect(screen.getByText('Trust Policies (1 of 20)')).toBeInTheDocument();
+    expect(screen.getByText('Trust Policies (1 of 50)')).toBeInTheDocument();
   });
 
   it('does not delete when the confirm is cancelled', async () => {
@@ -290,8 +302,8 @@ describe('GithubOidcTrusts', () => {
     expect(screen.getByText('website deploy')).toBeInTheDocument();
   });
 
-  it('disables the form at the 20 policy limit', async () => {
-    list = Array.from({ length: 20 }, (_, i) => ({
+  it('disables the form at the plan limit (50 on Business)', async () => {
+    list = Array.from({ length: 50 }, (_, i) => ({
       ...unused,
       id: `t${i}`,
       name: `policy ${i}`,
@@ -303,7 +315,9 @@ describe('GithubOidcTrusts', () => {
       screen.getByRole('button', { name: 'Add trust policy' }),
     ).toBeDisabled();
     expect(
-      screen.getAllByText(/maximum of 20 trust policies/).length,
+      screen.getAllByText(
+        /includes 50 trust policies\. .*Contact us about Enterprise/,
+      ).length,
     ).toBeGreaterThan(0);
   });
 });

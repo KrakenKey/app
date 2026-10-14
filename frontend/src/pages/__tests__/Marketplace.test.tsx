@@ -245,7 +245,7 @@ describe('Marketplace landing page', () => {
   it.each([
     ['linked_elsewhere', 'Linked to another account'],
     ['not_owner', 'Ask your organization owner'],
-    ['needs_team', 'Organizations need Business or higher'],
+    ['needs_team', 'Organizations need Pro or higher'],
     ['unknown_plan', 'Plan not available'],
     ['suspended', 'Subscription suspended'],
     ['ended', 'Subscription canceled'],

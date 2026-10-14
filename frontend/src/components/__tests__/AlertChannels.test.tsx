@@ -17,6 +17,18 @@ import { API_URL } from '../../services/api';
 import { ConfirmProvider } from '../../context/ConfirmContext';
 import AlertChannels from '../AlertChannels';
 
+// Business: 50 connectors, 25 alert channels, 50 trust policies
+const authState = vi.hoisted(() => ({
+  user: { plan: 'business', organizationId: null } as {
+    plan: string;
+    organizationId: string | null;
+    resourceCounts?: Record<string, number>;
+  },
+}));
+vi.mock('../../hooks/useAuth', () => ({
+  useAuth: () => ({ user: authState.user }),
+}));
+
 const render = (ui: ReactElement) =>
   rtlRender(ui, { wrapper: ConfirmProvider });
 
@@ -125,7 +137,7 @@ describe('AlertChannels', () => {
     expect(
       within(row).queryByRole('button', { name: /rotate secret/i }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText(/1 of 10 channels used/)).toBeInTheDocument();
+    expect(screen.getByText(/1 of 25 channels used/)).toBeInTheDocument();
   });
 
   it('shows a healthy last delivery without a failure badge', async () => {
@@ -444,17 +456,44 @@ describe('AlertChannels', () => {
     expect(within(reveal).getByText('whsec_rotated')).toBeInTheDocument();
   });
 
-  it('disables adding at the 10-channel limit', async () => {
-    listReturns(
-      Array.from({ length: 10 }, (_, i) =>
-        channel({ id: `c${i}`, name: `Channel ${i}` }),
-      ),
-    );
-    render(<AlertChannels />);
+  it('disables adding at the plan limit and names the next plan', async () => {
+    authState.user = { plan: 'free', organizationId: null };
+    try {
+      listReturns([channel({ id: 'c1', name: 'Channel 1' })]);
+      render(<AlertChannels />);
 
-    expect(
-      await screen.findByText(/reached the limit of 10 channels/),
-    ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Add channel' })).toBeDisabled();
+      expect(
+        await screen.findByText(
+          /Your plan includes 1 channel\. .*Pro includes 5\./,
+        ),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/1 of 1 channels used/)).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Add channel' }),
+      ).toBeDisabled();
+    } finally {
+      authState.user = { plan: 'business', organizationId: null };
+    }
+  });
+
+  it('counts the whole organization against the limit', async () => {
+    authState.user = {
+      plan: 'pro',
+      organizationId: 'org-1',
+      resourceCounts: { alertChannels: 5 },
+    };
+    try {
+      listReturns([channel({ id: 'c1', name: 'Channel 1' })]);
+      render(<AlertChannels />);
+
+      expect(
+        await screen.findByText(/5 of 5 channels used/),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Add channel' }),
+      ).toBeDisabled();
+    } finally {
+      authState.user = { plan: 'business', organizationId: null };
+    }
   });
 });

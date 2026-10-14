@@ -10,12 +10,16 @@ import { AlertDeliveryProcessor } from './channels/alert-delivery.processor';
 import { ChannelDeliveryService } from './channels/channel-delivery.service';
 import { NotificationChannelsService } from './channels/notification-channels.service';
 import { NotificationChannelsController } from './channels/notification-channels.controller';
+import { BillingModule } from '../billing/billing.module';
 
 @Global()
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, NotificationChannel]),
     BullModule.registerQueue({ name: NOTIFICATIONS_QUEUE }),
+    // Alert channel limits; BillingModule only uses this module's
+    // EmailService through the global scope, so there is no import cycle.
+    BillingModule,
   ],
   controllers: [NotificationChannelsController],
   providers: [

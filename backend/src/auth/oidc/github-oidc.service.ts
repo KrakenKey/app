@@ -21,9 +21,7 @@ import {
 } from './github-oidc.verifier';
 import type { CreateGithubOidcTrustDto } from './github-oidc.dto';
 import { GithubRepoLookup } from './github-repo-lookup';
-
-/** Trust policies per user. */
-export const MAX_TRUSTS_PER_USER = 20;
+import { PlanLimitsService } from '../../billing/limits/plan-limits.service';
 
 /** Whether a token's ref is allowed: exact, or prefix for entries ending in `*`. */
 export function refAllowed(
@@ -47,6 +45,7 @@ export class GithubOidcService {
     private readonly authService: AuthService,
     private readonly verifier: GithubOidcVerifier,
     private readonly repoLookup: GithubRepoLookup,
+    private readonly planLimits: PlanLimitsService,
   ) {}
 
   async list(userId: string): Promise<GithubOidcTrustDto[]> {
@@ -61,12 +60,7 @@ export class GithubOidcService {
     userId: string,
     dto: CreateGithubOidcTrustDto,
   ): Promise<GithubOidcTrustDto> {
-    const count = await this.trustRepo.count({ where: { userId } });
-    if (count >= MAX_TRUSTS_PER_USER) {
-      throw new BadRequestException(
-        `You can have at most ${MAX_TRUSTS_PER_USER} GitHub trust policies`,
-      );
-    }
+    await this.planLimits.assertCanAdd(userId, 'githubOidcTrusts');
     const limits = await this.authService.validateRestrictions(userId, {
       scopes: dto.scopes,
       allowedDomainIds: dto.allowedDomainIds,

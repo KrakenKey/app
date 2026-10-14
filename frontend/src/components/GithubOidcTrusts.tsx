@@ -5,7 +5,6 @@ import { toast } from '../utils/toast';
 import { copyToClipboard } from '../utils/clipboard';
 import {
   MAX_ALLOWED_REFS,
-  MAX_GITHUB_OIDC_TRUSTS,
   isValidRepository,
   parseRefList,
   workflowSnippet,
@@ -14,6 +13,7 @@ import { useActionSet } from '../hooks/useActionSet';
 import { useConfirm } from '../hooks/useConfirm';
 import { useAccessForm } from '../hooks/useAccessForm';
 import * as githubOidcService from '../services/githubOidcService';
+import { usePlanLimit } from '../hooks/usePlanLimit';
 import {
   AccessChoiceFields,
   AccessSummary,
@@ -80,7 +80,8 @@ export default function GithubOidcTrusts() {
     if (addOpen) document.getElementById('github-oidc-name')?.focus();
   }, [addOpen]);
 
-  const atLimit = trusts.length >= MAX_GITHUB_OIDC_TRUSTS;
+  const plan = usePlanLimit('githubOidcTrusts', trusts.length);
+  const atLimit = plan.atLimit;
 
   const resetForm = () => {
     setName('');
@@ -200,7 +201,7 @@ export default function GithubOidcTrusts() {
     }
   };
 
-  const limitNote = `You have the maximum of ${MAX_GITHUB_OIDC_TRUSTS} trust policies. Delete one to add another.`;
+  const limitNote = `Your plan includes ${plan.limitText} trust ${plan.limit === 1 ? 'policy' : 'policies'}. Delete one to add another.${plan.hint ? ` ${plan.hint}` : ''}`;
 
   return (
     <section aria-labelledby="github-oidc-heading" className="mt-10">
@@ -405,7 +406,7 @@ export default function GithubOidcTrusts() {
       ) : (
         <Card flush>
           <CardHeader
-            title={`Trust Policies (${trusts.length} of ${MAX_GITHUB_OIDC_TRUSTS})`}
+            title={`Trust Policies (${plan.used} of ${plan.limitText})`}
             description={atLimit ? limitNote : undefined}
           />
           <Table className="sm:min-w-[760px]">

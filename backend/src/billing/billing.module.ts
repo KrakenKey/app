@@ -14,6 +14,10 @@ import { MarketplaceController } from './marketplace/marketplace.controller';
 import { MarketplaceFulfillmentClient } from './marketplace/marketplace-fulfillment.client';
 import { MarketplaceService } from './marketplace/marketplace.service';
 import { MarketplaceWebhookVerifier } from './marketplace/marketplace-webhook.verifier';
+import { PlanLimitsService } from './limits/plan-limits.service';
+import { Connector } from '../connectors/entities/connector.entity';
+import { NotificationChannel } from '../notifications/channels/entities/notification-channel.entity';
+import { GithubOidcTrust } from '../auth/entities/github-oidc-trust.entity';
 
 @Module({
   imports: [
@@ -22,6 +26,9 @@ import { MarketplaceWebhookVerifier } from './marketplace/marketplace-webhook.ve
       User,
       Organization,
       MarketplaceOperation,
+      Connector,
+      NotificationChannel,
+      GithubOidcTrust,
     ]),
     BullModule.registerQueue({
       name: 'orgDissolution',
@@ -36,7 +43,8 @@ import { MarketplaceWebhookVerifier } from './marketplace/marketplace-webhook.ve
     MarketplaceFulfillmentClient,
     MarketplaceWebhookVerifier,
     MarketplaceService,
+    PlanLimitsService,
   ],
-  exports: [BillingService, SubscriptionTierResolver],
+  exports: [BillingService, SubscriptionTierResolver, PlanLimitsService],
 })
 export class BillingModule {}

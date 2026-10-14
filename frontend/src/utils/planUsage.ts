@@ -1,4 +1,9 @@
-import { PLAN_LIMITS } from '@krakenkey/shared';
+import {
+  PLAN_LIMITS,
+  nextPlan,
+  normalizePlan,
+  planLabel,
+} from '@krakenkey/shared';
 import type {
   Endpoint,
   PlanLimits,
@@ -69,7 +74,47 @@ export interface UsageInput {
   apiKeys: number | null;
   certs: TlsCert[] | null;
   endpoints: Endpoint[] | null;
+  /** Pooled counts from the profile; null while loading or from an older API. */
+  connectors?: number | null;
+  alertChannels?: number | null;
+  githubOidcTrusts?: number | null;
+  /** Members of the user's organization, or undefined outside one. */
+  orgMembers?: number | null;
   now?: Date;
+}
+
+/** Limits that count things an account creates, by plan. */
+export type CountedLimitKey =
+  | 'connectors'
+  | 'alertChannels'
+  | 'githubOidcTrusts'
+  | 'orgMembers'
+  | 'domains'
+  | 'apiKeys'
+  | 'monitoredEndpoints'
+  | 'hostedMonitoredEndpoints'
+  | 'hostedProbeRegions'
+  | 'certsPerMonth'
+  | 'totalActiveCerts';
+
+/**
+ * Which plan raises a limit, e.g. "Pro includes 5." for a Starter account
+ * at 1 connector, or "Contact us about Enterprise." on Business. Null when
+ * no plan offers more.
+ */
+export function upgradeHint(
+  plan: string | null | undefined,
+  key: CountedLimitKey,
+): string | null {
+  const next = nextPlan(plan);
+  if (!next) return null;
+  if (next === 'enterprise') return 'Contact us about Enterprise for more.';
+  const current = PLAN_LIMITS[normalizePlan(plan)][key];
+  const more = PLAN_LIMITS[next][key];
+  if (more <= current) return null;
+  return Number.isFinite(more)
+    ? `${planLabel(next)} includes ${formatLimit(more)}.`
+    : `${planLabel(next)} has no limit.`;
 }
 
 /**
@@ -130,6 +175,37 @@ export function usageRows(input: UsageInput): UsageRow[] {
       hint: 'Distinct regions in use',
       used: endpoints ? hostedRegions(endpoints) : null,
       limit: limits.hostedProbeRegions,
+    });
+  }
+  rows.push(
+    {
+      key: 'connectors',
+      label: 'Connectors',
+      hint: 'Active, not revoked',
+      used: input.connectors ?? null,
+      limit: limits.connectors,
+    },
+    {
+      key: 'alertChannels',
+      label: 'Alert channels',
+      hint: 'Slack, Teams and webhooks',
+      used: input.alertChannels ?? null,
+      limit: limits.alertChannels,
+    },
+    {
+      key: 'githubOidcTrusts',
+      label: 'GitHub trust policies',
+      used: input.githubOidcTrusts ?? null,
+      limit: limits.githubOidcTrusts,
+    },
+  );
+  if (input.orgMembers !== undefined) {
+    rows.push({
+      key: 'orgMembers',
+      label: 'Organization members',
+      hint: 'Including the owner',
+      used: input.orgMembers,
+      limit: limits.orgMembers,
     });
   }
   return rows;

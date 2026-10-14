@@ -5,6 +5,8 @@ import {
   PLAN_LIMITS,
   PLAN_ORDER,
   SUBSCRIPTION_PLANS,
+  canHaveOrganization,
+  nextPlan,
   normalizePlan,
   planLabel,
 } from '@krakenkey/shared';
@@ -48,6 +50,21 @@ describe('plans', () => {
     });
   });
 
+  it('suggests Pro, then Business, then Enterprise', () => {
+    expect(nextPlan('free')).toBe('pro');
+    expect(nextPlan('pro')).toBe('business');
+    expect(nextPlan('business')).toBe('enterprise');
+    expect(nextPlan('enterprise')).toBeNull();
+    expect(nextPlan('starter')).toBe('business');
+  });
+
+  it('gives organizations to Pro and up', () => {
+    expect(canHaveOrganization('free')).toBe(false);
+    expect(canHaveOrganization('pro')).toBe(true);
+    expect(canHaveOrganization('business')).toBe(true);
+    expect(canHaveOrganization('enterprise')).toBe(true);
+  });
+
   describe('normalizePlan', () => {
     it('keeps current ids', () => {
       for (const plan of SUBSCRIPTION_PLANS) {
@@ -82,6 +99,10 @@ describe('plans', () => {
     ['scanResultRetentionDays', 7, 30, 90, 90],
     ['reportHosts', 25, 250, 1000, 1000],
     ['apiKeys', 2, 10, 50, Infinity],
+    ['connectors', 1, 5, 50, Infinity],
+    ['alertChannels', 1, 5, 25, Infinity],
+    ['githubOidcTrusts', 2, 10, 50, Infinity],
+    ['orgMembers', 1, 3, Infinity, Infinity],
   ] as const)(
     '%s is %s / %s / %s / %s',
     (key, free, pro, business, enterprise) => {

@@ -164,7 +164,7 @@ Approve, deny and lookup require a dashboard (JWT) session; an API key gets 403,
 
 **Key behaviors**:
 - Role hierarchy: `owner` > `admin` > `member` > `viewer`
-- Requires the Business plan or higher to create
+- Requires the Pro plan or higher to create (Pro: 3 members)
 - Users can only belong to one organization
 - Deletion queues async dissolution via BillingService
 

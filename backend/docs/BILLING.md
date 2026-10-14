@@ -21,9 +21,24 @@ Plan ids are `free`, `pro`, `business` and `enterprise`. The free plan is called
 | **Hosts per Report** | 25 | 250 | 1,000 | 1,000 |
 | **Scan result retention** | 7 days | 30 days | 90 days | 90 days |
 | **Auto-Renewal Window** | 10 days | 30 days | 30 days | 30 days |
-| **Organizations** | No | No | Yes | Yes |
+| **Organizations** | No | Up to 3 members | Unlimited members | Unlimited members |
+| **Connectors** | 1 | 5 | 50 | Custom |
+| **Alert channels** | 1 | 5 | 25 | Custom |
+| **GitHub OIDC trust policies** | 2 | 10 | 50 | Custom |
 
 "Custom" limits are unlimited in code (`Infinity`) until per-account limits exist. A report takes at most 1,000 hosts on any plan (`CreateReportDto`).
+
+### Per-plan feature limits
+
+Connectors (active, not revoked), alert channels, GitHub OIDC trust policies and organization members are limited by plan (`connectors`, `alertChannels`, `githubOidcTrusts` and `orgMembers` in `PLAN_LIMITS`). `PlanLimitsService` (`src/billing/limits/`) checks them:
+
+- **Pooled like domains.** Connectors, channels and trust policies are counted across every member of the user's organization (`getResourceCountUserIds`), or the user alone. Members are counted per organization, owner included.
+- **Only new resources are refused.** An account already over a limit (for example a free account with three alert channels from before the limits) keeps everything working; creating another returns `402`. Deleting down below the limit frees a slot.
+- **The error names the next plan.** `402` with `code: "plan_limit_exceeded"`, `limit`, `current`, `plan` and `upgradeTo`, and a message such as `Connector limit reached: the Starter plan includes 1. Upgrade to Pro for 5.` (`Contact us about Enterprise for a higher limit.` on Business). The global exception filter passes these fields on for every plan limit error, so clients no longer only see `message`. Domains, API keys and certificate limits now carry `code: "plan_limit_exceeded"` too.
+- **Organization members** are checked when an owner or admin invites someone who isn't a member yet (`POST /organizations/:id/members`); changing an existing member's role isn't. Invites add the member directly; there is no separate accept step. A Business organization that moves to Pro keeps its members, and can't add more until it is under 3.
+- **Usage** is returned in `GET /auth/profile` `resourceCounts` (`connectors`, `alertChannels`, `githubOidcTrusts`, `orgMembers`), and the billing page shows a meter for each, with the plan that raises a limit once it is reached.
+
+**Connector renewal window on the free plan.** Connector-managed certificates keep the 30-day minimum renewal window (`CONNECTOR_MIN_RENEWAL_WINDOW_DAYS`) on every plan, the free one included. The connector renews on the customer's own machine, which can be off or offline for days, so it needs the longer lead time to renew safely, and a renewal doesn't count against any certificate limit. What the free plan gets is bounded by its other limits instead: one connector and 10 active certificates.
 
 ### Plan ids before the rename
 
@@ -195,7 +210,7 @@ Off unless `KK_MARKETPLACE_ENABLED=true`. A subscription row has a `source`: `st
 
 Organizations have their own billing relationship:
 
-- When a user creates an organization (requires the Business plan or higher), their personal subscription is converted to an organization subscription
+- When a user creates an organization (requires the Pro plan or higher; Pro allows 3 members, owner included), their personal subscription is converted to an organization subscription
 - The organization owner controls billing — non-owners cannot access billing endpoints
 - If an organization is downgraded to a plan that can't back one, the organization is automatically dissolved:
   1. Non-owner member resources (domains, certificates) are transferred to the organization owner

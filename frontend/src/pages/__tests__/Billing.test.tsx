@@ -21,6 +21,10 @@ const {
         domains: number;
         certificates: number;
         apiKeys: number;
+        connectors?: number;
+        alertChannels?: number;
+        githubOidcTrusts?: number;
+        orgMembers?: number;
       };
     } | null,
   },
@@ -204,7 +208,10 @@ describe('Billing', () => {
       expect(
         await screen.findByRole('meter', { name: 'Domains' }),
       ).toHaveAttribute('data-level', 'full');
-      expect(screen.getByText('Limit reached')).toBeInTheDocument();
+      // The prompt names the plan that raises the limit
+      expect(
+        screen.getByText('Limit reached. Pro includes 15.'),
+      ).toBeInTheDocument();
       expect(
         screen.getByRole('meter', { name: 'Active certificates' }),
       ).toHaveAttribute('data-level', 'high');
@@ -212,6 +219,49 @@ describe('Billing', () => {
       expect(
         screen.getByRole('meter', { name: 'Hosted endpoints' }),
       ).toHaveAttribute('aria-valuemax', '1');
+    });
+
+    it('shows connectors, alert channels, trust policies and members, pooled', async () => {
+      authState.user = {
+        organizationId: 'org_001',
+        role: 'owner',
+        resourceCounts: {
+          domains: 7,
+          certificates: 12,
+          apiKeys: 4,
+          connectors: 5,
+          alertChannels: 2,
+          githubOidcTrusts: 1,
+          orgMembers: 3,
+        },
+      };
+      mockFetchSubscription.mockResolvedValue(sub('pro'));
+      render(<Billing />);
+
+      const connectors = await screen.findByRole('meter', {
+        name: 'Connectors',
+      });
+      expect(connectors).toHaveAttribute('aria-valuenow', '5');
+      expect(connectors).toHaveAttribute('aria-valuemax', '5');
+      expect(connectors).toHaveAttribute('data-level', 'full');
+      expect(
+        screen.getByRole('meter', { name: 'Alert channels' }),
+      ).toHaveAttribute('aria-valuemax', '5');
+      expect(
+        screen.getByRole('meter', { name: 'GitHub trust policies' }),
+      ).toHaveAttribute('aria-valuemax', '10');
+      expect(
+        screen.getByRole('meter', { name: 'Organization members' }),
+      ).toHaveAttribute('aria-valuenow', '3');
+      expect(
+        screen.getAllByText('Limit reached. Business includes 50.').length,
+      ).toBe(1);
+      expect(
+        screen.getByText('Limit reached. Business has no limit.'),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(/Counted across everyone in your organization/),
+      ).toBeInTheDocument();
     });
 
     it('shows counts with Unlimited on Enterprise', async () => {

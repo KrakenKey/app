@@ -1,5 +1,8 @@
 import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { FindOperator } from 'typeorm';
+import { BillingService } from '../src/billing/billing.service';
+import { PlanLimitsService } from '../src/billing/limits/plan-limits.service';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
 import request from 'supertest';
@@ -25,9 +28,13 @@ const WEBHOOK_URL = 'https://93.184.216.34/kk-hook?token=abcd1234';
 function memoryRepo() {
   let rows: NotificationChannel[] = [];
   const matches = (row: NotificationChannel, where: Record<string, unknown>) =>
-    Object.entries(where).every(
-      ([k, v]) => (row as unknown as Record<string, unknown>)[k] === v,
-    );
+    Object.entries(where).every(([k, v]) => {
+      const value = (row as unknown as Record<string, unknown>)[k];
+      if (v instanceof FindOperator && v.type === 'in') {
+        return (v.value as unknown[]).includes(value);
+      }
+      return value === v;
+    });
   return {
     rows: () => rows,
     reset: () => (rows = []),
@@ -79,11 +86,32 @@ describe('Notification channels (e2e)', () => {
       key === 'KK_HMAC_SECRET' ? 'e2e-hmac-secret' : undefined,
   };
 
+  // Business allows 25 channels; the limit test switches to the free plan
+  let plan = 'business';
+  const billing = {
+    resolveUserTier: jest.fn(() => Promise.resolve(plan)),
+    getResourceCountUserIds: jest.fn((userId: string) =>
+      Promise.resolve([userId]),
+    ),
+  };
+
   const providers = [
     NotificationChannelsService,
     ChannelDeliveryService,
     { provide: ConfigService, useValue: config },
     { provide: getRepositoryToken(NotificationChannel), useValue: repo },
+    {
+      // The real limit check, counting through the in-memory repo
+      provide: PlanLimitsService,
+      useFactory: () =>
+        new PlanLimitsService(
+          billing as unknown as BillingService,
+          {} as never,
+          {} as never,
+          repo as never,
+          {} as never,
+        ),
+    },
   ];
 
   beforeAll(async () => {
@@ -221,27 +249,38 @@ describe('Notification channels (e2e)', () => {
     expect(badType.status).toBe(400);
   });
 
-  it('limits each user to 10 channels', async () => {
-    for (let i = 0; i < 10; i++) {
+  it('allows one channel on the free plan, then answers 402 naming Pro', async () => {
+    plan = 'free';
+    try {
       repo.seed({
         id: randomUUID(),
         userId: MOCK_USER.userId,
         type: 'slack',
-        name: `c${i}`,
+        name: 'first',
         urlEncrypted: delivery.encrypt(SLACK_URL),
         events: [],
         enabled: true,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
+      const res = await create({
+        type: 'slack',
+        name: 'second',
+        url: SLACK_URL,
+      });
+      expect(res.status).toBe(402);
+      expect(res.body).toMatchObject({
+        code: 'plan_limit_exceeded',
+        limit: 1,
+        current: 1,
+        plan: 'free',
+        upgradeTo: 'pro',
+        message:
+          'Alert channel limit reached: the Starter plan includes 1. Upgrade to Pro for 5.',
+      });
+    } finally {
+      plan = 'business';
     }
-    const res = await create({
-      type: 'slack',
-      name: 'eleventh',
-      url: SLACK_URL,
-    });
-    expect(res.status).toBe(400);
-    expect(res.body.message).toContain('at most 10 notification channels');
   });
 
   describe("another user's channel", () => {

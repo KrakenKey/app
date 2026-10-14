@@ -1680,6 +1680,7 @@ export class TlsService {
         throw new HttpException(
           {
             message: 'Concurrent pending request limit reached',
+            code: 'plan_limit_exceeded',
             limit: limits.concurrentPending,
             current: pendingCount,
             plan,
@@ -1705,6 +1706,7 @@ export class TlsService {
         throw new HttpException(
           {
             message: 'Total active certificate limit reached',
+            code: 'plan_limit_exceeded',
             limit: limits.totalActiveCerts,
             current: activeCount,
             plan,
@@ -1724,6 +1726,7 @@ export class TlsService {
         throw new HttpException(
           {
             message: 'Monthly certificate limit reached',
+            code: 'plan_limit_exceeded',
             limit: limits.certsPerMonth,
             current: monthlyCount,
             plan,

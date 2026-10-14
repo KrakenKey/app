@@ -9,6 +9,7 @@ import { ApiKeySecurityService } from '../src/auth/services/api-key-security.ser
 import { ApiKeyStrategy } from '../src/auth/strategies/api-key.strategy';
 import { JwtStrategy } from '../src/auth/strategies/jwt.strategy';
 import { BillingService } from '../src/billing/billing.service';
+import { PlanLimitsService } from '../src/billing/limits/plan-limits.service';
 import { TlsController } from '../src/certs/tls/tls.controller';
 import { TlsService } from '../src/certs/tls/tls.service';
 import { ConnectorNonceStore } from '../src/connectors/connector-nonce.store';
@@ -109,6 +110,11 @@ describe('Connectors (e2e)', () => {
     auth = new FakeAuthService({ certIds: [7, 8], domainIds: [DOMAIN_ID] });
     const nonces = new FakeNonceStore();
     const owner = { id: MOCK_USER.userId, role: null, ...MOCK_USER };
+    // Business allows 50 active connectors
+    const billing = {
+      resolveUserTier: jest.fn().mockResolvedValue('business'),
+      getResourceCountUserIds: jest.fn().mockResolvedValue([MOCK_USER.userId]),
+    };
     const shared = [
       ConnectorsService,
       ConnectorReportsService,
@@ -136,14 +142,18 @@ describe('Connectors (e2e)', () => {
       { provide: AlertsService, useValue: alerts },
       { provide: EmailService, useValue: email },
       { provide: ConnectorAlertGate, useValue: new FakeAlertGate() },
+      { provide: BillingService, useValue: billing },
       {
-        provide: BillingService,
-        useValue: {
-          resolveUserTier: jest.fn().mockResolvedValue('free'),
-          getResourceCountUserIds: jest
-            .fn()
-            .mockResolvedValue([MOCK_USER.userId]),
-        },
+        // The real limit check, counting through the fake connector repo
+        provide: PlanLimitsService,
+        useFactory: () =>
+          new PlanLimitsService(
+            billing as unknown as BillingService,
+            {} as never,
+            repo as never,
+            {} as never,
+            {} as never,
+          ),
       },
     ];
 
@@ -334,11 +344,20 @@ describe('Connectors (e2e)', () => {
       await session().get('/connectors/not-a-uuid').expect(400);
     });
 
-    it('caps active connectors at 50, counting only unrevoked ones', async () => {
+    it('caps active connectors at the plan limit (50 on Business), counting only unrevoked ones', async () => {
       repo.rows = [];
       for (let i = 0; i < 50; i++) await createConnector();
       const res = await session().post('/connectors').send(BODY).expect(402);
-      expect(res.body.message).toBe('Connector limit reached');
+      expect(res.body).toMatchObject({
+        statusCode: 402,
+        code: 'plan_limit_exceeded',
+        limit: 50,
+        current: 50,
+        plan: 'business',
+        upgradeTo: 'enterprise',
+        message:
+          'Connector limit reached: the Business plan includes 50. Contact us about Enterprise for a higher limit.',
+      });
       await session().delete(`/connectors/${repo.rows[0].id}`).expect(204);
       await createConnector();
       repo.rows = [];

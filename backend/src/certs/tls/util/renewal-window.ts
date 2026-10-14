@@ -82,6 +82,9 @@ export function renewalWindowDays(plan: string): number {
 /**
  * Renewal window for one certificate: the plan's window, but at least
  * CONNECTOR_MIN_RENEWAL_WINDOW_DAYS for certificates a connector renews.
+ * That minimum applies on every plan, the free one included: a connector
+ * renews on the customer's machine, which can be offline for days, and the
+ * free plan's other limits (one connector, 10 active certificates) bound it.
  */
 export function certRenewalWindowDays(
   plan: string,

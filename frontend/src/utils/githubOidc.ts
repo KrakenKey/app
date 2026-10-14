@@ -1,5 +1,3 @@
-/** Most trust policies an account can have. */
-export const MAX_GITHUB_OIDC_TRUSTS = 20;
 /** Most refs one policy can list. */
 export const MAX_ALLOWED_REFS = 20;
 

@@ -55,6 +55,7 @@ export function planLabel(plan: string | null | undefined): string {
 
 /** Plans that can back an organization, smallest first. */
 export const ORG_ELIGIBLE_PLANS: readonly SubscriptionPlan[] = [
+  'pro',
   'business',
   'enterprise',
 ];
@@ -62,6 +63,26 @@ export const ORG_ELIGIBLE_PLANS: readonly SubscriptionPlan[] = [
 /** True when the plan can back an organization. */
 export function canHaveOrganization(plan: string | null | undefined): boolean {
   return ORG_ELIGIBLE_PLANS.includes(normalizePlan(plan));
+}
+
+/**
+ * The plan to suggest when a limit is reached: Pro after Starter, Business
+ * after Pro, Enterprise (by quote) after Business.
+ */
+export const NEXT_PLAN: Readonly<
+  Record<SubscriptionPlan, SubscriptionPlan | null>
+> = {
+  free: 'pro',
+  pro: 'business',
+  business: 'enterprise',
+  enterprise: null,
+};
+
+/** The next plan up from this one, or null on the largest. */
+export function nextPlan(
+  plan: string | null | undefined,
+): SubscriptionPlan | null {
+  return NEXT_PLAN[normalizePlan(plan)];
 }
 
 /** Ordering for upgrade checks: a higher number is a bigger plan. */
