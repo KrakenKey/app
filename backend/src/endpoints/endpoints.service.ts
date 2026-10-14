@@ -182,13 +182,18 @@ export class EndpointsService {
   /**
    * Marks the endpoint for an on-demand scan: probes see `scanNow` and the
    * next result is accepted even inside the scan interval. At most one
-   * request per the owner's plan minimum interval (60 minutes on Starter,
-   * 15 on Pro, 1 on Business), so on-demand scans can't bypass it.
+   * request per the owner's plan interval, so on-demand scans can't go
+   * past it: the connected minimum (60 minutes on the free plan, 15 on
+   * Pro, 1 on Business), or the hosted interval when that is longer and
+   * the endpoint is scanned from a hosted region (60, 30, 5).
    */
   async requestScan(id: string, userId: string): Promise<Endpoint> {
     const endpoint = await this.findOne(id, userId);
     const plan = await this.billingService.resolveUserTier(endpoint.userId);
-    const cooldownMinutes = PLAN_LIMITS[plan].minScanInterval;
+    const limits = PLAN_LIMITS[plan];
+    const cooldownMinutes = endpoint.hostedRegions?.length
+      ? Math.max(limits.minScanInterval, limits.hostedScanInterval)
+      : limits.minScanInterval;
     const now = Date.now();
     const last = endpoint.lastScanRequestedAt?.getTime();
     if (last !== undefined && now - last < cooldownMinutes * 60_000) {

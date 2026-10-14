@@ -18,6 +18,7 @@ describe('PlanLimitsService', () => {
   };
   let users: {
     count: jest.Mock;
+    find: jest.Mock;
     findOne: jest.Mock;
     manager: { transaction: jest.Mock };
   };
@@ -50,11 +51,14 @@ describe('PlanLimitsService', () => {
     users = {
       count: jest.fn().mockResolvedValue(0),
       findOne: jest.fn().mockResolvedValue({ id: 'u1', organizationId: null }),
+      find: jest.fn().mockResolvedValue([{ id: 'u1' }, { id: 'u2' }]),
       manager: { transaction: jest.fn() },
     };
     manager = {
-      query: jest.fn(async (_sql: string, params: unknown[]) => {
-        calls.push(`lock ${String(params[1])}`);
+      query: jest.fn(async (sql: string, params?: unknown[]) => {
+        calls.push(
+          sql.startsWith('SET LOCAL') ? sql : `lock ${String(params?.[1])}`,
+        );
       }),
       getRepository: jest.fn((entity: { name: string }) => {
         const repo = {
@@ -67,6 +71,10 @@ describe('PlanLimitsService', () => {
           count: (...args: unknown[]) => {
             calls.push(`count ${entity.name}`);
             return (repo as { count: jest.Mock }).count(...args);
+          },
+          find: (...args: unknown[]) => {
+            calls.push(`find ${entity.name}`);
+            return (repo as { find: jest.Mock }).find(...args);
           },
         };
       }),
@@ -139,10 +147,13 @@ describe('PlanLimitsService', () => {
       expect(save).toHaveBeenCalledWith(manager);
       // Lock first, then count, then insert, all in one transaction
       expect(calls).toEqual([
+        "SET LOCAL lock_timeout = '5s'",
         'lock user:u1',
         expect.stringMatching(/^count /),
         'save',
       ]);
+      // Nothing inside the transaction goes through another connection
+      expect(billing.getResourceCountUserIds).not.toHaveBeenCalled();
       expect(manager.query).toHaveBeenCalledWith(
         'SELECT pg_advisory_xact_lock($1, hashtext($2))',
         [PLAN_LIMIT_LOCK_NAMESPACE, 'user:u1'],
@@ -172,10 +183,29 @@ describe('PlanLimitsService', () => {
     expect(where.revokedAt.type).toBe('isNull');
   });
 
-  it('locks the whole organization for a member of one', async () => {
+  it('locks the whole organization and counts its members under the lock', async () => {
     users.findOne.mockResolvedValue({ id: 'u2', organizationId: 'org-1' });
     await svc.addWithinLimit('u2', 'connectors', async () => undefined);
-    expect(calls[0]).toBe('lock org:org-1');
+    expect(calls.slice(1, 3)).toEqual(['lock org:org-1', 'find User']);
+    const where = connectors.count.mock.calls[0][0].where;
+    expect(where.userId.value).toEqual(['u1', 'u2']);
+    expect(billing.getResourceCountUserIds).not.toHaveBeenCalled();
+  });
+
+  it('asks to retry when the account lock is busy for too long', async () => {
+    manager.query.mockImplementation(async (sql: string) => {
+      if (!sql.startsWith('SET LOCAL')) {
+        throw Object.assign(
+          new Error('canceling statement due to lock timeout'),
+          {
+            code: '55P03',
+          },
+        );
+      }
+    });
+    await expect(
+      svc.addWithinLimit('u1', 'connectors', async () => undefined),
+    ).rejects.toMatchObject({ status: 409 });
   });
 
   describe('organization members', () => {
@@ -190,7 +220,7 @@ describe('PlanLimitsService', () => {
       expect(users.count).toHaveBeenCalledWith({
         where: { organizationId: 'org-1' },
       });
-      expect(calls[0]).toBe('lock org:org-1');
+      expect(calls[1]).toBe('lock org:org-1');
       users.count.mockResolvedValue(3);
       save.mockClear();
       const body = await refusal(

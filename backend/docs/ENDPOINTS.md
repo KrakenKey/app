@@ -52,13 +52,14 @@ Scan intervals follow the endpoint owner's plan (the organization's plan for an 
 
 `POST /probes/report`:
 
+- Matches results on host, port **and SNI** (the endpoint's SNI, or its host), so endpoints of different accounts on the same host and port with different SNI each get their own result.
 - Matches a connected probe's results only to the owner's endpoints **assigned to that probe**, and a hosted probe's only to endpoints with a hosted region equal to the region the probe **registered** with (a probe registered as connected can't send hosted results).
 - Takes at most one result per endpoint per report, and at most 1,000 results (`MAX_REPORT_RESULTS`). A connected probe scans at most its owner's monitored endpoints (300 on Business), and the 100 kB body limit already holds a report to roughly 100 to 150 results; the bound keeps a raised body limit from turning into unbounded work.
-- Skips a result that arrives sooner than the endpoint's interval after the previous result from the same probe. Both times are when the API received the results (`createdAt`, looked up with one `DISTINCT ON` query per report on the `(endpointId, probeId, createdAt)` index), never the probe's own timestamp, with 10% or at least 20 seconds of slack. A scan requested since the previous result gets through.
+- Skips a result that arrives sooner than the endpoint's interval after the previous result from the same probe. Both times are when the API received the results (`createdAt`, looked up with one query per report that reads, for each endpoint, only the newest row from the `(endpointId, probeId, createdAt)` index through a `LATERAL` subquery, so it doesn't grow with retention), never the probe's own timestamp, with 10% or at least 20 seconds of slack. A scan requested since the previous result gets through.
 - Stores the probe's timestamp as `scannedAt`, but never later than when the result arrived.
 - Counts skipped results (too soon, or a second result for the same endpoint) in `tooSoon`: `{ "accepted": 3, "tooSoon": 1 }`.
 
-`POST /endpoints/:id/scan` can be called once per the owner's plan minimum interval (60, 15, 1 or 1 minutes); an earlier call answers `429` saying when to try again. So on-demand scans can't go past the plan's scan rate.
+`POST /endpoints/:id/scan` can be called once per the owner's plan minimum interval (60, 15, 1 or 1 minutes), or the hosted interval when that is longer and the endpoint has a hosted region (60, 30, 5 or 1 minutes); an earlier call answers `429` saying when to try again. So on-demand scans can't go past the plan's scan rate.
 
 Probes before per-endpoint intervals scan everything at their local interval: a connected probe set faster than its plan allows has the extra results skipped, and a hosted probe on an older version scans at its local interval until it is upgraded.
 

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, In, IsNull, Repository } from 'typeorm';
 import { PLAN_LIMITS } from '@krakenkey/shared';
@@ -18,6 +18,12 @@ export type PooledLimit = Exclude<CountedLimit, 'orgMembers'>;
  * insert past the limit. Distinct from the renewal queue's namespace.
  */
 export const PLAN_LIMIT_LOCK_NAMESPACE = 0x4b4b504c;
+
+/** Longest wait for the per-account lock. */
+const LOCK_WAIT = '5s';
+
+/** Postgres lock_not_available, raised when lock_timeout runs out. */
+const LOCK_NOT_AVAILABLE = '55P03';
 
 const ENTITIES = {
   connectors: Connector,
@@ -66,12 +72,28 @@ export class PlanLimitsService {
     limit: PooledLimit,
     save: (manager: EntityManager) => Promise<T>,
   ): Promise<T> {
+    // Everything outside the transaction runs before it opens, and
+    // everything inside goes through its manager: a second pool connection
+    // taken while holding the lock could exhaust the pool under load.
     const plan = await this.billing.resolveUserTier(userId);
     const max = PLAN_LIMITS[plan][limit];
-    const lockKey = await this.accountLockKey(userId);
+    const user = await this.users.findOne({
+      where: { id: userId },
+      select: { id: true, organizationId: true },
+    });
+    const organizationId = user?.organizationId ?? null;
+    const lockKey = organizationId ? `org:${organizationId}` : `user:${userId}`;
     return this.users.manager.transaction(async (manager) => {
       await this.lock(manager, lockKey);
-      const userIds = await this.billing.getResourceCountUserIds(userId);
+      // Members are read under the lock, so the pool is current
+      const userIds = organizationId
+        ? (
+            await manager.getRepository(User).find({
+              where: { organizationId },
+              select: { id: true },
+            })
+          ).map((u) => u.id)
+        : [userId];
       const current = await countIn(
         manager.getRepository(ENTITIES[limit]) as Repository<{
           userId: string;
@@ -109,21 +131,25 @@ export class PlanLimitsService {
     });
   }
 
-  private async accountLockKey(userId: string): Promise<string> {
-    const user = await this.users.findOne({
-      where: { id: userId },
-      select: { id: true, organizationId: true },
-    });
-    return user?.organizationId
-      ? `org:${user.organizationId}`
-      : `user:${userId}`;
-  }
-
+  /**
+   * Takes the per-account lock, waiting at most LOCK_WAIT. A request that
+   * can't get it in time is told to retry instead of holding a connection.
+   */
   private async lock(manager: EntityManager, key: string): Promise<void> {
-    await manager.query('SELECT pg_advisory_xact_lock($1, hashtext($2))', [
-      PLAN_LIMIT_LOCK_NAMESPACE,
-      key,
-    ]);
+    await manager.query(`SET LOCAL lock_timeout = '${LOCK_WAIT}'`);
+    try {
+      await manager.query('SELECT pg_advisory_xact_lock($1, hashtext($2))', [
+        PLAN_LIMIT_LOCK_NAMESPACE,
+        key,
+      ]);
+    } catch (err) {
+      if ((err as { code?: string }).code === LOCK_NOT_AVAILABLE) {
+        throw new ConflictException(
+          'Another change to this account is in progress. Try again in a moment.',
+        );
+      }
+      throw err;
+    }
   }
 
   /**
