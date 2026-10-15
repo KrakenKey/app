@@ -2154,4 +2154,170 @@ describe('BillingService', () => {
       );
     });
   });
+
+  describe('scheduledChange', () => {
+    const periodEnd = Math.floor(Date.parse('2027-10-14T00:00:00Z') / 1000);
+    const periodStart = periodEnd - 365 * 86400;
+    const yearlyPro = {
+      ...mockSubscription,
+      plan: 'pro',
+      billingInterval: 'year',
+      source: 'stripe',
+    } as Subscription;
+
+    /** A Stripe subscription on `priceId` with the schedule the portal attaches. */
+    function stripeSub(
+      priceId: string,
+      schedule: Record<string, unknown> | string | null,
+    ) {
+      return {
+        id: 'sub_test123',
+        items: { data: [{ price: { id: priceId } }] },
+        schedule,
+      };
+    }
+
+    function portalSchedule(nextPrice: string, overrides = {}) {
+      return {
+        id: 'sub_sched_1',
+        status: 'active',
+        current_phase: { start_date: periodStart, end_date: periodEnd },
+        phases: [
+          {
+            start_date: periodStart,
+            end_date: periodEnd,
+            items: [{ price: 'price_pro_year', quantity: 1 }],
+          },
+          {
+            start_date: periodEnd,
+            end_date: periodEnd + 30 * 86400,
+            items: [{ price: nextPrice, quantity: 1 }],
+          },
+        ],
+        ...overrides,
+      };
+    }
+
+    it('reports a yearly-to-monthly switch from the next schedule phase', async () => {
+      mockStripe.subscriptions.retrieve.mockResolvedValue(
+        stripeSub('price_pro_year', portalSchedule('price_pro_month')),
+      );
+
+      await expect(service.scheduledChange(yearlyPro)).resolves.toEqual({
+        plan: 'pro',
+        interval: 'month',
+        effectiveAt: '2027-10-14T00:00:00.000Z',
+      });
+      expect(mockStripe.subscriptions.retrieve).toHaveBeenCalledWith(
+        'sub_test123',
+        { expand: ['schedule'] },
+        expect.objectContaining({ maxNetworkRetries: 0 }),
+      );
+    });
+
+    it('reports a downgrade to a lower plan', async () => {
+      const business = {
+        ...yearlyPro,
+        plan: 'business',
+        billingInterval: 'month',
+      } as Subscription;
+      mockStripe.subscriptions.retrieve.mockResolvedValue(
+        stripeSub(
+          'price_business_month',
+          portalSchedule('price_pro_month', {
+            phases: [
+              {
+                start_date: periodStart,
+                end_date: periodEnd,
+                items: [{ price: { id: 'price_business_month' } }],
+              },
+              {
+                start_date: periodEnd,
+                end_date: periodEnd + 30 * 86400,
+                // Expanded price objects are read too
+                items: [{ price: { id: 'price_pro_month' } }],
+              },
+            ],
+          }),
+        ),
+      );
+
+      await expect(service.scheduledChange(business)).resolves.toEqual({
+        plan: 'pro',
+        interval: 'month',
+        effectiveAt: '2027-10-14T00:00:00.000Z',
+      });
+    });
+
+    it('is null without a schedule', async () => {
+      mockStripe.subscriptions.retrieve.mockResolvedValue(
+        stripeSub('price_pro_year', null),
+      );
+      await expect(service.scheduledChange(yearlyPro)).resolves.toBeNull();
+    });
+
+    it('is null when the schedule is released or has no later phase', async () => {
+      mockStripe.subscriptions.retrieve.mockResolvedValueOnce(
+        stripeSub(
+          'price_pro_year',
+          portalSchedule('price_pro_month', { status: 'released' }),
+        ),
+      );
+      await expect(service.scheduledChange(yearlyPro)).resolves.toBeNull();
+
+      const onlyCurrent = portalSchedule('price_pro_month');
+      onlyCurrent.phases = onlyCurrent.phases.slice(0, 1);
+      mockStripe.subscriptions.retrieve.mockResolvedValueOnce(
+        stripeSub('price_pro_year', onlyCurrent),
+      );
+      await expect(service.scheduledChange(yearlyPro)).resolves.toBeNull();
+    });
+
+    it('is null when the next phase keeps the same plan and interval', async () => {
+      mockStripe.subscriptions.retrieve.mockResolvedValue(
+        stripeSub('price_pro_year', portalSchedule('price_pro_year')),
+      );
+      await expect(service.scheduledChange(yearlyPro)).resolves.toBeNull();
+    });
+
+    it("doesn't guess a plan for a price that isn't configured", async () => {
+      mockStripe.subscriptions.retrieve.mockResolvedValue(
+        stripeSub('price_pro_year', portalSchedule('price_team_456')),
+      );
+      await expect(service.scheduledChange(yearlyPro)).resolves.toBeNull();
+    });
+
+    it('logs and returns null when Stripe fails', async () => {
+      const warn = jest
+        .spyOn((service as any).logger, 'warn')
+        .mockImplementation(() => undefined);
+      mockStripe.subscriptions.retrieve.mockRejectedValue(
+        Object.assign(new Error('secret detail'), {
+          type: 'StripeConnectionError',
+        }),
+      );
+
+      await expect(service.scheduledChange(yearlyPro)).resolves.toBeNull();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('StripeConnectionError'),
+      );
+      expect(warn).not.toHaveBeenCalledWith(
+        expect.stringContaining('secret detail'),
+      );
+    });
+
+    it("doesn't call Stripe for free, Marketplace, ended or canceling subscriptions", async () => {
+      const cases = [
+        null,
+        { ...yearlyPro, stripeSubscriptionId: null },
+        { ...yearlyPro, source: 'marketplace' },
+        { ...yearlyPro, status: 'canceled' },
+        { ...yearlyPro, cancelAtPeriodEnd: true },
+      ] as (Subscription | null)[];
+      for (const sub of cases) {
+        await expect(service.scheduledChange(sub)).resolves.toBeNull();
+      }
+      expect(mockStripe.subscriptions.retrieve).not.toHaveBeenCalled();
+    });
+  });
 });

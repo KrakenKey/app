@@ -241,6 +241,12 @@ export default function Billing() {
       : null;
   const inGrace = graceEndsAt !== null && graceEndsAt.getTime() > Date.now();
   const isCanceling = subscription?.cancelAtPeriodEnd === true;
+  // A downgrade or interval switch made in the Stripe portal that waits for
+  // the end of the period. A pending cancellation is shown on its own.
+  const scheduledChange =
+    subscription?.source !== 'marketplace' && !isCanceling
+      ? (subscription?.scheduledChange ?? null)
+      : null;
   // Microsoft bills Marketplace subscriptions: plan changes, payment and
   // cancellation happen in the Azure portal, not in Stripe.
   const billedByMicrosoft =
@@ -292,8 +298,10 @@ export default function Billing() {
     : 'month';
   const otherInterval: BillingInterval =
     currentInterval === 'month' ? 'year' : 'month';
+  // Not while a change is scheduled: the portal handles that subscription
   const canSwitchInterval =
     isPaid &&
+    !scheduledChange &&
     canManageBilling &&
     !billedByMicrosoft &&
     subscription?.status === 'active' &&
@@ -498,6 +506,13 @@ export default function Billing() {
                     ? 'Billed monthly. '
                     : ''}
                 Current period ends {formatDate(subscription.currentPeriodEnd)}
+              </p>
+            )}
+            {isPaid && scheduledChange && (
+              <p className="mt-2 text-sm text-amber-300">
+                Changes to {labelFor(scheduledChange.plan)},{' '}
+                {scheduledChange.interval === 'year' ? 'yearly' : 'monthly'} on{' '}
+                {formatDate(scheduledChange.effectiveAt)}
               </p>
             )}
             {canSwitchInterval && (

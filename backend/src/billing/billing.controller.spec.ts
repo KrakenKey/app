@@ -16,6 +16,7 @@ describe('BillingController', () => {
     mockBillingService = {
       createCheckoutSession: jest.fn(),
       getSubscription: jest.fn(),
+      scheduledChange: jest.fn().mockResolvedValue(null),
       createPortalSession: jest.fn(),
       previewUpgrade: jest.fn(),
       upgradeSubscription: jest.fn(),
@@ -90,7 +91,30 @@ describe('BillingController', () => {
         source: 'stripe',
         marketplaceStatus: null,
         interval: null,
+        scheduledChange: null,
       });
+    });
+
+    it('includes the change Stripe has scheduled for the subscription', async () => {
+      const sub = {
+        id: 's1',
+        plan: 'pro',
+        status: 'active',
+        stripeSubscriptionId: 'sub_1',
+        billingInterval: 'year',
+        source: 'stripe',
+      };
+      const change = {
+        plan: 'pro',
+        interval: 'month',
+        effectiveAt: '2027-10-14T00:00:00.000Z',
+      };
+      mockBillingService.getSubscription.mockResolvedValue(sub);
+      mockBillingService.scheduledChange.mockResolvedValue(change);
+
+      const result = await controller.getSubscription(mockReq);
+      expect(result.scheduledChange).toEqual(change);
+      expect(mockBillingService.scheduledChange).toHaveBeenCalledWith(sub);
     });
 
     it('reports the billing interval of a Stripe subscription', async () => {
