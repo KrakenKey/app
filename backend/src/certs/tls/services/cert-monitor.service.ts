@@ -41,7 +41,7 @@ export class CertMonitorService {
   /**
    * Runs daily at 6 AM. Finds all issued certificates expiring within their
    * tier-specific renewal window and queues a renewal job for each via BullMQ.
-   * Free tier: 5-day window, paid tiers: 30-day window.
+   * Free plan (Starter): 10-day window, paid plans: 30-day window.
    *
    * Connector-managed certificates get the expiry warning but are never
    * renewed here: the connector renews them with its own keys. They are

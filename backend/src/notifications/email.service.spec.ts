@@ -583,7 +583,7 @@ describe('EmailService', () => {
       userId: 'u1',
       username: 'testuser',
       email: 'test@example.com',
-      plan: 'team',
+      plan: 'business',
       graceEndsAt: new Date('2026-10-26T15:00:00Z'),
     };
     const sent = () =>
@@ -612,7 +612,7 @@ describe('EmailService', () => {
         'Action required: your KrakenKey payment failed',
       );
       expect(mail.html).toContain('October 26, 2026');
-      expect(mail.html).toContain('Team limits');
+      expect(mail.html).toContain('Business limits');
       expect(mail.html).toContain(
         'https://dev-web.krakenkey.io/dashboard/billing',
       );
@@ -624,11 +624,18 @@ describe('EmailService', () => {
       expect(mail.text).not.toContain('<');
     });
 
+    it('names the free plan Starter when the paid limits end', async () => {
+      await service.sendPaymentFailed(ctx);
+
+      expect(sent().text).toContain('moves to the Starter plan limits');
+      expect(sent().text).not.toMatch(/\bFree\b/);
+    });
+
     it('names the organization for an org subscription', async () => {
       await service.sendPaymentFailed({ ...ctx, organizationName: 'Acme' });
 
       expect(sent().text).toContain(
-        "the Acme organization's Team subscription",
+        "the Acme organization's Business subscription",
       );
     });
 

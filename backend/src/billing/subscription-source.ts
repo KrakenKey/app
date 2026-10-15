@@ -1,3 +1,7 @@
+import {
+  ORG_ELIGIBLE_PLANS as ORG_PLANS,
+  PLAN_LABELS,
+} from '@krakenkey/shared';
 import type { Subscription } from './entities/subscription.entity';
 
 /**
@@ -18,7 +22,10 @@ export const LIVE_STRIPE_STATUSES = new Set([
 const LIVE_MARKETPLACE_STATUSES = new Set(['active', 'past_due']);
 
 /** Plans that can back an organization. */
-export const ORG_ELIGIBLE_PLANS = new Set(['team', 'business', 'enterprise']);
+export const ORG_ELIGIBLE_PLANS: ReadonlySet<string> = new Set(ORG_PLANS);
+
+/** The smallest plan that can back an organization, for messages. */
+export const ORG_MIN_PLAN_LABEL = PLAN_LABELS[ORG_PLANS[0]];
 
 type SourceFields = Pick<Subscription, 'stripeSubscriptionId' | 'status'> &
   Partial<Pick<Subscription, 'source' | 'marketplaceSubscriptionId'>>;

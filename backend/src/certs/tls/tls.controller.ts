@@ -283,7 +283,7 @@ export class TlsController {
     type: Boolean,
     description:
       'Only renew if the certificate is inside its renewal window ' +
-      '(free: 5 days, paid: 30 days before expiry; at least 30 days for ' +
+      '(Starter plan: 10 days, paid plans: 30 days before expiry; at least 30 days for ' +
       'connector-managed certificates, which are due once their renewAfter ' +
       'has passed). Otherwise nothing is queued and the response has ' +
       'skipped: true. Default: false (always renew).',

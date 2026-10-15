@@ -76,7 +76,13 @@ api.interceptors.response.use(
         break;
 
       case 429:
-        toast.error('Too many requests. Please slow down.');
+        // The on-demand scan limit explains when to try again
+        toast.error(
+          typeof data?.message === 'string' &&
+            data.message.startsWith('A scan was already requested')
+            ? data.message
+            : 'Too many requests. Please slow down.',
+        );
         break;
 
       case 500:

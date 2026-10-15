@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
 import { Plus } from 'lucide-react';
-import { MAX_CONNECTORS_PER_USER } from '@krakenkey/shared';
 import type {
   ConnectorScope,
   CreateConnectorResponse,
@@ -14,10 +13,17 @@ import { Modal } from '../ui/Modal';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
 
-/** The message to show for a failed create, or null when a toast is enough. */
+/**
+ * The message to show for a failed create, or null when a toast is enough.
+ * A 402 is the plan's connector limit; the API's message names the plan
+ * that raises it.
+ */
 function createErrorMessage(error: unknown): string | null {
   if (axios.isAxiosError(error) && error.response?.status === 402) {
-    return `You have the maximum of ${MAX_CONNECTORS_PER_USER} active connectors. Revoke one you no longer use to add another.`;
+    const message: unknown = error.response.data?.message;
+    return typeof message === 'string'
+      ? `${message} Or revoke a connector you no longer use.`
+      : 'Your plan has no connectors left. Revoke one you no longer use, or upgrade on the billing page.';
   }
   return null;
 }

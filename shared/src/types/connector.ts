@@ -10,9 +10,6 @@ export const CONNECTOR_SCOPES = ['certs:read', 'certs:renew'] as const;
 
 export type ConnectorScope = (typeof CONNECTOR_SCOPES)[number];
 
-/** Active (not revoked) connectors per user. */
-export const MAX_CONNECTORS_PER_USER = 50;
-
 /** Prefix of enrollment tokens. */
 export const CONNECTOR_ENROLLMENT_TOKEN_PREFIX = 'kkce_';
 

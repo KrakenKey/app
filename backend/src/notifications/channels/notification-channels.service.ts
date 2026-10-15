@@ -3,12 +3,12 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { PlanLimitsService } from '../../billing/limits/plan-limits.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { randomUUID } from 'crypto';
 import {
   DEFAULT_ALERT_EVENTS,
-  MAX_NOTIFICATION_CHANNELS,
   type CreateNotificationChannelResponse,
   type NotificationChannel as NotificationChannelView,
   type RotateNotificationChannelSecretResponse,
@@ -31,6 +31,7 @@ export class NotificationChannelsService {
     @InjectRepository(NotificationChannel)
     private readonly repo: Repository<NotificationChannel>,
     private readonly delivery: ChannelDeliveryService,
+    private readonly planLimits: PlanLimitsService,
   ) {}
 
   async list(userId: string): Promise<NotificationChannelView[]> {
@@ -45,12 +46,7 @@ export class NotificationChannelsService {
     userId: string,
     dto: CreateNotificationChannelDto,
   ): Promise<CreateNotificationChannelResponse> {
-    const count = await this.repo.count({ where: { userId } });
-    if (count >= MAX_NOTIFICATION_CHANNELS) {
-      throw new BadRequestException(
-        `You can have at most ${MAX_NOTIFICATION_CHANNELS} notification channels. Delete one before adding another.`,
-      );
-    }
+    await this.planLimits.assertCanAdd(userId, 'alertChannels');
     await this.checkUrl(dto.type, dto.url);
 
     const secret = dto.type === 'webhook' ? generateWebhookSecret() : null;
@@ -66,7 +62,11 @@ export class NotificationChannelsService {
       lastDeliveryStatus: null,
       lastError: null,
     });
-    const saved = await this.repo.save(channel);
+    const saved = await this.planLimits.addWithinLimit(
+      userId,
+      'alertChannels',
+      (manager) => manager.getRepository(NotificationChannel).save(channel),
+    );
     const view: CreateNotificationChannelResponse = this.toView(saved);
     if (secret) view.secret = secret;
     return view;

@@ -18,8 +18,9 @@ describe('renewal window', () => {
       expect(certRenewalWindowDays('free', null)).toBe(
         renewalWindowDays('free'),
       );
-      expect(certRenewalWindowDays('free', null)).toBe(5);
-      expect(certRenewalWindowDays('team', undefined)).toBe(30);
+      expect(certRenewalWindowDays('free', null)).toBe(10);
+      expect(certRenewalWindowDays('pro', null)).toBe(30);
+      expect(certRenewalWindowDays('business', undefined)).toBe(30);
     });
 
     it('gives connector-managed certificates at least 30 days', () => {
@@ -27,8 +28,13 @@ describe('renewal window', () => {
       expect(certRenewalWindowDays('business', 'connector')).toBe(30);
     });
 
+    it('reads a legacy plan id as the plan that replaced it', () => {
+      expect(certRenewalWindowDays('starter', null)).toBe(30);
+      expect(certRenewalWindowDays('team', null)).toBe(30);
+    });
+
     it('falls back to the free window for an unknown plan', () => {
-      expect(certRenewalWindowDays('nope', null)).toBe(5);
+      expect(certRenewalWindowDays('nope', null)).toBe(10);
       expect(certRenewalWindowDays('nope', 'connector')).toBe(30);
     });
   });

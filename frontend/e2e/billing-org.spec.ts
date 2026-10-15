@@ -1,11 +1,11 @@
 import { test, expect, authenticateAs, api } from './fixtures/auth';
-import { teamSub, orgOwnerUser, orgMemberUser } from './fixtures/mock-data';
+import { businessSub, orgOwnerUser, orgMemberUser } from './fixtures/mock-data';
 
 test.describe('Billing — org member (read-only)', () => {
   test.beforeEach(async ({ page }) => {
     await authenticateAs(page, orgMemberUser);
     await page.route(api('/billing/subscription'), (route) =>
-      route.fulfill({ status: 200, json: teamSub }),
+      route.fulfill({ status: 200, json: businessSub }),
     );
   });
 
@@ -22,7 +22,7 @@ test.describe('Billing — org member (read-only)', () => {
     const planCard = page
       .getByRole('heading', { name: 'Current Plan' })
       .locator('..');
-    await expect(planCard.getByText('Team', { exact: true })).toBeVisible();
+    await expect(planCard.getByText('Business', { exact: true })).toBeVisible();
 
     // No billing management buttons for non-owner members
     await expect(
@@ -36,7 +36,7 @@ test.describe('Billing — org owner (full controls)', () => {
   test.beforeEach(async ({ page }) => {
     await authenticateAs(page, orgOwnerUser);
     await page.route(api('/billing/subscription'), (route) =>
-      route.fulfill({ status: 200, json: teamSub }),
+      route.fulfill({ status: 200, json: businessSub }),
     );
   });
 

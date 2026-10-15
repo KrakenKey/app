@@ -59,7 +59,8 @@ export class CreateEndpointDto {
   probeIds?: string[];
 
   @ApiPropertyOptional({
-    description: 'Hosted probe regions to enable for scanning (Team tier+)',
+    description:
+      'Hosted probe regions to enable for scanning (the Starter plan includes one hosted endpoint)',
     example: ['us-east-1'],
   })
   @IsOptional()

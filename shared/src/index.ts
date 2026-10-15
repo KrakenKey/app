@@ -15,3 +15,4 @@ export * from './types/notification-channel';
 export * from './types/report';
 export * from './constants/routes';
 export * from './constants/plan-limits';
+export * from './constants/plans';

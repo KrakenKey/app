@@ -20,9 +20,10 @@ const mockStripe = {
   checkout: { sessions: { create: jest.fn() } },
   billingPortal: { sessions: { create: jest.fn() } },
   subscriptions: { retrieve: jest.fn(), update: jest.fn(), cancel: jest.fn() },
+  subscriptionSchedules: { release: jest.fn() },
   prices: { retrieve: jest.fn() },
   invoiceItems: { create: jest.fn() },
-  invoices: { create: jest.fn(), pay: jest.fn() },
+  invoices: { create: jest.fn(), pay: jest.fn(), createPreview: jest.fn() },
   webhooks: { constructEvent: jest.fn() },
 };
 jest.mock('stripe', () => {
@@ -42,7 +43,7 @@ describe('BillingService', () => {
     userId,
     stripeCustomerId: 'cus_test123',
     stripeSubscriptionId: 'sub_test123',
-    plan: 'starter',
+    plan: 'pro',
     status: 'active',
     currentPeriodEnd: new Date('2026-04-09'),
     cancelAtPeriodEnd: false,
@@ -109,6 +110,11 @@ describe('BillingService', () => {
               const config: Record<string, string> = {
                 KK_STRIPE_SECRET_KEY: 'sk_test_123',
                 KK_STRIPE_WEBHOOK_SECRET: 'whsec_test',
+                KK_STRIPE_PRICE_PRO_MONTHLY: 'price_pro_month',
+                KK_STRIPE_PRICE_PRO_YEARLY: 'price_pro_year',
+                KK_STRIPE_PRICE_BUSINESS_MONTHLY: 'price_business_month',
+                KK_STRIPE_PRICE_BUSINESS_YEARLY: 'price_business_year',
+                // Old prices: never used for Pro or Business
                 KK_STRIPE_PRICE_STARTER: 'price_starter_123',
                 KK_STRIPE_PRICE_TEAM: 'price_team_456',
                 KK_APP_DOMAIN: 'app.krakenkey.io',
@@ -147,7 +153,7 @@ describe('BillingService', () => {
     it('returns plan for active subscription', async () => {
       mockRepository.findOne.mockResolvedValue(mockSubscription);
       const tier = await service.resolveUserTier(userId);
-      expect(tier).toBe('starter');
+      expect(tier).toBe('pro');
     });
 
     it('returns free when no subscription exists', async () => {
@@ -174,7 +180,7 @@ describe('BillingService', () => {
         status: 'past_due',
         pastDueSince: daysAgo(13),
       });
-      expect(await service.resolveUserTier(userId)).toBe('starter');
+      expect(await service.resolveUserTier(userId)).toBe('pro');
     });
 
     it('drops to free once the grace period has passed', async () => {
@@ -213,11 +219,11 @@ describe('BillingService', () => {
         ...mockSubscription,
         userId: null,
         organizationId: 'org-1',
-        plan: 'team',
+        plan: 'business',
         status: 'past_due',
         pastDueSince: daysAgo(2),
       });
-      expect(await service.resolveUserTier(userId)).toBe('team');
+      expect(await service.resolveUserTier(userId)).toBe('business');
       expect(mockRepository.findOne).toHaveBeenCalledWith({
         where: { organizationId: 'org-1' },
       });
@@ -300,18 +306,18 @@ describe('BillingService', () => {
       const url = await service.createCheckoutSession(
         userId,
         'test@example.com',
-        'starter',
+        'pro',
       );
       expect(url).toBe('https://checkout.stripe.com/session123');
       expect(mockStripe.checkout.sessions.create).toHaveBeenCalledWith(
         expect.objectContaining({
           customer: 'cus_test123',
           mode: 'subscription',
-          metadata: expect.objectContaining({ plan: 'starter' }),
+          metadata: expect.objectContaining({ plan: 'pro' }),
         }),
         {
           idempotencyKey: expect.stringMatching(
-            new RegExp(`^checkout-user-${userId}-starter-\\d+$`),
+            new RegExp(`^checkout-user-${userId}-pro-month-\\d+$`),
           ),
         },
       );
@@ -326,7 +332,7 @@ describe('BillingService', () => {
         });
 
         const err = await service
-          .createCheckoutSession(userId, 'test@example.com', 'team')
+          .createCheckoutSession(userId, 'test@example.com', 'business')
           .catch((e: unknown) => e);
 
         expect(err).toBeInstanceOf(ConflictException);
@@ -351,14 +357,14 @@ describe('BillingService', () => {
                 ...mockSubscription,
                 userId: null,
                 organizationId: orgId,
-                plan: 'team',
+                plan: 'business',
               }
             : null,
         ),
       );
 
       await expect(
-        service.createCheckoutSession(userId, 'test@example.com', 'team'),
+        service.createCheckoutSession(userId, 'test@example.com', 'business'),
       ).rejects.toThrow(ConflictException);
       expect(mockRepository.findOne).toHaveBeenCalledWith({
         where: { organizationId: orgId },
@@ -379,7 +385,7 @@ describe('BillingService', () => {
       });
 
       await expect(
-        service.createCheckoutSession(userId, 'test@example.com', 'starter'),
+        service.createCheckoutSession(userId, 'test@example.com', 'pro'),
       ).resolves.toBe('https://checkout.stripe.com/session123');
     });
 
@@ -393,7 +399,7 @@ describe('BillingService', () => {
       });
 
       await expect(
-        service.createCheckoutSession(userId, 'test@example.com', 'starter'),
+        service.createCheckoutSession(userId, 'test@example.com', 'pro'),
       ).resolves.toBe('https://checkout.stripe.com/session123');
     });
 
@@ -405,8 +411,8 @@ describe('BillingService', () => {
       const now = jest.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000);
 
       try {
-        await service.createCheckoutSession(userId, 'a@b.c', 'starter');
-        await service.createCheckoutSession(userId, 'a@b.c', 'starter');
+        await service.createCheckoutSession(userId, 'a@b.c', 'pro');
+        await service.createCheckoutSession(userId, 'a@b.c', 'pro');
       } finally {
         now.mockRestore();
       }
@@ -424,7 +430,7 @@ describe('BillingService', () => {
       );
 
       await expect(
-        service.createCheckoutSession(userId, 'test@example.com', 'team'),
+        service.createCheckoutSession(userId, 'test@example.com', 'business'),
       ).rejects.toThrow(ConflictException);
     });
   });
@@ -466,7 +472,7 @@ describe('BillingService', () => {
         type: 'checkout.session.completed',
         data: {
           object: {
-            metadata: { userId, plan: 'starter' },
+            metadata: { userId, plan: 'pro' },
             subscription: 'sub_new123',
             customer: 'cus_test123',
           },
@@ -475,7 +481,7 @@ describe('BillingService', () => {
 
       expect(mockRepository.save).toHaveBeenCalledWith(
         expect.objectContaining({
-          plan: 'starter',
+          plan: 'pro',
           status: 'active',
           stripeSubscriptionId: 'sub_new123',
         }),
@@ -489,7 +495,7 @@ describe('BillingService', () => {
           data: {
             object: {
               id: 'cs_test_2',
-              metadata: { userId, plan: 'team' },
+              metadata: { userId, plan: 'business' },
               subscription,
               customer: 'cus_test123',
             },
@@ -557,7 +563,7 @@ describe('BillingService', () => {
         expect(mockRepository.save).toHaveBeenCalledWith(
           expect.objectContaining({
             stripeSubscriptionId: 'sub_new',
-            plan: 'team',
+            plan: 'business',
           }),
         );
       });
@@ -655,7 +661,7 @@ describe('BillingService', () => {
                 {
                   current_period_end:
                     Math.floor(Date.now() / 1000) + 86400 * 30,
-                  price: { id: 'price_team_456' },
+                  price: { id: 'price_business_month' },
                 },
               ],
             },
@@ -666,9 +672,148 @@ describe('BillingService', () => {
 
       expect(mockRepository.save).toHaveBeenCalledWith(
         expect.objectContaining({
-          plan: 'team',
+          plan: 'business',
         }),
       );
+    });
+  });
+
+  describe('resolveTiers', () => {
+    it('resolves many owners in one query, org plan first, legacy ids mapped', async () => {
+      const qb = {
+        leftJoin: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        addSelect: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        setParameters: jest.fn().mockReturnThis(),
+        getRawMany: jest.fn().mockResolvedValue([
+          { id: 'a', plan: 'business' },
+          { id: 'b', plan: null },
+          { id: 'c', plan: 'starter' },
+        ]),
+      };
+      mockUserRepo.createQueryBuilder = jest.fn(() => qb);
+
+      const tiers = await service.resolveTiers(['a', 'b', 'c', 'a']);
+
+      expect(tiers).toEqual(
+        new Map([
+          ['a', 'business'],
+          ['b', 'free'],
+          ['c', 'pro'],
+        ]),
+      );
+      expect(mockUserRepo.createQueryBuilder).toHaveBeenCalledTimes(1);
+      expect(qb.where).toHaveBeenCalledWith('u.id IN (:...ids)', {
+        ids: ['a', 'b', 'c'],
+      });
+      expect(qb.addSelect.mock.calls[0][0]).toContain(
+        'CASE WHEN u."organizationId" IS NOT NULL THEN s_org.plan',
+      );
+    });
+
+    it('skips the query for no users', async () => {
+      mockUserRepo.createQueryBuilder = jest.fn();
+      await expect(service.resolveTiers([])).resolves.toEqual(new Map());
+      expect(mockUserRepo.createQueryBuilder).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('legacy plan ids (starter, team)', () => {
+    const updated = (priceId?: string) =>
+      ({
+        type: 'customer.subscription.updated',
+        data: {
+          object: {
+            id: 'sub_test123',
+            status: 'active',
+            items: {
+              data: [
+                {
+                  current_period_end:
+                    Math.floor(Date.now() / 1000) + 86400 * 30,
+                  ...(priceId ? { price: { id: priceId } } : {}),
+                },
+              ],
+            },
+            cancel_at_period_end: false,
+          },
+        },
+      }) as any;
+
+    it('maps the Pro price to pro', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+      await service.handleWebhookEvent(updated('price_pro_month'));
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ plan: 'pro' }),
+      );
+    });
+
+    it('stores pro for a checkout opened before the rename', async () => {
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        current_period_end: Math.floor(Date.now() / 1000) + 86400 * 30,
+        cancel_at_period_end: false,
+      });
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        stripeSubscriptionId: null,
+        plan: 'free',
+      });
+      await service.handleWebhookEvent({
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            metadata: { userId, plan: 'starter' },
+            subscription: 'sub_new123',
+            customer: 'cus_test123',
+          },
+        },
+      } as any);
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ plan: 'pro' }),
+      );
+    });
+
+    it('rewrites a legacy row and keeps its organization', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        plan: 'team',
+        organizationId: 'org-1',
+      });
+      const dissolve = jest
+        .spyOn(service, 'queueDissolution')
+        .mockResolvedValue(undefined);
+      await service.handleWebhookEvent(updated('price_unknown'));
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ plan: 'business' }),
+      );
+      expect(dissolve).not.toHaveBeenCalled();
+    });
+
+    it('warns about a price it does not know and keeps the plan', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+      const warn = jest
+        .spyOn((service as any).logger, 'warn')
+        .mockImplementation(() => undefined);
+      await service.handleWebhookEvent(updated('price_team_456'));
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /unrecognized price price_team_456; kept plan pro/,
+        ),
+      );
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ plan: 'pro' }),
+      );
+    });
+
+    it('reads a legacy row as its replacement plan for limits', async () => {
+      mockUserRepo.findOne.mockResolvedValue({ id: userId });
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        plan: 'starter',
+        status: 'active',
+      });
+      await expect(service.resolveUserTier(userId)).resolves.toBe('pro');
     });
   });
 
@@ -714,7 +859,7 @@ describe('BillingService', () => {
         userId,
         email: 'owner@example.com',
         username: 'owner',
-        plan: 'starter',
+        plan: 'pro',
       });
       expect(ctx.graceEndsAt.getTime() - saved.pastDueSince.getTime()).toBe(
         14 * 24 * 60 * 60 * 1000,
@@ -788,7 +933,7 @@ describe('BillingService', () => {
         ...mockSubscription,
         userId: null,
         organizationId: 'org-1',
-        plan: 'team',
+        plan: 'business',
         pastDueSince: null,
       });
       mockOrgRepo.findOne.mockResolvedValue({
@@ -813,7 +958,7 @@ describe('BillingService', () => {
         expect.objectContaining({
           userId: 'owner-1',
           email: 'boss@example.com',
-          plan: 'team',
+          plan: 'business',
           organizationName: 'Acme',
         }),
       );
@@ -967,7 +1112,7 @@ describe('BillingService', () => {
   describe('previewUpgrade', () => {
     it('throws NotFoundException when no subscription exists', async () => {
       mockRepository.findOne.mockResolvedValue(null);
-      await expect(service.previewUpgrade(userId, 'team')).rejects.toThrow(
+      await expect(service.previewUpgrade(userId, 'business')).rejects.toThrow(
         NotFoundException,
       );
     });
@@ -977,7 +1122,7 @@ describe('BillingService', () => {
         ...mockSubscription,
         status: 'past_due',
       });
-      await expect(service.previewUpgrade(userId, 'team')).rejects.toThrow(
+      await expect(service.previewUpgrade(userId, 'business')).rejects.toThrow(
         BadRequestException,
       );
     });
@@ -985,95 +1130,644 @@ describe('BillingService', () => {
     it('throws BadRequestException when target plan is not higher', async () => {
       mockRepository.findOne.mockResolvedValue({
         ...mockSubscription,
-        plan: 'team',
+        plan: 'business',
       });
-      await expect(service.previewUpgrade(userId, 'starter')).rejects.toThrow(
+      await expect(service.previewUpgrade(userId, 'pro')).rejects.toThrow(
         BadRequestException,
       );
     });
 
     it('throws BadRequestException for same plan', async () => {
       mockRepository.findOne.mockResolvedValue(mockSubscription);
-      await expect(service.previewUpgrade(userId, 'starter')).rejects.toThrow(
+      await expect(service.previewUpgrade(userId, 'pro')).rejects.toThrow(
         BadRequestException,
       );
     });
 
-    it('returns preview for valid upgrade', async () => {
-      mockRepository.findOne.mockResolvedValue(mockSubscription);
-      mockStripe.prices.retrieve
-        .mockResolvedValueOnce({ unit_amount: 2900, currency: 'usd' })
-        .mockResolvedValueOnce({ unit_amount: 7900, currency: 'usd' });
+    const monthlyPro = {
+      id: 'si_item1',
+      price: {
+        id: 'price_pro_month',
+        unit_amount: 2900,
+        recurring: { interval: 'month' },
+      },
+    };
+    const yearlyPro = {
+      id: 'si_item1',
+      price: {
+        id: 'price_pro_year',
+        unit_amount: 29000,
+        recurring: { interval: 'year' },
+      },
+    };
 
-      const result = await service.previewUpgrade(userId, 'team');
-      expect(result).toEqual({
-        immediateAmountCents: 5000,
-        currency: 'usd',
-        targetPlan: 'team',
-        currentPeriodEnd: mockSubscription.currentPeriodEnd!.toISOString(),
+    it('previews the prorated amount Stripe will charge, keeping the interval', async () => {
+      mockRepository.findOne.mockResolvedValue(mockSubscription);
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        items: { data: [monthlyPro] },
       });
-      expect(mockStripe.prices.retrieve).toHaveBeenCalledWith(
-        'price_starter_123',
-      );
-      expect(mockStripe.prices.retrieve).toHaveBeenCalledWith('price_team_456');
+      mockStripe.invoices.createPreview.mockResolvedValue({
+        amount_due: 6000,
+        currency: 'usd',
+      });
+
+      const result = await service.previewUpgrade(userId, 'business');
+      expect(result).toEqual({
+        immediateAmountCents: 6000,
+        currency: 'usd',
+        targetPlan: 'business',
+        targetInterval: 'month',
+        currentPeriodEnd: mockSubscription.currentPeriodEnd!.toISOString(),
+        prorationDate: expect.any(Number),
+        cancelsScheduledChange: false,
+      });
+      expect(mockStripe.invoices.createPreview).toHaveBeenCalledWith({
+        customer: 'cus_test123',
+        subscription: 'sub_test123',
+        subscription_details: {
+          items: [{ id: 'si_item1', price: 'price_business_month' }],
+          proration_behavior: 'always_invoice',
+          proration_date: result.prorationDate,
+        },
+      });
+    });
+
+    it('keeps a yearly subscription yearly', async () => {
+      mockRepository.findOne.mockResolvedValue(mockSubscription);
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        items: { data: [yearlyPro] },
+      });
+      mockStripe.invoices.createPreview.mockResolvedValue({
+        amount_due: 60000,
+        currency: 'usd',
+      });
+
+      const result = await service.previewUpgrade(userId, 'business');
+      expect(result).toMatchObject({
+        immediateAmountCents: 60000,
+        targetInterval: 'year',
+      });
+      expect(
+        mockStripe.invoices.createPreview.mock.calls[0][0].subscription_details
+          .items[0].price,
+      ).toBe('price_business_year');
+    });
+
+    it('asks Stripe for the prorated amount when the interval changes', async () => {
+      mockRepository.findOne.mockResolvedValue(mockSubscription);
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        items: { data: [monthlyPro] },
+      });
+      mockStripe.invoices.createPreview.mockResolvedValue({
+        amount_due: 147100,
+        currency: 'usd',
+      });
+
+      const result = await service.previewUpgrade(userId, 'business', 'year');
+      expect(result).toMatchObject({
+        immediateAmountCents: 147100,
+        targetPlan: 'business',
+        targetInterval: 'year',
+      });
+      expect(mockStripe.invoices.createPreview).toHaveBeenCalledWith({
+        customer: 'cus_test123',
+        subscription: 'sub_test123',
+        subscription_details: {
+          items: [{ id: 'si_item1', price: 'price_business_year' }],
+          proration_behavior: 'always_invoice',
+          billing_cycle_anchor: 'now',
+          proration_date: result.prorationDate,
+        },
+      });
+      // The new yearly period starts now
+      const end = new Date(result.currentPeriodEnd).getTime();
+      expect(end - Date.now()).toBeGreaterThan(360 * 86_400_000);
     });
   });
 
   describe('upgradeSubscription', () => {
     it('throws NotFoundException when no subscription exists', async () => {
       mockRepository.findOne.mockResolvedValue(null);
-      await expect(service.upgradeSubscription(userId, 'team')).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.upgradeSubscription(userId, 'business'),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('throws BadRequestException when target plan is not higher', async () => {
       mockRepository.findOne.mockResolvedValue(mockSubscription);
-      await expect(
-        service.upgradeSubscription(userId, 'starter'),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.upgradeSubscription(userId, 'pro')).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
-    it('upgrades subscription with flat difference', async () => {
+    const monthlyItem = {
+      items: {
+        data: [
+          {
+            id: 'si_item1',
+            price: {
+              id: 'price_pro_month',
+              unit_amount: 2900,
+              recurring: { interval: 'month' },
+            },
+          },
+        ],
+      },
+    };
+
+    it('upgrades through Stripe proration, paid before anything changes', async () => {
       mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
-      mockStripe.prices.retrieve
-        .mockResolvedValueOnce({ unit_amount: 2900, currency: 'usd' })
-        .mockResolvedValueOnce({ unit_amount: 7900, currency: 'usd' });
-      mockStripe.subscriptions.retrieve.mockResolvedValue({
-        items: { data: [{ id: 'si_item1' }] },
-      });
-      mockStripe.subscriptions.update.mockResolvedValue({});
-      mockStripe.invoiceItems.create.mockResolvedValue({});
-      mockStripe.invoices.create.mockResolvedValue({ id: 'inv_123' });
-      mockStripe.invoices.pay.mockResolvedValue({});
-      mockRepository.save.mockResolvedValue({
-        ...mockSubscription,
-        plan: 'team',
+      mockStripe.subscriptions.retrieve.mockResolvedValue(monthlyItem);
+      const periodEnd = Math.floor(Date.now() / 1000) + 20 * 86400;
+      mockStripe.subscriptions.update.mockResolvedValue({
+        items: { data: [{ current_period_end: periodEnd }] },
       });
 
-      const result = await service.upgradeSubscription(userId, 'team');
-      expect(result.plan).toBe('team');
+      const result = await service.upgradeSubscription(userId, 'business');
+
+      expect(result).toMatchObject({ plan: 'business', interval: 'month' });
       expect(mockStripe.subscriptions.update).toHaveBeenCalledWith(
         'sub_test123',
         {
-          items: [{ id: 'si_item1', price: 'price_team_456' }],
-          proration_behavior: 'none',
+          items: [{ id: 'si_item1', price: 'price_business_month' }],
+          proration_behavior: 'always_invoice',
+          payment_behavior: 'error_if_incomplete',
+        },
+        {
+          idempotencyKey: expect.stringMatching(
+            /^upgrade-sub-uuid-1-[0-9a-f-]{36}$/,
+          ),
         },
       );
-      expect(mockStripe.invoiceItems.create).toHaveBeenCalledWith({
-        customer: 'cus_test123',
-        amount: 5000,
-        currency: 'usd',
-        description: 'Plan upgrade: starter → team',
-      });
-      expect(mockStripe.invoices.create).toHaveBeenCalledWith({
-        customer: 'cus_test123',
-        auto_advance: true,
-      });
-      expect(mockStripe.invoices.pay).toHaveBeenCalledWith('inv_123');
+      // No separate charge: Stripe's prorated invoice is the payment
+      expect(mockStripe.invoiceItems.create).not.toHaveBeenCalled();
+      expect(mockStripe.invoices.create).not.toHaveBeenCalled();
       expect(mockRepository.save).toHaveBeenCalledWith(
-        expect.objectContaining({ plan: 'team' }),
+        expect.objectContaining({ plan: 'business', billingInterval: 'month' }),
       );
+    });
+
+    it('leaves the plan and price unchanged when the card is declined', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+      mockStripe.subscriptions.retrieve.mockResolvedValue(monthlyItem);
+      mockStripe.subscriptions.update.mockRejectedValue(
+        Object.assign(new Error('Your card was declined.'), {
+          type: 'StripeCardError',
+          code: 'card_declined',
+        }),
+      );
+
+      const err = await service
+        .upgradeSubscription(userId, 'business')
+        .catch((e) => e);
+
+      expect(err.getStatus()).toBe(402);
+      expect(err.getResponse().message).toBe(
+        "The payment for the upgrade didn't go through: Your card was declined. Your plan hasn't changed.",
+      );
+      // error_if_incomplete: Stripe applied nothing, and neither do we
+      expect(mockRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('charges correctly when retried after a declined card', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+      mockStripe.subscriptions.retrieve.mockResolvedValue(monthlyItem);
+      mockStripe.subscriptions.update
+        .mockRejectedValueOnce(
+          Object.assign(new Error('Your card was declined.'), {
+            type: 'StripeCardError',
+          }),
+        )
+        .mockResolvedValueOnce({
+          items: { data: [{ current_period_end: 2_000_000_000 }] },
+        });
+
+      await expect(
+        service.upgradeSubscription(userId, 'business'),
+      ).rejects.toMatchObject({ status: 402 });
+      await expect(
+        service.upgradeSubscription(userId, 'business'),
+      ).resolves.toMatchObject({ plan: 'business' });
+
+      const [first, second] = mockStripe.subscriptions.update.mock.calls;
+      // The same change, under a new idempotency key, so Stripe doesn't
+      // replay the declined attempt
+      expect(second[1]).toEqual(first[1]);
+      expect(second[2].idempotencyKey).not.toBe(first[2].idempotencyKey);
+      expect(mockRepository.save).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats any 402 from Stripe as a payment that did not go through', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+      mockStripe.subscriptions.retrieve.mockResolvedValue(monthlyItem);
+      mockStripe.subscriptions.update.mockRejectedValue(
+        Object.assign(
+          new Error('This customer has no attached payment source.'),
+          {
+            type: 'StripeInvalidRequestError',
+            statusCode: 402,
+          },
+        ),
+      );
+      const err = await service
+        .upgradeSubscription(userId, 'business')
+        .catch((e) => e);
+      expect(err.getStatus()).toBe(402);
+      expect(err.getResponse().message).toMatch(/Your plan hasn't changed\.$/);
+      expect(mockRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('sends a payment that needs the bank to the billing portal', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+      mockStripe.subscriptions.retrieve.mockResolvedValue(monthlyItem);
+      mockStripe.subscriptions.update.mockRejectedValue(
+        Object.assign(new Error('requires action'), {
+          type: 'StripeCardError',
+          statusCode: 402,
+          code: 'subscription_payment_intent_requires_action',
+        }),
+      );
+      const err = await service
+        .upgradeSubscription(userId, 'business')
+        .catch((e) => e);
+      expect(err.getStatus()).toBe(402);
+      expect(err.getResponse().message).toMatch(/billing portal/);
+      expect(mockRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('prorates from the time the preview showed', async () => {
+      // A fresh Pro row each time: a successful upgrade changes the row
+      mockRepository.findOne.mockImplementation(async () => ({
+        ...mockSubscription,
+      }));
+      mockStripe.subscriptions.retrieve.mockResolvedValue(monthlyItem);
+      mockStripe.invoices.createPreview.mockResolvedValue({
+        amount_due: 6000,
+        currency: 'usd',
+      });
+      mockStripe.subscriptions.update.mockResolvedValue({
+        items: { data: [{ current_period_end: 2_000_000_000 }] },
+      });
+
+      const preview = await service.previewUpgrade(userId, 'business');
+      expect(
+        mockStripe.invoices.createPreview.mock.calls[0][0].subscription_details
+          .proration_date,
+      ).toBe(preview.prorationDate);
+
+      await service.upgradeSubscription(
+        userId,
+        'business',
+        undefined,
+        preview.prorationDate,
+      );
+      expect(
+        mockStripe.subscriptions.update.mock.calls[0][1].proration_date,
+      ).toBe(preview.prorationDate);
+
+      // A stale or future time is ignored: Stripe prorates from now
+      for (const stale of [
+        preview.prorationDate - 2 * 3600,
+        preview.prorationDate + 3600,
+      ]) {
+        mockStripe.subscriptions.update.mockClear();
+        await service.upgradeSubscription(userId, 'business', undefined, stale);
+        expect(
+          mockStripe.subscriptions.update.mock.calls[0][1].proration_date,
+        ).toBeUndefined();
+      }
+    });
+
+    describe('with a change scheduled in the portal', () => {
+      const scheduled = {
+        ...monthlyItem,
+        schedule: 'sub_sched_1',
+      };
+      const order: string[] = [];
+
+      beforeEach(() => {
+        order.length = 0;
+        mockStripe.subscriptions.retrieve.mockResolvedValue(scheduled);
+        mockStripe.subscriptionSchedules.release.mockImplementation(
+          async () => {
+            order.push('release');
+            return {};
+          },
+        );
+      });
+
+      it('says in the preview that the scheduled change will be canceled', async () => {
+        mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+        mockStripe.invoices.createPreview.mockResolvedValue({
+          amount_due: 6000,
+          currency: 'usd',
+        });
+        const preview = await service.previewUpgrade(userId, 'business');
+        expect(preview.cancelsScheduledChange).toBe(true);
+        // A preview changes nothing
+        expect(mockStripe.subscriptionSchedules.release).not.toHaveBeenCalled();
+      });
+
+      it('releases the schedule, then upgrades, so the upgrade is final', async () => {
+        mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+        mockStripe.subscriptions.update.mockImplementation(async () => {
+          order.push('update');
+          return { items: { data: [{ current_period_end: 2_000_000_000 }] } };
+        });
+
+        await expect(
+          service.upgradeSubscription(userId, 'business'),
+        ).resolves.toMatchObject({ plan: 'business' });
+        expect(mockStripe.subscriptionSchedules.release).toHaveBeenCalledWith(
+          'sub_sched_1',
+        );
+        expect(order).toEqual(['release', 'update']);
+      });
+
+      it('says the scheduled change is gone when the payment then fails', async () => {
+        mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+        mockStripe.subscriptions.update.mockRejectedValue(
+          Object.assign(new Error('Your card was declined.'), {
+            type: 'StripeCardError',
+            statusCode: 402,
+          }),
+        );
+        const warn = jest
+          .spyOn((service as any).logger, 'warn')
+          .mockImplementation(() => undefined);
+
+        const err = await service
+          .upgradeSubscription(userId, 'business')
+          .catch((e) => e);
+
+        expect(err.getStatus()).toBe(402);
+        expect(err.getResponse().message).toBe(
+          "The payment for the upgrade didn't go through: Your card was declined. Your plan hasn't changed. The change that was scheduled for the end of your billing period was canceled.",
+        );
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringMatching(/after releasing schedule sub_sched_1/),
+        );
+        expect(mockRepository.save).not.toHaveBeenCalled();
+      });
+
+      it('leaves the schedule alone when the upgrade is refused before Stripe', async () => {
+        mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+        await expect(
+          service.upgradeSubscription(userId, 'enterprise'),
+        ).rejects.toThrow(BadRequestException);
+        await expect(
+          service.upgradeSubscription(userId, 'pro'),
+        ).rejects.toThrow(BadRequestException);
+        expect(mockStripe.subscriptionSchedules.release).not.toHaveBeenCalled();
+      });
+
+      it('refuses the portal interval switch while a change is scheduled', async () => {
+        mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+        await expect(
+          service.createPortalSession(userId, 'switch_interval'),
+        ).rejects.toThrow(ConflictException);
+        expect(mockStripe.billingPortal.sessions.create).not.toHaveBeenCalled();
+        expect(mockStripe.subscriptionSchedules.release).not.toHaveBeenCalled();
+      });
+    });
+
+    it('starts a new period when moving to yearly', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+      mockStripe.subscriptions.retrieve.mockResolvedValue(monthlyItem);
+      const periodEnd = Math.floor(Date.now() / 1000) + 365 * 86400;
+      mockStripe.subscriptions.update.mockResolvedValue({
+        current_period_end: periodEnd,
+        items: { data: [{ current_period_end: periodEnd }] },
+      });
+
+      const result = await service.upgradeSubscription(
+        userId,
+        'business',
+        'year',
+      );
+
+      expect(mockStripe.subscriptions.update).toHaveBeenCalledWith(
+        'sub_test123',
+        {
+          items: [{ id: 'si_item1', price: 'price_business_year' }],
+          proration_behavior: 'always_invoice',
+          billing_cycle_anchor: 'now',
+          payment_behavior: 'error_if_incomplete',
+        },
+        { idempotencyKey: expect.any(String) },
+      );
+      expect(result).toMatchObject({ plan: 'business', interval: 'year' });
+      expect(result.currentPeriodEnd).toBe(
+        new Date(periodEnd * 1000).toISOString(),
+      );
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ plan: 'business', billingInterval: 'year' }),
+      );
+    });
+
+    it('refuses an interval with no price', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        items: {
+          data: [{ id: 'si_item1', price: { id: 'price_pro_month' } }],
+        },
+      });
+      // Enterprise has no Stripe price at all
+      await expect(
+        service.upgradeSubscription(userId, 'enterprise', 'year'),
+      ).rejects.toThrow('The Enterprise plan is not available for purchase');
+    });
+  });
+
+  describe('plans without their own price', () => {
+    const withPrices = (env: Record<string, string>) =>
+      new BillingService(
+        mockRepository as any,
+        mockUserRepo as any,
+        mockOrgRepo as any,
+        {} as any,
+        {
+          get: (key: string, d?: string) =>
+            ({ KK_STRIPE_SECRET_KEY: 'sk_test_123', ...env })[key] ?? d,
+        } as any,
+        mockEmailService as any,
+      );
+
+    it('does not sell Business at the old Team price', async () => {
+      const svc = withPrices({
+        KK_STRIPE_PRICE_PRO_MONTHLY: 'price_pro_month',
+        KK_STRIPE_PRICE_TEAM: 'price_team_456',
+      });
+      await expect(
+        svc.createCheckoutSession(userId, 'a@example.com', 'business'),
+      ).rejects.toThrow('The Business plan is not available for purchase');
+      expect(svc.purchasablePlans()).toEqual([
+        { plan: 'pro', intervals: ['month'] },
+      ]);
+    });
+
+    it('answers a clear 400 for a yearly checkout without a yearly price', async () => {
+      const svc = withPrices({
+        KK_STRIPE_PRICE_PRO_MONTHLY: 'price_pro_month',
+      });
+      await expect(
+        svc.createCheckoutSession(userId, 'a@example.com', 'pro', 'year'),
+      ).rejects.toThrow('Yearly billing for the Pro plan is not available yet');
+    });
+  });
+
+  describe('annual billing', () => {
+    it('opens a yearly checkout with the yearly price', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        stripeSubscriptionId: null,
+        plan: 'free',
+      });
+      mockStripe.checkout.sessions.create.mockResolvedValue({
+        url: 'https://checkout.stripe.com/y',
+      });
+
+      await service.createCheckoutSession(
+        userId,
+        'test@example.com',
+        'business',
+        'year',
+      );
+
+      expect(mockStripe.checkout.sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          line_items: [{ price: 'price_business_year', quantity: 1 }],
+          metadata: expect.objectContaining({
+            plan: 'business',
+            interval: 'year',
+          }),
+        }),
+        {
+          idempotencyKey: expect.stringMatching(
+            new RegExp(`^checkout-user-${userId}-business-year-\\d+$`),
+          ),
+        },
+      );
+    });
+
+    it('stores the plan and interval from the paid price on checkout', async () => {
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        current_period_end: Math.floor(Date.now() / 1000) + 86400 * 365,
+        cancel_at_period_end: false,
+        cancel_at: null,
+        items: { data: [{ price: { id: 'price_pro_year' } }] },
+      });
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        stripeSubscriptionId: null,
+        plan: 'free',
+      });
+
+      await service.handleWebhookEvent({
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            metadata: { userId, plan: 'pro', interval: 'year' },
+            subscription: 'sub_new',
+            customer: 'cus_test123',
+          },
+        },
+      } as any);
+
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ plan: 'pro', billingInterval: 'year' }),
+      );
+    });
+
+    it('follows a switch to yearly made in the portal', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+
+      await service.handleWebhookEvent({
+        type: 'customer.subscription.updated',
+        data: {
+          object: {
+            id: 'sub_test123',
+            status: 'active',
+            items: {
+              data: [
+                {
+                  current_period_end:
+                    Math.floor(Date.now() / 1000) + 86400 * 365,
+                  price: { id: 'price_business_year' },
+                },
+              ],
+            },
+            cancel_at_period_end: false,
+            cancel_at: null,
+          },
+        },
+      } as any);
+
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          plan: 'business',
+          billingInterval: 'year',
+        }),
+      );
+    });
+
+    it('opens the portal on confirming the switch to yearly', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        items: {
+          data: [{ id: 'si_item1', price: { id: 'price_pro_month' } }],
+        },
+      });
+      mockStripe.billingPortal.sessions.create.mockResolvedValue({
+        url: 'https://billing.stripe.com/flow',
+      });
+
+      await expect(
+        service.createPortalSession(userId, 'switch_interval'),
+      ).resolves.toBe('https://billing.stripe.com/flow');
+      expect(mockStripe.billingPortal.sessions.create).toHaveBeenCalledWith({
+        customer: 'cus_test123',
+        return_url: 'https://app.krakenkey.io/dashboard/billing',
+        flow_data: {
+          type: 'subscription_update_confirm',
+          subscription_update_confirm: {
+            subscription: 'sub_test123',
+            items: [{ id: 'si_item1', price: 'price_pro_year', quantity: 1 }],
+          },
+          after_completion: {
+            type: 'redirect',
+            redirect: {
+              return_url: 'https://app.krakenkey.io/dashboard/billing',
+            },
+          },
+        },
+      });
+    });
+
+    it('switches yearly back to monthly', async () => {
+      mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        items: { data: [{ id: 'si_item1', price: { id: 'price_pro_year' } }] },
+      });
+      mockStripe.billingPortal.sessions.create.mockResolvedValue({ url: 'u' });
+
+      await service.createPortalSession(userId, 'switch_interval');
+      const params = mockStripe.billingPortal.sessions.create.mock.calls[0][0];
+      expect(params.flow_data.subscription_update_confirm.items[0].price).toBe(
+        'price_pro_month',
+      );
+    });
+
+    it('refuses a switch for an account without a subscription', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        stripeSubscriptionId: null,
+        plan: 'free',
+      });
+      await expect(
+        service.createPortalSession(userId, 'switch_interval'),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockStripe.billingPortal.sessions.create).not.toHaveBeenCalled();
     });
   });
 
@@ -1129,7 +1823,7 @@ describe('BillingService', () => {
       userId: null,
       organizationId: orgId,
       stripeSubscriptionId: 'sub_org',
-      plan: 'team',
+      plan: 'business',
       status: 'active',
     });
 
@@ -1182,7 +1876,7 @@ describe('BillingService', () => {
         id: 'personal-sub',
         userId: ownerId,
         stripeSubscriptionId: 'sub_personal',
-        plan: 'starter',
+        plan: 'pro',
         status: 'active',
       });
 
@@ -1226,7 +1920,7 @@ describe('BillingService', () => {
         id: 'personal-sub',
         userId: ownerId,
         stripeSubscriptionId: 'sub_old',
-        plan: 'starter',
+        plan: 'pro',
         status: 'canceled',
       });
 
@@ -1244,7 +1938,7 @@ describe('BillingService', () => {
         id: 'personal-sub',
         userId: ownerId,
         stripeSubscriptionId: 'sub_personal',
-        plan: 'starter',
+        plan: 'pro',
         status: 'past_due',
       });
 
@@ -1267,7 +1961,7 @@ describe('BillingService', () => {
       stripeSubscriptionId: null,
       marketplaceSubscriptionId: 'mp-sub-1',
       marketplaceStatus: status === 'active' ? 'Subscribed' : 'Suspended',
-      plan: 'team',
+      plan: 'business',
       status,
     });
 
@@ -1277,7 +1971,7 @@ describe('BillingService', () => {
         mockRepository.findOne.mockResolvedValue(marketplaceSub(status));
 
         const err = await service
-          .createCheckoutSession(userId, 'test@example.com', 'team')
+          .createCheckoutSession(userId, 'test@example.com', 'business')
           .catch((e: unknown) => e);
 
         expect(err).toBeInstanceOf(ConflictException);
@@ -1297,7 +1991,7 @@ describe('BillingService', () => {
       });
 
       await expect(
-        service.createCheckoutSession(userId, 'test@example.com', 'starter'),
+        service.createCheckoutSession(userId, 'test@example.com', 'pro'),
       ).resolves.toBe('https://checkout.stripe.com/session123');
       // Only the customer column is written, so a Marketplace activation
       // that changed the row meanwhile isn't undone.
@@ -1320,7 +2014,7 @@ describe('BillingService', () => {
         updatedAt: new Date(),
       });
       await expect(
-        service.createCheckoutSession(userId, 'test@example.com', 'starter'),
+        service.createCheckoutSession(userId, 'test@example.com', 'pro'),
       ).rejects.toThrow(/being activated/);
       expect(mockStripe.customers.create).not.toHaveBeenCalled();
     });
@@ -1337,7 +2031,7 @@ describe('BillingService', () => {
         url: 'https://checkout.stripe.com/session123',
       });
       await expect(
-        service.createCheckoutSession(userId, 'test@example.com', 'starter'),
+        service.createCheckoutSession(userId, 'test@example.com', 'pro'),
       ).resolves.toBe('https://checkout.stripe.com/session123');
     });
 
@@ -1352,14 +2046,14 @@ describe('BillingService', () => {
     it('refuses a Stripe upgrade with 409', async () => {
       mockRepository.findOne.mockResolvedValue({
         ...marketplaceSub('active'),
-        plan: 'starter',
+        plan: 'pro',
       });
-      await expect(service.previewUpgrade(userId, 'team')).rejects.toThrow(
+      await expect(service.previewUpgrade(userId, 'business')).rejects.toThrow(
         ConflictException,
       );
-      await expect(service.upgradeSubscription(userId, 'team')).rejects.toThrow(
-        ConflictException,
-      );
+      await expect(
+        service.upgradeSubscription(userId, 'business'),
+      ).rejects.toThrow(ConflictException);
       expect(mockStripe.subscriptions.update).not.toHaveBeenCalled();
     });
 
@@ -1378,7 +2072,7 @@ describe('BillingService', () => {
         data: {
           object: {
             id: 'cs_late',
-            metadata: { userId, plan: 'starter' },
+            metadata: { userId, plan: 'pro' },
             subscription: 'sub_new',
             customer: 'cus_test123',
           },
@@ -1413,7 +2107,7 @@ describe('BillingService', () => {
         data: {
           object: {
             id: 'cs_race',
-            metadata: { userId, plan: 'starter' },
+            metadata: { userId, plan: 'pro' },
             subscription: 'sub_new',
             customer: 'cus_test123',
           },
@@ -1442,7 +2136,7 @@ describe('BillingService', () => {
         data: {
           object: {
             id: 'cs_new',
-            metadata: { userId, plan: 'starter' },
+            metadata: { userId, plan: 'pro' },
             subscription: 'sub_new',
             customer: 'cus_test123',
           },
@@ -1455,7 +2149,7 @@ describe('BillingService', () => {
           stripeSubscriptionId: 'sub_new',
           marketplaceSubscriptionId: null,
           marketplaceStatus: null,
-          plan: 'starter',
+          plan: 'pro',
         }),
       );
     });

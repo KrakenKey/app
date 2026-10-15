@@ -87,7 +87,7 @@ function linkedRow(overrides: Partial<Subscription> = {}): Subscription {
     marketplacePlanId: 'kk-team',
     marketplaceStatus: 'Subscribed',
     marketplaceQuantity: null,
-    plan: 'team',
+    plan: 'business',
     status: 'active',
     pastDueSince: null,
     currentPeriodEnd: null,
@@ -225,7 +225,7 @@ describe('MarketplaceService', () => {
       expect(client.resolve).toHaveBeenCalledWith('token');
       expect(res).toMatchObject({
         state: 'ready',
-        plan: 'team',
+        plan: 'business',
         planId: 'kk-team',
         saasStatus: 'PendingFulfillmentStart',
         purchaserEmail: 'buyer@acme.example',
@@ -285,7 +285,7 @@ describe('MarketplaceService', () => {
       expect(client.activate).toHaveBeenCalledWith(SUB_ID);
       expect(snapshots[1]).toMatchObject({
         marketplaceStatus: 'Subscribed',
-        plan: 'team',
+        plan: 'business',
         status: 'active',
         currentPeriodEnd: new Date('2026-11-13T00:00:00Z'),
         cancelAtPeriodEnd: false,
@@ -298,7 +298,7 @@ describe('MarketplaceService', () => {
       await service.activate(USER_ID, 'token');
       expect(saves()[1]).toMatchObject({
         status: 'active',
-        plan: 'team',
+        plan: 'business',
         marketplaceStatus: 'Subscribed',
       });
     });
@@ -388,19 +388,12 @@ describe('MarketplaceService', () => {
       });
     });
 
-    it('refuses a Starter purchase for an organization', async () => {
+    it('accepts a Pro purchase for an organization: every Marketplace plan can back one', async () => {
       user.organizationId = 'org-1';
       user.role = 'owner';
       client.resolve.mockResolvedValue(purchase({}, 'kk-starter'));
 
-      expect((await service.describe(USER_ID, 'token')).state).toBe(
-        'needs_team',
-      );
-      await expect(service.activate(USER_ID, 'token')).rejects.toThrow(
-        /Team plan or higher/,
-      );
-      expect(client.activate).not.toHaveBeenCalled();
-      expect(manager.save).not.toHaveBeenCalled();
+      expect((await service.describe(USER_ID, 'token')).state).toBe('ready');
     });
 
     it('allows a Starter purchase for a user without an organization', async () => {
@@ -474,7 +467,7 @@ describe('MarketplaceService', () => {
       expect((await service.describe(USER_ID, 'token')).state).toBe('ready');
       await service.activate(USER_ID, 'token');
       expect(client.activate).toHaveBeenCalledWith(SUB_ID);
-      expect(row).toMatchObject({ status: 'active', plan: 'team' });
+      expect(row).toMatchObject({ status: 'active', plan: 'business' });
     });
 
     it('refuses a subscription linked to another account', async () => {
@@ -500,7 +493,7 @@ describe('MarketplaceService', () => {
         source: 'stripe',
         stripeSubscriptionId: 'sub_live',
         status: 'active',
-        plan: 'starter',
+        plan: 'pro',
       });
 
       const described = await service.describe(USER_ID, 'token');
@@ -871,7 +864,7 @@ describe('MarketplaceService', () => {
     it('Suspend keeps the plan and starts the grace period', async () => {
       await service.handleWebhook(auth, body());
       expect(savedRow()).toMatchObject({
-        plan: 'team',
+        plan: 'business',
         status: 'past_due',
         marketplaceStatus: 'Suspended',
         pastDueSince: expect.any(Date),
@@ -980,7 +973,7 @@ describe('MarketplaceService', () => {
       await service.handleWebhook(auth, body({ action: 'Subscribe' }));
       expect(savedRow()).toMatchObject({
         status: 'active',
-        plan: 'team',
+        plan: 'business',
         marketplaceStatus: 'Subscribed',
       });
     });
@@ -1059,11 +1052,11 @@ describe('MarketplaceService', () => {
         auth,
         body({ action: 'ChangePlan', planId: 'kk-business' }),
       );
-      expect(savedRow().plan).toBe('starter');
+      expect(savedRow().plan).toBe('pro');
       expect(client.updateOperation).not.toHaveBeenCalled();
     });
 
-    it('ChangePlan below Team dissolves the organization, like Stripe', async () => {
+    it('ChangePlan from Business to Pro keeps the organization', async () => {
       rows.linked = linkedRow({ userId: null, organizationId: 'org-1' });
       client.getOperation.mockResolvedValue(
         op({
@@ -1076,12 +1069,8 @@ describe('MarketplaceService', () => {
         auth,
         body({ action: 'ChangePlan', planId: 'kk-starter' }),
       );
-      expect(savedRow().plan).toBe('starter');
-      expect(billing.queueDissolution).toHaveBeenCalledWith('org-1', false);
-      expect(recorded()).toMatchObject({
-        dissolveOrganizationId: 'org-1',
-        dissolveCancel: false,
-      });
+      expect(savedRow().plan).toBe('pro');
+      expect(billing.queueDissolution).not.toHaveBeenCalled();
     });
 
     it('never dissolves an organization whose purchase is still being activated', async () => {
@@ -1202,7 +1191,7 @@ describe('MarketplaceService', () => {
       client.getOperation.mockResolvedValue(op({ action: 'Renew' }));
       microsoft('Subscribed', { planId: 'kk-unknown' });
       await service.handleWebhook(auth, body({ action: 'Renew' }));
-      expect(savedRow().plan).toBe('team');
+      expect(savedRow().plan).toBe('business');
     });
 
     it('ignores an operation Microsoft marked Failed or Conflict', async () => {

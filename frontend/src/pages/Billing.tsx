@@ -1,7 +1,14 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import { AlertTriangle, Check, CreditCard, ExternalLink } from 'lucide-react';
 import axios from 'axios';
+import {
+  PLAN_LIST_PRICES_CENTS,
+  normalizePlan,
+  planLabel as labelFor,
+} from '@krakenkey/shared';
 import type {
+  BillingInterval,
+  PurchasablePlan,
   Subscription,
   SubscriptionPlan,
   UpgradePreviewResponse,
@@ -14,6 +21,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useHealth } from '../hooks/useHealth';
 import {
   fetchSubscription,
+  fetchPlans,
   createCheckout,
   createPortalSession,
   previewUpgrade,
@@ -23,55 +31,67 @@ import { AZURE_PORTAL_SAAS_URL } from '../services/marketplaceService';
 import {
   formatLimit,
   planLimits,
+  upgradeHint,
   usageLevel,
   usagePercent,
   usageRows,
+  type CountedLimitKey,
   type UsageLevel,
   type UsageRow,
 } from '../utils/planUsage';
 
 const PRICING_URL = 'https://krakenkey.io/pricing';
 
-const PLAN_LABELS: Record<string, string> = {
-  free: 'Free',
-  starter: 'Starter',
-  team: 'Team',
-  business: 'Business',
-  enterprise: 'Enterprise',
-};
+/** Enterprise is sold by quote. */
+const CONTACT_URL =
+  'mailto:support@krakenkey.io?subject=KrakenKey%20Enterprise';
 
-const PLAN_PRICES: Record<string, string> = {
-  starter: '$29/mo',
-  team: '$79/mo',
-  business: '$199/mo',
-  enterprise: 'Custom',
-};
+/** "$29/mo" or "$1,490/yr": the list price of a self-serve plan. */
+function planPrice(
+  plan: string,
+  interval: BillingInterval = 'month',
+): string | undefined {
+  const cents = PLAN_LIST_PRICES_CENTS[normalizePlan(plan)]?.[interval];
+  if (cents === undefined) return undefined;
+  const dollars = (cents / 100).toLocaleString('en-US', {
+    maximumFractionDigits: 0,
+  });
+  return `$${dollars}${interval === 'year' ? '/yr' : '/mo'}`;
+}
 
 /** Extras each plan adds beyond the numeric limits. */
 const PLAN_EXTRAS: Partial<Record<SubscriptionPlan, string[]>> = {
-  starter: ['30-day renewal window', 'Double API rate limits'],
-  team: ['Organizations with RBAC', 'Higher rate limits (300 reads/min)'],
-  business: ['1-minute scan intervals', 'Higher rate limits (600 reads/min)'],
+  pro: [
+    '30-day renewal window, 30-minute hosted scans',
+    'Organizations with up to 3 members',
+  ],
+  business: [
+    'Organizations with unlimited members',
+    '5-minute hosted scans, 90-day scan history',
+  ],
+  enterprise: ['Custom limits', 'Annual invoice or Microsoft Marketplace'],
 };
 
-/**
- * Plans the API can switch to from here. Business has no self-serve price
- * yet, so Team accounts get a link to the pricing page instead.
- */
-const UPGRADE_TARGETS: Record<string, SubscriptionPlan[]> = {
-  free: ['starter', 'team'],
-  starter: ['team'],
+/** Plans the API can switch to from here. */
+const UPGRADE_TARGETS: Partial<Record<SubscriptionPlan, SubscriptionPlan[]>> = {
+  free: ['pro', 'business'],
+  pro: ['business'],
 };
 
-const NEXT_PLAN: Record<string, SubscriptionPlan> = {
-  team: 'business',
+/** The plan after the largest self-serve one, sold by quote. */
+const NEXT_PLAN: Partial<Record<SubscriptionPlan, SubscriptionPlan>> = {
+  business: 'enterprise',
 };
 
 function planFeatures(plan: SubscriptionPlan): string[] {
   const l = planLimits(plan);
+  const regions = Number.isFinite(l.hostedProbeRegions)
+    ? `${formatLimit(l.hostedProbeRegions)} hosted region${l.hostedProbeRegions === 1 ? '' : 's'}`
+    : 'every hosted region';
   const lines = [
     `${formatLimit(l.domains)} domains, ${formatLimit(l.totalActiveCerts)} active certificates`,
-    `${formatLimit(l.monitoredEndpoints)} monitored endpoints, ${formatLimit(l.hostedProbeRegions)} hosted regions`,
+    `${formatLimit(l.monitoredEndpoints)} monitored endpoints, ${regions}`,
+    `${formatLimit(l.connectors)} connectors, ${formatLimit(l.alertChannels)} alert channels`,
   ];
   return [...lines, ...(PLAN_EXTRAS[plan] ?? [])];
 }
@@ -82,7 +102,7 @@ const BAR_CLASS: Record<UsageLevel, string> = {
   full: 'bg-red-400',
 };
 
-function UsageMeter({ row }: { row: UsageRow }) {
+function UsageMeter({ row, plan }: { row: UsageRow; plan: string }) {
   const unlimited = !Number.isFinite(row.limit);
   const used = row.used;
   const level = used == null ? 'normal' : usageLevel(used, row.limit);
@@ -130,6 +150,8 @@ function UsageMeter({ row }: { row: UsageRow }) {
         {level === 'full' && used != null ? (
           <span className="text-red-300">
             {used > row.limit ? 'Over the plan limit' : 'Limit reached'}
+            {upgradeHint(plan, row.key as CountedLimitKey) &&
+              `. ${upgradeHint(plan, row.key as CountedLimitKey)}`}
           </span>
         ) : (
           row.hint
@@ -141,19 +163,19 @@ function UsageMeter({ row }: { row: UsageRow }) {
 
 function PlanCard({
   plan,
+  interval = 'month',
   action,
 }: {
   plan: SubscriptionPlan;
+  interval?: BillingInterval;
   action: ReactNode;
 }) {
   return (
     <Card className="flex flex-col">
       <div className="flex items-baseline justify-between gap-3 mb-4">
-        <h3 className="text-base font-semibold text-text">
-          {PLAN_LABELS[plan]}
-        </h3>
+        <h3 className="text-base font-semibold text-text">{labelFor(plan)}</h3>
         <span className="text-sm text-text-muted tabular-nums">
-          {PLAN_PRICES[plan]}
+          {planPrice(plan, interval) ?? 'Contact us'}
         </span>
       </div>
       <ul className="space-y-2 text-sm text-text-secondary mb-6 flex-1">
@@ -177,12 +199,21 @@ export default function Billing() {
   const [actionLoading, setActionLoading] = useState(false);
   const [upgradeModal, setUpgradeModal] = useState<{
     plan: string;
+    interval: BillingInterval;
     preview: UpgradePreviewResponse;
   } | null>(null);
   const [upgradeError, setUpgradeError] = useState<string | null>(null);
+  // Plans with a Stripe price here, to offer yearly billing only once it is set up
+  const [purchasable, setPurchasable] = useState<PurchasablePlan[]>([]);
+  const [chosenInterval, setChosenInterval] = useState<BillingInterval | null>(
+    null,
+  );
 
   useEffect(() => {
     loadSubscription();
+    fetchPlans()
+      .then((res) => setPurchasable(res.plans))
+      .catch(() => setPurchasable([]));
   }, []);
 
   async function loadSubscription() {
@@ -196,12 +227,12 @@ export default function Billing() {
     }
   }
 
-  const plan = subscription?.plan ?? 'free';
+  const plan = normalizePlan(subscription?.plan);
   const isPaid = plan !== 'free';
   const isPastDue = subscription?.status === 'past_due';
   // Stripe retries a failed payment for a while; the paid limits keep
   // applying until graceEndsAt. After that (or once Stripe marks the
-  // subscription unpaid) the account is on Free limits.
+  // subscription unpaid) the account is on the free (Starter) limits.
   const paymentFailed =
     isPaid && (isPastDue || subscription?.status === 'unpaid');
   const graceEndsAt =
@@ -220,7 +251,12 @@ export default function Billing() {
   const canManageBilling = !user?.organizationId || user.role === 'owner';
 
   const counts = (
-    user as { resourceCounts?: { domains: number; apiKeys: number } } | null
+    user as {
+      resourceCounts?: Partial<Record<CountedLimitKey, number>> & {
+        domains: number;
+        apiKeys: number;
+      };
+    } | null
   )?.resourceCounts;
   const rows = usageRows({
     plan,
@@ -233,10 +269,38 @@ export default function Billing() {
     certs: health && healthStatus.certs === 'loaded' ? health.certs : null,
     endpoints:
       health && healthStatus.endpoints === 'loaded' ? health.endpoints : null,
+    connectors: counts?.connectors ?? null,
+    alertChannels: counts?.alertChannels ?? null,
+    githubOidcTrusts: counts?.githubOidcTrusts ?? null,
+    orgMembers: user?.organizationId ? (counts?.orgMembers ?? null) : undefined,
   });
 
   const canChangePlanHere = canManageBilling && !billedByMicrosoft;
-  const upgradeTargets = canChangePlanHere ? (UPGRADE_TARGETS[plan] ?? []) : [];
+  // Only plans with a Stripe price here: a plan without one can't be bought
+  const upgradeTargets = canChangePlanHere
+    ? (UPGRADE_TARGETS[plan] ?? []).filter((p) =>
+        purchasable.some((x) => x.plan === p),
+      )
+    : [];
+  const currentInterval: BillingInterval = subscription?.interval ?? 'month';
+  const sellsYearly = (p: string) =>
+    purchasable.some((x) => x.plan === p && x.intervals.includes('year'));
+  const offerYearly = upgradeTargets.some(sellsYearly);
+  // The toggle starts on the account's own interval
+  const interval: BillingInterval = offerYearly
+    ? (chosenInterval ?? currentInterval)
+    : 'month';
+  const otherInterval: BillingInterval =
+    currentInterval === 'month' ? 'year' : 'month';
+  const canSwitchInterval =
+    isPaid &&
+    canManageBilling &&
+    !billedByMicrosoft &&
+    subscription?.status === 'active' &&
+    !!subscription?.interval &&
+    purchasable.some(
+      (x) => x.plan === plan && x.intervals.includes(otherInterval),
+    );
   const nextPlan = canChangePlanHere ? NEXT_PLAN[plan] : undefined;
 
   async function handleUpgrade(targetPlan: string) {
@@ -244,10 +308,10 @@ export default function Billing() {
     setUpgradeError(null);
     try {
       if (isPaid) {
-        const preview = await previewUpgrade(targetPlan);
-        setUpgradeModal({ plan: targetPlan, preview });
+        const preview = await previewUpgrade(targetPlan, interval);
+        setUpgradeModal({ plan: targetPlan, interval, preview });
       } else {
-        const { sessionUrl } = await createCheckout(targetPlan);
+        const { sessionUrl } = await createCheckout(targetPlan, interval);
         window.location.href = sessionUrl;
         return;
       }
@@ -272,20 +336,31 @@ export default function Billing() {
     setActionLoading(true);
     setUpgradeError(null);
     try {
-      await upgradeSubscription(upgradeModal.plan);
+      await upgradeSubscription(
+        upgradeModal.plan,
+        upgradeModal.interval,
+        upgradeModal.preview.prorationDate,
+      );
       setUpgradeModal(null);
       await loadSubscription();
-    } catch {
-      setUpgradeError('Upgrade failed. Please try again.');
+    } catch (err) {
+      // 402: the payment didn't go through; the API says what to do
+      const msg =
+        axios.isAxiosError(err) && err.response?.status === 402
+          ? err.response.data?.message
+          : null;
+      setUpgradeError(
+        typeof msg === 'string' ? msg : 'Upgrade failed. Please try again.',
+      );
     } finally {
       setActionLoading(false);
     }
   }
 
-  async function handleManageSubscription() {
+  async function handleManageSubscription(flow?: 'switch_interval') {
     setActionLoading(true);
     try {
-      const { portalUrl } = await createPortalSession();
+      const { portalUrl } = await createPortalSession(flow);
       window.location.href = portalUrl;
     } catch {
       setActionLoading(false);
@@ -293,7 +368,10 @@ export default function Billing() {
   }
 
   function formatAmount(cents: number): string {
-    return `$${(cents / 100).toFixed(2)}`;
+    return `$${(cents / 100).toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
   }
 
   function formatDate(dateStr: string): string {
@@ -321,7 +399,8 @@ export default function Billing() {
     );
   }
 
-  const planLabel = PLAN_LABELS[plan] ?? plan;
+  const planLabel = labelFor(plan);
+  const freeLabel = labelFor('free');
 
   return (
     <div className="space-y-6">
@@ -339,10 +418,10 @@ export default function Billing() {
                 {billedByMicrosoft
                   ? inGrace && graceEndsAt
                     ? `Microsoft couldn't collect the payment for your subscription. Update the payment method in the Azure portal by ${formatDate(graceEndsAt.toISOString())} to keep ${planLabel} limits.`
-                    : `Microsoft couldn't collect the payment for your subscription. Your account is on Free limits until the payment goes through in the Azure portal.`
+                    : `Microsoft couldn't collect the payment for your subscription. Your account is on ${freeLabel} limits until the payment goes through in the Azure portal.`
                   : inGrace && graceEndsAt
                     ? `Your last payment failed. Update your payment method by ${formatDate(graceEndsAt.toISOString())} to keep ${planLabel} limits.`
-                    : `Your last payment failed. Your account is on Free limits until you update your payment method and the ${planLabel} payment goes through.`}
+                    : `Your last payment failed. Your account is on ${freeLabel} limits until you update your payment method and the ${planLabel} payment goes through.`}
               </p>
               {!canManageBilling && (
                 <p className="text-red-200/80">
@@ -366,7 +445,7 @@ export default function Billing() {
             <Button
               variant="primary"
               icon={<ExternalLink className="w-4 h-4" />}
-              onClick={handleManageSubscription}
+              onClick={() => handleManageSubscription()}
               disabled={actionLoading}
               className="shrink-0 self-start sm:self-auto"
             >
@@ -387,11 +466,13 @@ export default function Billing() {
               <span className="text-lg font-semibold text-text">
                 {planLabel}
               </span>
-              {isPaid && !billedByMicrosoft && PLAN_PRICES[plan] && (
-                <span className="text-sm text-text-muted tabular-nums">
-                  {PLAN_PRICES[plan]}
-                </span>
-              )}
+              {isPaid &&
+                !billedByMicrosoft &&
+                planPrice(plan, currentInterval) && (
+                  <span className="text-sm text-text-muted tabular-nums">
+                    {planPrice(plan, currentInterval)}
+                  </span>
+                )}
               {isPastDue && (
                 <span className="text-xs text-red-400 font-medium">
                   Payment past due
@@ -411,8 +492,25 @@ export default function Billing() {
             )}
             {isPaid && subscription?.currentPeriodEnd && (
               <p className="text-sm text-text-muted mt-2">
+                {subscription.interval === 'year'
+                  ? 'Billed yearly. '
+                  : subscription.interval === 'month'
+                    ? 'Billed monthly. '
+                    : ''}
                 Current period ends {formatDate(subscription.currentPeriodEnd)}
               </p>
+            )}
+            {canSwitchInterval && (
+              <button
+                type="button"
+                onClick={() => handleManageSubscription('switch_interval')}
+                disabled={actionLoading}
+                className="mt-2 cursor-pointer border-none bg-transparent p-0 text-sm text-cyan-300 hover:text-cyan-200"
+              >
+                {otherInterval === 'year'
+                  ? 'Switch to yearly billing (2 months free)'
+                  : 'Switch to monthly billing'}
+              </button>
             )}
             {!canManageBilling && (
               <p className="text-sm text-text-muted mt-2">
@@ -435,7 +533,7 @@ export default function Billing() {
             <Button
               variant="secondary"
               icon={<ExternalLink className="w-4 h-4" />}
-              onClick={handleManageSubscription}
+              onClick={() => handleManageSubscription()}
               disabled={actionLoading}
               className="self-start sm:self-auto"
             >
@@ -457,7 +555,7 @@ export default function Billing() {
         />
         <div className="grid grid-cols-1 py-1 sm:grid-cols-2 lg:grid-cols-3">
           {rows.map((row) => (
-            <UsageMeter key={row.key} row={row} />
+            <UsageMeter key={row.key} row={row} plan={plan} />
           ))}
         </div>
       </Card>
@@ -469,6 +567,26 @@ export default function Billing() {
             <h2 className="text-sm font-semibold text-text">
               {upgradeTargets.length > 0 ? 'Upgrade' : 'Need more room?'}
             </h2>
+            {offerYearly && (
+              <div
+                role="radiogroup"
+                aria-label="Billing interval"
+                className="inline-flex rounded-lg border border-border-strong p-0.5 text-sm"
+              >
+                {(['month', 'year'] as const).map((i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    role="radio"
+                    aria-checked={interval === i}
+                    onClick={() => setChosenInterval(i)}
+                    className={`cursor-pointer rounded-md border-none px-3 py-1 ${interval === i ? 'bg-surface-elevated text-text' : 'bg-transparent text-text-muted hover:text-text'}`}
+                  >
+                    {i === 'month' ? 'Monthly' : 'Yearly, 2 months free'}
+                  </button>
+                ))}
+              </div>
+            )}
             {upgradeTargets.length > 0 && (
               <a
                 href={PRICING_URL}
@@ -486,6 +604,7 @@ export default function Billing() {
               <PlanCard
                 key={target}
                 plan={target}
+                interval={interval}
                 action={
                   <Button
                     variant="primary"
@@ -493,7 +612,7 @@ export default function Billing() {
                     disabled={actionLoading}
                     className="w-full"
                   >
-                    Upgrade to {PLAN_LABELS[target]}
+                    Upgrade to {labelFor(target)}
                   </Button>
                 }
               />
@@ -503,13 +622,10 @@ export default function Billing() {
                 plan={nextPlan}
                 action={
                   <a
-                    href={PRICING_URL}
-                    target="_blank"
-                    rel="noreferrer"
+                    href={CONTACT_URL}
                     className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-border-strong bg-surface-elevated px-3.5 text-sm font-medium text-text transition-colors hover:border-[#4a5b78] hover:bg-[#2e3c55]"
                   >
-                    Compare plans
-                    <ExternalLink className="w-4 h-4" />
+                    Contact us
                   </a>
                 }
               />
@@ -528,7 +644,7 @@ export default function Billing() {
           setUpgradeModal(null);
           setUpgradeError(null);
         }}
-        title={`Upgrade to ${upgradeModal ? PLAN_LABELS[upgradeModal.plan] : ''}`}
+        title={`Upgrade to ${upgradeModal ? labelFor(upgradeModal.plan) : ''}`}
       >
         {upgradeModal && (
           <div className="space-y-4">
@@ -537,17 +653,30 @@ export default function Billing() {
               <span className="font-semibold text-zinc-100">
                 {formatAmount(upgradeModal.preview.immediateAmountCents)}
               </span>{' '}
-              immediately for the remaining days in your current billing period
-              (through {formatDate(upgradeModal.preview.currentPeriodEnd)}).
+              {upgradeModal.interval === currentInterval ? (
+                <>
+                  immediately for the remaining days in your current billing
+                  period (through{' '}
+                  {formatDate(upgradeModal.preview.currentPeriodEnd)}).
+                </>
+              ) : (
+                <>
+                  immediately: a new{' '}
+                  {upgradeModal.interval === 'year' ? 'yearly' : 'monthly'}{' '}
+                  billing period starts today (through{' '}
+                  {formatDate(upgradeModal.preview.currentPeriodEnd)}), less a
+                  credit for the unused time on your current plan.
+                </>
+              )}
             </p>
             <p className="text-sm text-zinc-300">
               Your subscription will then renew at the{' '}
               <span className="font-semibold text-zinc-100">
-                {PLAN_LABELS[upgradeModal.plan]}
+                {labelFor(upgradeModal.plan)}
               </span>{' '}
               rate of{' '}
               <span className="font-semibold text-zinc-100">
-                {PLAN_PRICES[upgradeModal.plan]}
+                {planPrice(upgradeModal.plan, upgradeModal.interval)}
               </span>{' '}
               on your next billing date.
             </p>
@@ -555,6 +684,12 @@ export default function Billing() {
               <p className="text-sm text-amber-400">
                 Upgrading will also resume your subscription (scheduled
                 cancellation will be cleared).
+              </p>
+            )}
+            {upgradeModal.preview.cancelsScheduledChange && (
+              <p className="text-sm text-amber-400">
+                Upgrading also cancels the change scheduled for the end of your
+                billing period.
               </p>
             )}
             {upgradeError && (

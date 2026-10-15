@@ -12,16 +12,29 @@ export const MARKETPLACE_API_VERSION = '2018-08-31';
  */
 export const MARKETPLACE_RESOURCE_ID = '20e940b3-4c77-4b0b-9a53-9e16a1b010a7';
 
-/** KrakenKey plans that can be sold through the Marketplace. */
-export const MARKETPLACE_PLANS = ['starter', 'team', 'business'] as const;
+/**
+ * KrakenKey plans that can be sold through the Marketplace: Pro and Business
+ * as public plans, Enterprise through private plans and private offers.
+ */
+export const MARKETPLACE_PLANS = ['pro', 'business', 'enterprise'] as const;
 export type MarketplacePlan = (typeof MARKETPLACE_PLANS)[number];
+
+/**
+ * Plan names from before the rename, still accepted in the map so an
+ * existing KK_MARKETPLACE_PLAN_MAP keeps working until it is updated.
+ */
+const LEGACY_MARKETPLACE_PLANS: Readonly<Record<string, MarketplacePlan>> = {
+  starter: 'pro',
+  team: 'business',
+};
 
 /**
  * Parses KK_MARKETPLACE_PLAN_MAP, a comma-separated list of
  * `<marketplace plan id>=<krakenkey plan>` pairs, for example
- * `kk-starter-monthly=starter,kk-team-monthly=team`. Several Marketplace
- * plans (monthly and yearly) can map to the same KrakenKey plan. Entries
- * that don't parse are returned in `invalid` and left out.
+ * `kk-pro=pro,kk-business=business`. Several Marketplace plans (for example
+ * public and private ones) can map to the same KrakenKey plan. The legacy
+ * names `starter` and `team` read as `pro` and `business`. Entries that
+ * don't parse are returned in `invalid` and left out.
  */
 export function parsePlanMap(raw: string | undefined): {
   map: Record<string, MarketplacePlan>;
@@ -32,7 +45,10 @@ export function parsePlanMap(raw: string | undefined): {
   for (const entry of (raw ?? '').split(',')) {
     const trimmed = entry.trim();
     if (!trimmed) continue;
-    const [planId, plan, ...rest] = trimmed.split('=').map((s) => s.trim());
+    const [planId, rawPlan, ...rest] = trimmed.split('=').map((s) => s.trim());
+    const plan = rawPlan
+      ? (LEGACY_MARKETPLACE_PLANS[rawPlan] ?? rawPlan)
+      : rawPlan;
     if (
       !planId ||
       !plan ||
@@ -89,7 +105,7 @@ export class MarketplaceConfig {
     if (!this.enabled) return;
     if (invalid.length > 0) {
       this.logger.error(
-        `KK_MARKETPLACE_PLAN_MAP has entries that were ignored: ${invalid.join(', ')} (expected <plan id>=starter|team|business)`,
+        `KK_MARKETPLACE_PLAN_MAP has entries that were ignored: ${invalid.join(', ')} (expected <plan id>=pro|business|enterprise)`,
       );
     }
     const missing = this.missingSettings();

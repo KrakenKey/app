@@ -1,4 +1,4 @@
-import { CertStatus } from '@krakenkey/shared';
+import { CertStatus, PLAN_LIMITS } from '@krakenkey/shared';
 import type {
   Connector,
   Domain,
@@ -79,10 +79,11 @@ export function daysUntil(iso: string, now: number = Date.now()): number {
 
 /**
  * How many days before expiry KrakenKey renews a certificate on this plan:
- * 5 on Free, 30 on paid plans. Unknown plans get the paid window.
+ * 10 on the free (Starter) plan, 30 on paid plans. Unknown plans get the
+ * paid window.
  */
 export function renewalWindowDays(plan?: string | null): number {
-  return plan === 'free' ? 5 : 30;
+  return plan === 'free' ? PLAN_LIMITS.free.renewalWindowDays : 30;
 }
 
 /* ── Endpoints ──────────────────────────────────────────────────────────── */

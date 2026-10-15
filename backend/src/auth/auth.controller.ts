@@ -239,7 +239,7 @@ export class AuthController {
   @UseGuards(JwtOrApiKeyGuard)
   @ApiBearerAuth()
   @ApiOperation({
-    summary: 'Confirm intent to keep auto-renewal active (free tier)',
+    summary: 'Confirm intent to keep auto-renewal active (Starter plan)',
   })
   @ApiResponse({
     status: 201,

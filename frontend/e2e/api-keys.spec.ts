@@ -6,7 +6,7 @@ const KEYS = api('/auth/api-keys') + '*';
 
 test.describe('API key management', () => {
   test.beforeEach(async ({ page }) => {
-    await authenticateAs(page, { plan: 'starter' });
+    await authenticateAs(page, { plan: 'pro' });
     await page.route(KEYS, (route) => {
       if (route.request().method() === 'GET') {
         return route.fulfill({ status: 200, json: mockApiKeys });

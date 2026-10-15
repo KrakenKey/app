@@ -6,6 +6,7 @@ import {
   NotFoundException,
   HttpException,
   InternalServerErrorException,
+  Optional,
   UnauthorizedException,
   type OnModuleInit,
 } from '@nestjs/common';
@@ -21,6 +22,7 @@ import { Domain } from '../domains/entities/domain.entity';
 import { TlsCrt } from '../certs/tls/entities/tls-crt.entity';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { BillingService } from '../billing/billing.service';
+import { PlanLimitsService } from '../billing/limits/plan-limits.service';
 import { PLAN_LIMITS } from '../billing/constants/plan-limits';
 import { EmailService } from '../notifications/email.service';
 import {
@@ -77,6 +79,8 @@ export class AuthService implements OnModuleInit {
     private readonly billingService: BillingService,
     private readonly emailService: EmailService,
     private readonly apiKeySecurity: ApiKeySecurityService,
+    // Only for the profile's newer usage counts, which are left out without it
+    @Optional() private readonly planLimits?: PlanLimitsService,
   ) {}
 
   async onModuleInit() {
@@ -479,6 +483,7 @@ export class AuthService implements OnModuleInit {
         throw new HttpException(
           {
             message: 'API key limit reached',
+            code: 'plan_limit_exceeded',
             limit: limits.apiKeys,
             current: count,
             plan,
@@ -784,12 +789,13 @@ export class AuthService implements OnModuleInit {
       this.billingService.getResourceCountUserIds(userId),
       this.billingService.resolveUserTier(userId),
     ]);
-    const [domainCount, certCount, apiKeyCount] = await Promise.all([
+    const [domainCount, certCount, apiKeyCount, usage] = await Promise.all([
       this.domainRepo.count({ where: { userId: In(memberIds) } }),
       this.tlsCrtRepo.count({ where: { userId: In(memberIds) } }),
       this.userApiKeyRepo.count({
         where: { userId: In(memberIds), revokedAt: IsNull(), source: IsNull() },
       }),
+      this.planLimits?.usage(userId),
     ]);
 
     return {
@@ -811,6 +817,7 @@ export class AuthService implements OnModuleInit {
         domains: domainCount,
         certificates: certCount,
         apiKeys: apiKeyCount,
+        ...usage,
       },
     };
   }

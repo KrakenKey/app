@@ -204,7 +204,7 @@ Subscription records linked to users or organizations, billed by Stripe or by Mi
 ```sql
 CREATE TABLE "subscription" (
   "id" UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  "plan" VARCHAR NOT NULL,                        -- starter/team/business/enterprise
+  "plan" VARCHAR NOT NULL,                        -- free/pro/business/enterprise
   "status" VARCHAR NOT NULL,                      -- active/past_due/unpaid/canceled/incomplete/trialing
   "stripeCustomerId" VARCHAR,                    -- null for Marketplace-only accounts
   "stripeSubscriptionId" VARCHAR UNIQUE,
@@ -256,7 +256,7 @@ CREATE TABLE "marketplace_operation" (
 
 ### Organization
 
-Teams with role-based access control. Requires Team+ plan.
+Teams with role-based access control. Requires the Pro plan or higher.
 
 ```sql
 CREATE TABLE "organization" (
@@ -333,7 +333,7 @@ CREATE TABLE "endpoint_probe_assignment" (
 
 ### NotificationChannel
 
-A Slack, Microsoft Teams or webhook destination for alerts, owned by one user (at most 10 per user). `urlEncrypted` and `secretEncrypted` hold `v1:<iv>:<tag>:<ciphertext>` (AES-256-GCM, key derived from `KK_HMAC_SECRET` with HKDF-SHA256), because a Slack or Teams URL is itself a credential.
+A Slack, Microsoft Teams or webhook destination for alerts, owned by one user (limited per plan and counted across an organization: Starter 1, Pro 5, Business 25). `urlEncrypted` and `secretEncrypted` hold `v1:<iv>:<tag>:<ciphertext>` (AES-256-GCM, key derived from `KK_HMAC_SECRET` with HKDF-SHA256), because a Slack or Teams URL is itself a credential.
 
 ```sql
 CREATE TABLE "notification_channel" (

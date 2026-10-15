@@ -50,7 +50,7 @@ test.describe('Alert channels', () => {
       page.getByRole('heading', { name: 'Alert Channels' }),
     ).toBeVisible();
     await expect(
-      page.getByText('0 of 10 channels used', { exact: false }),
+      page.getByText('0 of 1 channels used', { exact: false }),
     ).toBeVisible();
 
     await page.getByRole('button', { name: 'Add channel' }).click();

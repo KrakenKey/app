@@ -193,18 +193,19 @@ describe('ReportsService', () => {
       ).resolves.toBeDefined();
     });
 
-    it.each(['starter', 'team', 'business', 'enterprise'])(
-      'allows 250 hosts on %s',
-      async (plan) => {
-        billing.resolveUserTier.mockResolvedValue(plan);
-        await expect(
-          service.create(USER, { hosts: hosts(250) }),
-        ).resolves.toBeDefined();
-        await expect(
-          service.create(USER, { hosts: hosts(251) }),
-        ).rejects.toMatchObject({ status: 403 });
-      },
-    );
+    it.each([
+      ['pro', 250],
+      ['business', 1000],
+      ['enterprise', 1000],
+    ])('allows %s up to %i hosts', async (plan, limit) => {
+      billing.resolveUserTier.mockResolvedValue(plan);
+      await expect(
+        service.create(USER, { hosts: hosts(limit) }),
+      ).resolves.toBeDefined();
+      await expect(
+        service.create(USER, { hosts: hosts(limit + 1) }),
+      ).rejects.toMatchObject({ status: 403 });
+    });
 
     it('keeps plan limits in sync with the shared constant', () => {
       for (const [plan, limits] of Object.entries(PLAN_LIMITS)) {
@@ -213,7 +214,8 @@ describe('ReportsService', () => {
         );
       }
       expect(PLAN_LIMITS.free.reportHosts).toBe(25);
-      expect(PLAN_LIMITS.starter.reportHosts).toBe(250);
+      expect(PLAN_LIMITS.pro.reportHosts).toBe(250);
+      expect(PLAN_LIMITS.business.reportHosts).toBe(1000);
     });
   });
 

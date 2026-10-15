@@ -13,14 +13,14 @@ test.describe('Organizations — free plan (upsell)', () => {
     await authenticateAs(page, { plan: 'free', organizationId: null });
     await page.goto('/dashboard/organizations');
 
-    await expect(page.getByText(/upgrade|team/i).first()).toBeVisible();
+    await expect(page.getByText(/upgrade|business/i).first()).toBeVisible();
   });
 });
 
 test.describe('Organizations — eligible plan, no org yet', () => {
   test('can create a new organization', async ({ page }) => {
     const user = await authenticateAs(page, {
-      plan: 'team',
+      plan: 'business',
       organizationId: null,
     });
 
@@ -75,7 +75,7 @@ test.describe('Organizations — eligible plan, no org yet', () => {
 test.describe('Organizations — owner managing org', () => {
   test.beforeEach(async ({ page }) => {
     await authenticateAs(page, {
-      plan: 'team',
+      plan: 'business',
       organizationId: mockOrg.id,
       role: 'owner',
     });
@@ -235,7 +235,7 @@ test.describe('Organizations — member (non-owner)', () => {
   }) => {
     await authenticateAs(page, {
       id: 'usr_member_002',
-      plan: 'team',
+      plan: 'business',
       organizationId: mockOrg.id,
       role: 'admin',
     });
@@ -257,7 +257,7 @@ test.describe('Organizations — invite rejection', () => {
     page,
   }) => {
     await authenticateAs(page, {
-      plan: 'team',
+      plan: 'business',
       organizationId: mockOrg.id,
       role: 'owner',
     });
@@ -273,7 +273,7 @@ test.describe('Organizations — invite rejection', () => {
           status: 409,
           json: {
             message:
-              'This user has an active starter subscription. They must cancel it before joining your organization.',
+              'This user has an active Pro subscription. They must cancel it before joining your organization.',
           },
         });
       }
@@ -309,7 +309,7 @@ test.describe('Organizations — dissolving state', () => {
   // Once the frontend shows a dissolving banner, add assertion for it.
   test('org page loads with dissolving org data', async ({ page }) => {
     await authenticateAs(page, {
-      plan: 'team',
+      plan: 'business',
       organizationId: mockOrg.id,
       role: 'owner',
     });

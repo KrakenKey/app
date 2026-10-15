@@ -15,13 +15,53 @@ KrakenKey can monitor TLS endpoints (servers) to track certificate expiry, trust
 
 ## Plan Limits
 
-| Feature | Free | Starter | Team | Business | Enterprise |
-|---------|------|---------|------|----------|------------|
-| Endpoints | 3 | 10 | 25 | 75 | Unlimited |
-| Hosted Probe Regions | — | 2 | 5 | 15 | Unlimited |
-| Hosted Endpoints | — | 5 | 25 | 100 | Unlimited |
-| Hosted Scan Interval | — | 30 min | 15 min | 5 min | 1 min |
-| Scan Interval | 60 min | 30 min | 5 min | 1 min | Custom |
+| Feature | Starter (`free`) | Pro | Business | Enterprise |
+|---------|------------------|-----|----------|------------|
+| Endpoints | 3 | 50 | 300 | Custom |
+| Hosted Probe Regions | 1 | All running | All running | All running |
+| Hosted Endpoints | 1 | 25 | 150 | Custom |
+| Hosted Scan Interval | 60 min | 30 min | 5 min | 1 min |
+| Connected scan interval (minimum) | 60 min | 15 min | 1 min | 1 min |
+| Scan result retention | 7 days | 30 days | 90 days | 90 days |
+
+## Scan Intervals
+
+Scan intervals follow the endpoint owner's plan (the organization's plan for an org member):
+
+| | Starter (`free`) | Pro | Business | Enterprise |
+|---|---|---|---|---|
+| Hosted probes scan every | 60 min | 30 min | 5 min | 1 min |
+| Connected probes, shortest interval | 60 min | 15 min | 1 min | 1 min |
+
+`GET /probes/:probeId/config` returns each endpoint with its `interval` (Go duration syntax, for example `"30m"`): for a hosted probe, how often to scan the endpoint; for a connected probe, the shortest interval the API accepts (the probe's own `KK_PROBE_INTERVAL` still applies when it is longer). The top-level `interval` is the shortest endpoint interval, or `60m` with no endpoints. `KK_PROBE_HOSTED_INTERVAL` is no longer read. Each endpoint also carries:
+
+- `lastScanAt`: when the API received the last accepted result from this probe for the endpoint, so a restarted probe keeps its schedule instead of rescanning everything and then waiting a full interval.
+- `scanNow: true` while a scan requested with `POST /endpoints/:id/scan` in the last 5 minutes is newer than this probe's last accepted result for the endpoint.
+
+```json
+{
+  "endpoints": [
+    {
+      "host": "example.com", "port": 443, "sni": "example.com", "userId": "...",
+      "interval": "30m", "lastScanAt": "2026-10-14T17:49:42.503Z"
+    }
+  ],
+  "interval": "30m"
+}
+```
+
+`POST /probes/report`:
+
+- Matches results on host, port **and SNI** (the endpoint's SNI, or its host), so endpoints of different accounts on the same host and port with different SNI each get their own result.
+- Matches a connected probe's results only to the owner's endpoints **assigned to that probe**, and a hosted probe's only to endpoints with a hosted region equal to the region the probe **registered** with (a probe registered as connected can't send hosted results).
+- Takes at most one result per endpoint per report, and at most 1,000 results (`MAX_REPORT_RESULTS`). A connected probe scans at most its owner's monitored endpoints (300 on Business), and the 100 kB body limit already holds a report to roughly 100 to 150 results; the bound keeps a raised body limit from turning into unbounded work.
+- Skips a result that arrives sooner than the endpoint's interval after the previous result from the same probe. Both times are when the API received the results (`createdAt`, looked up with one query per report that reads, for each endpoint, only the newest row from the `(endpointId, probeId, createdAt)` index through a `LATERAL` subquery, so it doesn't grow with retention), never the probe's own timestamp, with 10% or at least 20 seconds of slack. A scan requested since the previous result gets through.
+- Stores the probe's timestamp as `scannedAt`, but never later than when the result arrived.
+- Counts skipped results (too soon, or a second result for the same endpoint) in `tooSoon`: `{ "accepted": 3, "tooSoon": 1 }`.
+
+`POST /endpoints/:id/scan` can be called once per the owner's plan minimum interval (60, 15, 1 or 1 minutes), or the hosted interval when that is longer and the endpoint has a hosted region (60, 30, 5 or 1 minutes); an earlier call answers `429` saying when to try again. So on-demand scans can't go past the plan's scan rate.
+
+Probes before per-endpoint intervals scan everything at their local interval: a connected probe set faster than its plan allows has the extra results skipped, and a hosted probe on an older version scans at its local interval until it is upgraded.
 
 ## API Endpoints
 

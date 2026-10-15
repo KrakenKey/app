@@ -1,9 +1,8 @@
-export type SubscriptionPlan =
-  | 'free'
-  | 'starter'
-  | 'team'
-  | 'business'
-  | 'enterprise';
+/**
+ * Plan ids. `free` is shown as "Starter" (see PLAN_LABELS); `enterprise` is
+ * for custom deals and is not sold self-serve.
+ */
+export type SubscriptionPlan = 'free' | 'pro' | 'business' | 'enterprise';
 
 export type SubscriptionStatus =
   | 'active'
@@ -12,6 +11,11 @@ export type SubscriptionStatus =
   | 'canceled'
   | 'incomplete'
   | 'trialing';
+
+/** How often a paid plan is billed. A year costs ten months. */
+export type BillingInterval = 'month' | 'year';
+
+export const BILLING_INTERVALS: readonly BillingInterval[] = ['month', 'year'];
 
 /** Where a subscription is billed: directly by KrakenKey (Stripe) or by Microsoft Marketplace. */
 export type BillingSource = 'stripe' | 'marketplace';
@@ -41,11 +45,41 @@ export interface Subscription {
   source?: BillingSource;
   /** Microsoft's status for a Marketplace subscription, null for Stripe. */
   marketplaceStatus?: MarketplaceSaasStatus | null;
+  /**
+   * How often a Stripe subscription is billed; null on the free plan, for
+   * Marketplace subscriptions and for rows from before annual billing.
+   */
+  interval?: BillingInterval | null;
   createdAt: string;
 }
 
 export interface CreateCheckoutRequest {
   plan: SubscriptionPlan;
+  /** Defaults to `month`. */
+  interval?: BillingInterval;
+}
+
+export interface UpgradeRequest {
+  plan: SubscriptionPlan;
+  /** Defaults to the subscription's current interval. */
+  interval?: BillingInterval;
+  /** prorationDate from the preview. */
+  prorationDate?: number;
+}
+
+/** `switch_interval` opens the portal on a monthly/yearly switch to confirm. */
+export interface PortalRequest {
+  flow?: 'switch_interval';
+}
+
+/** A plan that can be bought here, and the intervals it has a price for. */
+export interface PurchasablePlan {
+  plan: SubscriptionPlan;
+  intervals: BillingInterval[];
+}
+
+export interface PlansResponse {
+  plans: PurchasablePlan[];
 }
 
 export interface CheckoutResponse {
@@ -60,11 +94,26 @@ export interface UpgradePreviewResponse {
   immediateAmountCents: number;
   currency: string;
   targetPlan: SubscriptionPlan;
+  /** The interval after the upgrade. Missing from older API versions. */
+  targetInterval?: BillingInterval;
+  /** When the next regular invoice is due after the upgrade. */
   currentPeriodEnd: string;
+  /**
+   * Unix time the amount was prorated from. Send it with the upgrade so
+   * Stripe charges the same amount. Missing from older API versions.
+   */
+  prorationDate?: number;
+  /**
+   * True when a change scheduled for the end of the period (a downgrade or
+   * a yearly-to-monthly switch made in the billing portal) will be canceled
+   * by the upgrade.
+   */
+  cancelsScheduledChange?: boolean;
 }
 
 export interface UpgradeResponse {
   plan: SubscriptionPlan;
+  interval?: BillingInterval | null;
   status: SubscriptionStatus;
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
@@ -87,7 +136,7 @@ export interface MarketplaceTokenRequest {
  * - `linked_elsewhere`: linked to a different KrakenKey account
  * - `conflict`: this account already has a paid subscription (Stripe or another Marketplace one)
  * - `not_owner`: the user is in an organization and isn't its owner
- * - `needs_team`: the plan is a personal plan (Starter) and the user is in an organization, which needs Team or higher
+ * - `needs_team`: the plan can't back an organization and the user is in one. Every plan sold through the Marketplace (Pro, Business, Enterprise) can, so current versions don't return it
  * - `unknown_plan`: the purchased plan isn't sold through this installation
  * - `suspended`: Microsoft suspended it (payment problem) and it isn't linked here
  * - `ended`: canceled on Microsoft's side

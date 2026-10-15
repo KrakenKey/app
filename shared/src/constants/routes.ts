@@ -59,6 +59,7 @@ export const API_ROUTES = {
   },
   BILLING: {
     CHECKOUT: '/billing/checkout',
+    PLANS: '/billing/plans',
     SUBSCRIPTION: '/billing/subscription',
     PORTAL: '/billing/portal',
     WEBHOOK: '/billing/webhook',

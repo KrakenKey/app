@@ -46,14 +46,15 @@ describe('BillingController', () => {
         'https://checkout.stripe.com/session',
       );
 
-      const result = await controller.checkout(mockReq, { plan: 'starter' });
+      const result = await controller.checkout(mockReq, { plan: 'pro' });
       expect(result).toEqual({
         sessionUrl: 'https://checkout.stripe.com/session',
       });
       expect(mockBillingService.createCheckoutSession).toHaveBeenCalledWith(
         userId,
         'test@example.com',
-        'starter',
+        'pro',
+        undefined,
       );
     });
   });
@@ -62,7 +63,7 @@ describe('BillingController', () => {
     it('returns subscription when found', async () => {
       const sub = {
         id: 'sub-1',
-        plan: 'starter',
+        plan: 'pro',
         status: 'active',
         currentPeriodEnd: new Date(),
         cancelAtPeriodEnd: false,
@@ -71,7 +72,7 @@ describe('BillingController', () => {
       mockBillingService.getSubscription.mockResolvedValue(sub);
 
       const result = await controller.getSubscription(mockReq);
-      expect(result.plan).toBe('starter');
+      expect(result.plan).toBe('pro');
     });
 
     it('returns free default when no subscription', async () => {
@@ -88,6 +89,41 @@ describe('BillingController', () => {
         graceEndsAt: null,
         source: 'stripe',
         marketplaceStatus: null,
+        interval: null,
+      });
+    });
+
+    it('reports the billing interval of a Stripe subscription', async () => {
+      mockBillingService.getSubscription.mockResolvedValue({
+        id: 's1',
+        plan: 'pro',
+        status: 'active',
+        stripeSubscriptionId: 'sub_1',
+        billingInterval: 'year',
+        source: 'stripe',
+      });
+      expect((await controller.getSubscription(mockReq)).interval).toBe('year');
+
+      mockBillingService.getSubscription.mockResolvedValue({
+        id: 's1',
+        plan: 'pro',
+        status: 'active',
+        stripeSubscriptionId: 'sub_1',
+        billingInterval: null,
+        source: 'stripe',
+      });
+      // Rows from before annual billing are monthly
+      expect((await controller.getSubscription(mockReq)).interval).toBe(
+        'month',
+      );
+    });
+
+    it('lists the purchasable plans', () => {
+      mockBillingService.purchasablePlans = jest
+        .fn()
+        .mockReturnValue([{ plan: 'pro', intervals: ['month', 'year'] }]);
+      expect(controller.plans()).toEqual({
+        plans: [{ plan: 'pro', intervals: ['month', 'year'] }],
       });
     });
 
@@ -95,7 +131,7 @@ describe('BillingController', () => {
       const pastDueSince = new Date('2026-10-01T12:00:00Z');
       mockBillingService.getSubscription.mockResolvedValue({
         id: 'sub-1',
-        plan: 'team',
+        plan: 'business',
         status: 'past_due',
         source: 'marketplace',
         marketplaceStatus: 'Suspended',
@@ -116,7 +152,7 @@ describe('BillingController', () => {
       const pastDueSince = new Date('2026-10-01T12:00:00Z');
       mockBillingService.getSubscription.mockResolvedValue({
         id: 'sub-1',
-        plan: 'team',
+        plan: 'business',
         status: 'past_due',
         pastDueSince,
         currentPeriodEnd: new Date(),
@@ -132,7 +168,7 @@ describe('BillingController', () => {
     it('returns no grace end once the subscription is active', async () => {
       mockBillingService.getSubscription.mockResolvedValue({
         id: 'sub-1',
-        plan: 'team',
+        plan: 'business',
         status: 'active',
         pastDueSince: null,
         currentPeriodEnd: new Date(),
@@ -151,7 +187,7 @@ describe('BillingController', () => {
         'https://billing.stripe.com/portal',
       );
 
-      const result = await controller.createPortal(mockReq);
+      const result = await controller.createPortal(mockReq, {});
       expect(result).toEqual({
         portalUrl: 'https://billing.stripe.com/portal',
       });
@@ -163,18 +199,19 @@ describe('BillingController', () => {
       const preview = {
         immediateAmountCents: 3350,
         currency: 'usd',
-        targetPlan: 'team',
+        targetPlan: 'business',
         currentPeriodEnd: '2026-04-09T00:00:00.000Z',
       };
       mockBillingService.previewUpgrade.mockResolvedValue(preview);
 
       const result = await controller.previewUpgrade(mockReq, {
-        plan: 'team',
+        plan: 'business',
       });
       expect(result).toEqual(preview);
       expect(mockBillingService.previewUpgrade).toHaveBeenCalledWith(
         userId,
-        'team',
+        'business',
+        undefined,
       );
     });
   });
@@ -182,18 +219,20 @@ describe('BillingController', () => {
   describe('upgrade', () => {
     it('returns upgraded subscription from service', async () => {
       const upgraded = {
-        plan: 'team',
+        plan: 'business',
         status: 'active',
         currentPeriodEnd: '2026-04-09T00:00:00.000Z',
         cancelAtPeriodEnd: false,
       };
       mockBillingService.upgradeSubscription.mockResolvedValue(upgraded);
 
-      const result = await controller.upgrade(mockReq, { plan: 'team' });
+      const result = await controller.upgrade(mockReq, { plan: 'business' });
       expect(result).toEqual(upgraded);
       expect(mockBillingService.upgradeSubscription).toHaveBeenCalledWith(
         userId,
-        'team',
+        'business',
+        undefined,
+        undefined,
       );
     });
   });

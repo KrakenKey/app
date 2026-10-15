@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Plug, Plus } from 'lucide-react';
-import { MAX_CONNECTORS_PER_USER } from '@krakenkey/shared';
 import type { Connector, CreateConnectorResponse } from '@krakenkey/shared';
 import * as connectorService from '../services/connectorService';
+import { usePlanLimit } from '../hooks/usePlanLimit';
 import { formatRelative } from '../utils/connectors';
 import { plural } from '../utils/apiKeyAccess';
 import { toast } from '../utils/toast';
@@ -66,7 +66,8 @@ export default function Connectors() {
   }, [fetchConnectors]);
 
   const activeCount = connectors.filter((c) => !c.revokedAt).length;
-  const atLimit = activeCount >= MAX_CONNECTORS_PER_USER;
+  const plan = usePlanLimit('connectors', activeCount);
+  const atLimit = plan.atLimit;
 
   const handleCreated = ({
     connector,
@@ -131,7 +132,7 @@ export default function Connectors() {
 
       <Card>
         <h3 className="text-sm font-medium text-zinc-400 mb-4">
-          Your Connectors ({activeCount} of {MAX_CONNECTORS_PER_USER})
+          Your Connectors ({plan.used} of {plan.limitText})
         </h3>
 
         {connectors.length === 0 ? (
@@ -212,8 +213,17 @@ export default function Connectors() {
         )}
         {atLimit && (
           <p className="text-xs text-zinc-500 mt-3">
-            You have the maximum of {MAX_CONNECTORS_PER_USER} active connectors.
-            Revoke one to add another.
+            Your plan includes {plan.limitText} active connector
+            {plan.limit === 1 ? '' : 's'}. Revoke one to add another.
+            {plan.hint && (
+              <>
+                {' '}
+                {plan.hint}{' '}
+                <Link to="/dashboard/billing" className="text-cyan-300">
+                  See plans
+                </Link>
+              </>
+            )}
           </p>
         )}
         {connectors.length > activeCount && (

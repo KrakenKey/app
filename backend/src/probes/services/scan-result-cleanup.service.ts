@@ -4,14 +4,28 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ProbeScanResult } from '../entities/probe-scan-result.entity';
 import { PLAN_LIMITS } from '../../billing/constants/plan-limits';
-import type { SubscriptionPlan } from '@krakenkey/shared';
+import { LEGACY_PLAN_ALIASES, type SubscriptionPlan } from '@krakenkey/shared';
 import {
   entitledSubscriptionSql,
   entitlementSqlParams,
 } from '../../billing/entitlement';
 
 const BATCH_SIZE = 10_000;
-const DEFAULT_RETENTION_DAYS = 5;
+/** Results with no owner are kept as long as the shortest plan keeps them. */
+const DEFAULT_RETENTION_DAYS = PLAN_LIMITS.free.scanResultRetentionDays;
+
+/**
+ * The plan id and any legacy ids that read as it, so rows an older release
+ * wrote (for example `starter` for `pro`) get the same retention.
+ */
+function planIds(tier: SubscriptionPlan): string[] {
+  return [
+    tier,
+    ...Object.entries(LEGACY_PLAN_ALIASES)
+      .filter(([, plan]) => plan === tier)
+      .map(([legacy]) => legacy),
+  ];
+}
 
 @Injectable()
 export class ScanResultCleanupService {
@@ -34,7 +48,7 @@ export class ScanResultCleanupService {
     totalDeleted += await this.deleteOrphanedResults();
 
     // Clean up per tier (only tiers with < 90 day retention for efficiency)
-    const tiersToClean: SubscriptionPlan[] = ['free', 'starter'];
+    const tiersToClean: SubscriptionPlan[] = ['free', 'pro'];
     for (const tier of tiersToClean) {
       const retentionDays = PLAN_LIMITS[tier].scanResultRetentionDays;
       totalDeleted += await this.deleteByTier(tier, retentionDays);
@@ -77,7 +91,7 @@ export class ScanResultCleanupService {
   }
 
   private async deleteByTier(
-    tier: string,
+    tier: SubscriptionPlan,
     retentionDays: number,
   ): Promise<number> {
     const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
@@ -105,10 +119,10 @@ export class ScanResultCleanupService {
               AND ${entitledSubscriptionSql('s_org')}
               AND u."organizationId" IS NOT NULL
             WHERE psr."scannedAt" < :cutoff
-              AND COALESCE(s_org.plan, s_personal.plan, 'free') = :tier
+              AND COALESCE(s_org.plan, s_personal.plan, 'free') IN (:...plans)
             LIMIT :limit
           )`,
-          { cutoff, tier, ...graceParams, limit: BATCH_SIZE },
+          { cutoff, plans: planIds(tier), ...graceParams, limit: BATCH_SIZE },
         )
         .execute();
       affected = result.affected ?? 0;

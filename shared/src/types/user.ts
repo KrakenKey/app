@@ -19,10 +19,23 @@ export interface UserProfile extends User {
   autoRenewalConfirmedAt?: string | null;
   firstDomainAddedAt?: string | null;
   firstCertIssuedAt?: string | null;
+  /**
+   * Usage counted the way the plan limits count it: across the
+   * organization's members for an org member. The newer counts are missing
+   * on responses from older API versions.
+   */
   resourceCounts: {
     domains: number;
     certificates: number;
     apiKeys: number;
+    /** Active (not revoked) connectors. */
+    connectors?: number;
+    /** Alert channels (Slack, Teams, webhook). */
+    alertChannels?: number;
+    /** GitHub Actions OIDC trust policies. */
+    githubOidcTrusts?: number;
+    /** Organization members, owner included; 0 outside an organization. */
+    orgMembers?: number;
   };
 }
 

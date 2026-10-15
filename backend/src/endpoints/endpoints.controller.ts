@@ -223,6 +223,10 @@ export class EndpointsController {
   })
   @ApiParam({ name: 'id', description: 'Endpoint UUID' })
   @ApiResponse({ status: 200, description: 'Scan requested' })
+  @ApiResponse({
+    status: 429,
+    description: "A scan was requested within the plan's minimum scan interval",
+  })
   @ApiResponse({ status: 404, description: 'Endpoint not found' })
   @Roles('owner', 'admin', 'member')
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)

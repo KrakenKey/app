@@ -5,7 +5,7 @@ const TRUSTS = api('/auth/github-oidc/trusts');
 
 test.describe('GitHub Actions trust policies', () => {
   test.beforeEach(async ({ page }) => {
-    await authenticateAs(page, { plan: 'starter' });
+    await authenticateAs(page, { plan: 'pro' });
     await page.route(api('/auth/api-keys') + '*', (route) =>
       route.fulfill({ status: 200, json: mockApiKeys }),
     );

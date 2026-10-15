@@ -251,6 +251,84 @@ describe('EndpointsService', () => {
     });
   });
 
+  describe('requestScan', () => {
+    const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000);
+
+    it('marks the endpoint for a scan', async () => {
+      endpointRepo.findOne.mockResolvedValue({
+        ...mockEndpoint,
+        lastScanRequestedAt: null,
+      });
+      endpointRepo.save.mockImplementation((e) => Promise.resolve(e));
+      const before = Date.now();
+      const res = await service.requestScan('ep-uuid-1', userId);
+      expect(res.lastScanRequestedAt!.getTime()).toBeGreaterThanOrEqual(before);
+    });
+
+    it.each([
+      ['free', 59, 60],
+      ['pro', 14, 15],
+      ['business', 0.5, 1],
+    ])(
+      'allows one request per the %s minimum interval',
+      async (plan, early, onTime) => {
+        billingService.resolveUserTier.mockResolvedValue(plan);
+        endpointRepo.save.mockImplementation((e) => Promise.resolve(e));
+        endpointRepo.findOne.mockResolvedValue({
+          ...mockEndpoint,
+          lastScanRequestedAt: minutesAgo(early),
+        });
+        await expect(
+          service.requestScan('ep-uuid-1', userId),
+        ).rejects.toMatchObject({ status: 429 });
+        expect(endpointRepo.save).not.toHaveBeenCalled();
+
+        endpointRepo.findOne.mockResolvedValue({
+          ...mockEndpoint,
+          lastScanRequestedAt: minutesAgo(onTime),
+        });
+        await expect(
+          service.requestScan('ep-uuid-1', userId),
+        ).resolves.toBeDefined();
+      },
+    );
+
+    it('uses the hosted interval for an endpoint scanned from a hosted region', async () => {
+      billingService.resolveUserTier.mockResolvedValue('pro');
+      endpointRepo.save.mockImplementation((e) => Promise.resolve(e));
+      const hosted = (minutes: number) => ({
+        ...mockEndpoint,
+        hostedRegions: [{ region: 'us-east-1' }],
+        lastScanRequestedAt: minutesAgo(minutes),
+      });
+      // Pro: 15 minutes connected, 30 hosted
+      endpointRepo.findOne.mockResolvedValue(hosted(20));
+      await expect(
+        service.requestScan('ep-uuid-1', userId),
+      ).rejects.toMatchObject({ status: 429 });
+      endpointRepo.findOne.mockResolvedValue(hosted(30));
+      await expect(
+        service.requestScan('ep-uuid-1', userId),
+      ).resolves.toBeDefined();
+    });
+
+    it('uses the endpoint owner plan and says when to try again', async () => {
+      endpointRepo.findOne.mockResolvedValue({
+        ...mockEndpoint,
+        userId: 'owner-1',
+        lastScanRequestedAt: minutesAgo(50),
+      });
+      const err = await service
+        .requestScan('ep-uuid-1', userId)
+        .catch((e: HttpException) => e);
+      expect(billingService.resolveUserTier).toHaveBeenCalledWith('owner-1');
+      expect((err as HttpException).getResponse()).toMatchObject({
+        message:
+          'A scan was already requested for this endpoint. The Starter plan allows one on-demand scan every 60 minutes; try again in 10 minutes.',
+      });
+    });
+  });
+
   describe('delete', () => {
     it('should delete an endpoint', async () => {
       endpointRepo.findOne.mockResolvedValue(mockEndpoint);
@@ -261,17 +339,18 @@ describe('EndpointsService', () => {
   });
 
   describe('addHostedRegion', () => {
-    it('should reject for free tier users', async () => {
+    it('allows one hosted endpoint on the free plan', async () => {
       endpointRepo.findOne.mockResolvedValue(mockEndpoint);
+      hostedRegionRepo.findOne.mockResolvedValue(null);
 
       await expect(
         service.addHostedRegion('ep-uuid-1', userId, 'us-east-1'),
-      ).rejects.toThrow(HttpException);
+      ).resolves.toMatchObject({ region: 'us-east-1' });
     });
 
-    it('should allow for team tier users', async () => {
+    it('should allow for business plan users', async () => {
       endpointRepo.findOne.mockResolvedValue(mockEndpoint);
-      billingService.resolveUserTier.mockResolvedValue('team');
+      billingService.resolveUserTier.mockResolvedValue('business');
       hostedRegionRepo.findOne.mockResolvedValue(null);
 
       const result = await service.addHostedRegion(
@@ -285,7 +364,7 @@ describe('EndpointsService', () => {
 
     it('should return existing region on duplicate', async () => {
       endpointRepo.findOne.mockResolvedValue(mockEndpoint);
-      billingService.resolveUserTier.mockResolvedValue('team');
+      billingService.resolveUserTier.mockResolvedValue('business');
       const existingRegion = {
         id: 'ehr-1',
         endpointId: 'ep-uuid-1',
@@ -305,7 +384,7 @@ describe('EndpointsService', () => {
     });
   });
 
-  describe('addHostedRegion plan limits (starter: 2 regions, 5 hosted endpoints)', () => {
+  describe('addHostedRegion plan limits', () => {
     // In-memory account state: endpoint id -> assigned regions.
     let state: Map<string, string[]>;
 
@@ -314,7 +393,7 @@ describe('EndpointsService', () => {
 
     beforeEach(() => {
       state = new Map();
-      billingService.resolveUserTier.mockResolvedValue('starter');
+      billingService.resolveUserTier.mockResolvedValue('free');
 
       endpointRepo.findOne.mockImplementation(
         ({ where }: { where: { id: string } }) =>
@@ -376,78 +455,95 @@ describe('EndpointsService', () => {
       return (err as HttpException).getResponse() as Record<string, unknown>;
     };
 
-    it('allows five endpoints in the same region', async () => {
-      for (let i = 1; i <= 5; i++) {
-        addEndpoint(`ep-${i}`);
+    describe('free (1 region, 1 hosted endpoint)', () => {
+      it('allows one hosted endpoint', async () => {
+        addEndpoint('ep-1');
         await expect(
-          service.addHostedRegion(`ep-${i}`, userId, 'us-east-1'),
+          service.addHostedRegion('ep-1', userId, 'us-east-1'),
         ).resolves.toMatchObject({ region: 'us-east-1' });
-      }
-      expect(hostedRegionRepo.save).toHaveBeenCalledTimes(5);
-    });
-
-    it('refuses a third distinct region with the distinct count', async () => {
-      addEndpoint('ep-1', ['us-east-1']);
-      addEndpoint('ep-2', ['us-east-1', 'eu-west-1']);
-      addEndpoint('ep-3', ['eu-west-1']);
-      addEndpoint('ep-4');
-
-      const body = await limitError(
-        service.addHostedRegion('ep-4', userId, 'ap-southeast-1'),
-      );
-      expect(body).toMatchObject({
-        message: 'Hosted region limit reached',
-        code: 'plan_limit_exceeded',
-        limit: 2,
-        current: 2,
-        plan: 'starter',
       });
-      expect(hostedRegionRepo.save).not.toHaveBeenCalled();
-    });
 
-    it('allows a region already in use on another endpoint when at the region limit', async () => {
-      addEndpoint('ep-1', ['us-east-1']);
-      addEndpoint('ep-2', ['eu-west-1']);
-      addEndpoint('ep-3');
+      it('refuses a second distinct region with the distinct count', async () => {
+        addEndpoint('ep-1', ['us-east-1']);
 
-      await expect(
-        service.addHostedRegion('ep-3', userId, 'eu-west-1'),
-      ).resolves.toMatchObject({ region: 'eu-west-1' });
-      // A second in-use region on an endpoint that already has one
-      await expect(
-        service.addHostedRegion('ep-3', userId, 'us-east-1'),
-      ).resolves.toMatchObject({ region: 'us-east-1' });
-    });
+        const body = await limitError(
+          service.addHostedRegion('ep-1', userId, 'eu-west-1'),
+        );
+        expect(body).toMatchObject({
+          message: 'Hosted region limit reached',
+          code: 'plan_limit_exceeded',
+          limit: 1,
+          current: 1,
+          plan: 'free',
+        });
+        expect(hostedRegionRepo.save).not.toHaveBeenCalled();
+      });
 
-    it('allows a second distinct region while under the region limit', async () => {
-      addEndpoint('ep-1', ['us-east-1']);
+      it('refuses a second hosted endpoint even in an in-use region', async () => {
+        addEndpoint('ep-1', ['us-east-1']);
+        addEndpoint('ep-2');
 
-      await expect(
-        service.addHostedRegion('ep-1', userId, 'eu-west-1'),
-      ).resolves.toMatchObject({ region: 'eu-west-1' });
-    });
-
-    it('refuses a sixth hosted endpoint even in an in-use region', async () => {
-      for (let i = 1; i <= 5; i++) addEndpoint(`ep-${i}`, ['us-east-1']);
-      addEndpoint('ep-6');
-
-      const body = await limitError(
-        service.addHostedRegion('ep-6', userId, 'us-east-1'),
-      );
-      expect(body).toMatchObject({
-        message: 'Hosted endpoint limit reached',
-        code: 'plan_limit_exceeded',
-        limit: 5,
-        current: 5,
+        const body = await limitError(
+          service.addHostedRegion('ep-2', userId, 'us-east-1'),
+        );
+        expect(body).toMatchObject({
+          message: 'Hosted endpoint limit reached',
+          code: 'plan_limit_exceeded',
+          limit: 1,
+          current: 1,
+          plan: 'free',
+        });
       });
     });
 
-    it('does not count a second region on an existing hosted endpoint as a new hosted endpoint', async () => {
-      for (let i = 1; i <= 5; i++) addEndpoint(`ep-${i}`, ['us-east-1']);
+    describe('pro (every region, 25 hosted endpoints)', () => {
+      beforeEach(() => {
+        billingService.resolveUserTier.mockResolvedValue('pro');
+      });
 
-      await expect(
-        service.addHostedRegion('ep-5', userId, 'eu-west-1'),
-      ).resolves.toMatchObject({ region: 'eu-west-1' });
+      it('allows any number of distinct regions', async () => {
+        addEndpoint('ep-1', ['us-east-1', 'eu-west-1', 'ap-southeast-1']);
+
+        await expect(
+          service.addHostedRegion('ep-1', userId, 'us-west-2'),
+        ).resolves.toMatchObject({ region: 'us-west-2' });
+        // No distinct-region count is needed when regions are unlimited
+        expect(hostedRegionRepo.createQueryBuilder).not.toHaveBeenCalled();
+      });
+
+      it('allows 25 endpoints in the same region', async () => {
+        for (let i = 1; i <= 25; i++) {
+          addEndpoint(`ep-${i}`);
+          await expect(
+            service.addHostedRegion(`ep-${i}`, userId, 'us-east-1'),
+          ).resolves.toMatchObject({ region: 'us-east-1' });
+        }
+        expect(hostedRegionRepo.save).toHaveBeenCalledTimes(25);
+      });
+
+      it('refuses a 26th hosted endpoint', async () => {
+        for (let i = 1; i <= 25; i++) addEndpoint(`ep-${i}`, ['us-east-1']);
+        addEndpoint('ep-26');
+
+        const body = await limitError(
+          service.addHostedRegion('ep-26', userId, 'us-east-1'),
+        );
+        expect(body).toMatchObject({
+          message: 'Hosted endpoint limit reached',
+          code: 'plan_limit_exceeded',
+          limit: 25,
+          current: 25,
+          plan: 'pro',
+        });
+      });
+
+      it('does not count a second region on an existing hosted endpoint as a new hosted endpoint', async () => {
+        for (let i = 1; i <= 25; i++) addEndpoint(`ep-${i}`, ['us-east-1']);
+
+        await expect(
+          service.addHostedRegion('ep-25', userId, 'eu-west-1'),
+        ).resolves.toMatchObject({ region: 'eu-west-1' });
+      });
     });
   });
 

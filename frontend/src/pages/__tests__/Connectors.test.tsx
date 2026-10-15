@@ -14,6 +14,18 @@ import {
 } from '../../test/mocks/connectors';
 import Connectors from '../Connectors';
 
+// Business: 50 connectors, 25 alert channels, 50 trust policies
+const authState = vi.hoisted(() => ({
+  user: { plan: 'business', organizationId: null } as {
+    plan: string;
+    organizationId: string | null;
+    resourceCounts?: Record<string, number>;
+  },
+}));
+vi.mock('../../hooks/useAuth', () => ({
+  useAuth: () => ({ user: authState.user }),
+}));
+
 const copy = vi.fn();
 vi.mock('../../utils/clipboard', () => ({
   copyToClipboard: (text: string) => copy(text),
@@ -212,8 +224,10 @@ describe('Connectors', () => {
         HttpResponse.json(
           {
             statusCode: 402,
-            message: 'Connector limit reached',
+            message:
+              'Connector limit reached: the Starter plan includes 1. Upgrade to Pro for 5.',
             error: 'Payment Required',
+            code: 'plan_limit_exceeded',
           },
           { status: 402 },
         ),
@@ -227,7 +241,9 @@ describe('Connectors', () => {
     await user.click(screen.getByRole('button', { name: 'Create Connector' }));
 
     expect(
-      await screen.findByText(/You have the maximum of 50 active connectors/),
+      await screen.findByText(
+        /the Starter plan includes 1\. Upgrade to Pro for 5\. Or revoke/,
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByTestId('enrollment-token')).toBeNull();
   });

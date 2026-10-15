@@ -111,10 +111,11 @@ Set `KK_DNS_PROVIDER` to select which provider handles DNS-01 ACME challenges. O
 |----------|----------|---------|-------------|
 | `KK_STRIPE_SECRET_KEY` | Yes* | — | Stripe secret API key |
 | `KK_STRIPE_WEBHOOK_SECRET` | Yes* | — | Stripe webhook signing secret for verifying webhook payloads |
-| `KK_STRIPE_PRICE_STARTER` | Yes* | — | Stripe Price ID for the Starter plan |
-| `KK_STRIPE_PRICE_TEAM` | Yes* | — | Stripe Price ID for the Team plan |
-| `KK_STRIPE_PRICE_BUSINESS` | Yes* | — | Stripe Price ID for the Business plan |
-| `KK_STRIPE_PRICE_ENTERPRISE` | Yes* | — | Stripe Price ID for the Enterprise plan |
+| `KK_STRIPE_PRICE_PRO_MONTHLY` | Yes* | - | Stripe Price ID for Pro, billed monthly. Pro monthly isn't sold without it |
+| `KK_STRIPE_PRICE_PRO_YEARLY` | No | - | Stripe Price ID for Pro, billed yearly. Yearly billing for Pro is offered only when set |
+| `KK_STRIPE_PRICE_BUSINESS_MONTHLY` | Yes* | - | Stripe Price ID for Business, billed monthly. Business monthly isn't sold without it |
+| `KK_STRIPE_PRICE_BUSINESS_YEARLY` | No | - | Stripe Price ID for Business, billed yearly. Yearly billing for Business is offered only when set |
+| `KK_STRIPE_PORTAL_CONFIGURATION_ID` | No | Stripe's default | Billing portal configuration (`bpc_...`) to open; it should let customers switch between the plans' monthly and yearly prices |
 
 *Required only if billing features are enabled
 
@@ -128,7 +129,7 @@ Sells plans through a transactable SaaS offer in Microsoft Marketplace (SaaS ful
 | `KK_MARKETPLACE_TENANT_ID` | Yes** | - | Entra tenant ID from the offer's technical configuration. Webhook tokens must be issued by it |
 | `KK_MARKETPLACE_CLIENT_ID` | Yes** | - | Entra app (client) ID from the offer's technical configuration. Webhook tokens must be issued for it; the API also uses it to call the fulfillment API |
 | `KK_MARKETPLACE_CLIENT_SECRET` | Yes** | - | Client secret of that app. Never logged |
-| `KK_MARKETPLACE_PLAN_MAP` | Yes** | - | Comma-separated `<marketplace plan id>=<plan>` pairs, where plan is `starter`, `team` or `business`, e.g. `kk-team-monthly=team,kk-team-yearly=team`. A purchase or plan change to a plan that isn't listed is refused |
+| `KK_MARKETPLACE_PLAN_MAP` | Yes** | - | Comma-separated `<marketplace plan id>=<plan>` pairs, where plan is `pro`, `business` or `enterprise` (`starter` and `team` are still read as `pro` and `business`), e.g. `kk-pro=pro,kk-business=business`. A purchase or plan change to a plan that isn't listed is refused |
 | `KK_MARKETPLACE_OFFER_IDS` | No | - | Comma-separated offer IDs to accept. When unset, any offer of the publisher is accepted |
 
 **Required when `KK_MARKETPLACE_ENABLED=true`. Missing values are logged by name at startup.

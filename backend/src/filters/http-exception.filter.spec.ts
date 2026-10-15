@@ -73,6 +73,55 @@ describe('HttpExceptionFilter', () => {
     );
   });
 
+  it('passes plan limit details on, so clients can name the next plan', () => {
+    filter.catch(
+      new HttpException(
+        {
+          message: 'Connector limit reached',
+          code: 'plan_limit_exceeded',
+          limit: 1,
+          current: 1,
+          plan: 'free',
+          upgradeTo: 'pro',
+          internal: 'not for clients',
+        },
+        402,
+      ),
+      mockHost,
+    );
+
+    const body = mockResponse.json.mock.calls[0][0];
+    expect(body).toMatchObject({
+      statusCode: 402,
+      message: 'Connector limit reached',
+      code: 'plan_limit_exceeded',
+      limit: 1,
+      current: 1,
+      plan: 'free',
+      upgradeTo: 'pro',
+    });
+    expect(body).not.toHaveProperty('internal');
+  });
+
+  it('leaves out an unlimited limit and the fields of other errors', () => {
+    filter.catch(
+      new HttpException(
+        { message: 'x', code: 'plan_limit_exceeded', limit: Infinity },
+        402,
+      ),
+      mockHost,
+    );
+    expect(mockResponse.json.mock.calls[0][0]).not.toHaveProperty('limit');
+
+    filter.catch(
+      new HttpException({ message: 'y', code: 'other', limit: 3 }, 400),
+      mockHost,
+    );
+    const body = mockResponse.json.mock.calls[1][0];
+    expect(body).not.toHaveProperty('code');
+    expect(body).not.toHaveProperty('limit');
+  });
+
   it('handles non-HttpException errors with 500 status', () => {
     const exception = new Error('Something broke');
 

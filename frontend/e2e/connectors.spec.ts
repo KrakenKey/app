@@ -172,7 +172,7 @@ async function mockApi(page: Page) {
 
 test.describe('Connectors', () => {
   test.beforeEach(async ({ page }) => {
-    await authenticateAs(page, { plan: 'starter' });
+    await authenticateAs(page, { plan: 'pro' });
   });
 
   test('lists connectors with status and failing targets', async ({ page }) => {

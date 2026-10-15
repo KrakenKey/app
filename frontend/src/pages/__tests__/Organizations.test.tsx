@@ -18,7 +18,7 @@ const { orgService, authUser } = vi.hoisted(() => ({
   },
   authUser: {
     id: 'usr_owner',
-    plan: 'team',
+    plan: 'business',
     organizationId: 'org_1',
     role: 'owner' as string,
   },
@@ -36,7 +36,7 @@ const org: Organization = {
   id: 'org_1',
   name: 'Harborline IT',
   ownerId: 'usr_owner',
-  plan: 'team',
+  plan: 'business',
   createdAt: '2026-01-01T00:00:00.000Z',
   members: [
     {

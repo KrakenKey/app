@@ -248,19 +248,19 @@ describe('TlsService', () => {
         ...over,
       }) as unknown as TlsCrt;
 
-    it('uses the plan window: 5 days on free', async () => {
+    it('uses the plan window: 10 days on free', async () => {
       billingService.resolveUserTier.mockResolvedValue('free');
 
       const [res] = await service.toResponses([issued()]);
 
       expect(res.renewAfter).toBe(
-        new Date(expiresAt.getTime() - 5 * DAY).toISOString(),
+        new Date(expiresAt.getTime() - 10 * DAY).toISOString(),
       );
       expect(billingService.resolveUserTier).toHaveBeenCalledWith(userId);
     });
 
     it('uses the plan window: 30 days on paid plans', async () => {
-      billingService.resolveUserTier.mockResolvedValue('team');
+      billingService.resolveUserTier.mockResolvedValue('business');
 
       const [res] = await service.toResponses([issued()]);
 
@@ -282,7 +282,7 @@ describe('TlsService', () => {
     });
 
     it('uses a routine ARI window start for a connector-managed cert', async () => {
-      billingService.resolveUserTier.mockResolvedValue('starter');
+      billingService.resolveUserTier.mockResolvedValue('pro');
       const ariWindowStart = new Date(expiresAt.getTime() - 45 * DAY);
 
       const [res] = await service.toResponses([
@@ -299,12 +299,12 @@ describe('TlsService', () => {
       const [res] = await service.toResponses([issued({ ariWindowStart })]);
 
       expect(res.renewAfter).toBe(
-        new Date(expiresAt.getTime() - 5 * DAY).toISOString(),
+        new Date(expiresAt.getTime() - 10 * DAY).toISOString(),
       );
     });
 
     it('uses the ARI window start for other certs once the CA asked for early replacement', async () => {
-      billingService.resolveUserTier.mockResolvedValue('starter');
+      billingService.resolveUserTier.mockResolvedValue('pro');
       const ariWindowStart = new Date(expiresAt.getTime() - 45 * DAY);
 
       const [res] = await service.toResponses([
@@ -315,7 +315,7 @@ describe('TlsService', () => {
     });
 
     it('keeps the plan window when the ARI window starts later', async () => {
-      billingService.resolveUserTier.mockResolvedValue('starter');
+      billingService.resolveUserTier.mockResolvedValue('pro');
       const ariWindowStart = new Date(expiresAt.getTime() - 10 * DAY);
 
       const [res] = await service.toResponses([
@@ -1435,7 +1435,7 @@ describe('TlsService', () => {
           expiresAt: expiringIn(60),
           ariReplacementRequestedAt: new Date(),
         });
-        billingService.resolveUserTier.mockResolvedValue('starter');
+        billingService.resolveUserTier.mockResolvedValue('pro');
 
         const result = await service.renew(1, userId, { ifDue: true });
 
@@ -1449,7 +1449,7 @@ describe('TlsService', () => {
           ...issuedCert,
           expiresAt,
         });
-        billingService.resolveUserTier.mockResolvedValue('starter');
+        billingService.resolveUserTier.mockResolvedValue('pro');
 
         const result = await service.renew(1, userId, { ifDue: true });
 
@@ -1474,7 +1474,7 @@ describe('TlsService', () => {
           ...issuedCert,
           expiresAt: expiringIn(20),
         });
-        billingService.resolveUserTier.mockResolvedValue('starter');
+        billingService.resolveUserTier.mockResolvedValue('pro');
 
         const result = await service.renew(1, userId, { ifDue: true });
 
@@ -1483,7 +1483,7 @@ describe('TlsService', () => {
         expect(mockQueue.addBulk).toHaveBeenCalledWith([renewalJob(1)]);
       });
 
-      it('uses the 5-day free window: 20 days out is skipped', async () => {
+      it('uses the 10-day free window: 20 days out is skipped', async () => {
         mockRepository.findOneBy.mockResolvedValue({
           ...issuedCert,
           expiresAt: expiringIn(20),
@@ -1492,14 +1492,14 @@ describe('TlsService', () => {
 
         const result = await service.renew(1, userId, { ifDue: true });
 
-        expect(result).toMatchObject({ skipped: true, renewalWindowDays: 5 });
+        expect(result).toMatchObject({ skipped: true, renewalWindowDays: 10 });
         expect(mockQueue.add).not.toHaveBeenCalled();
       });
 
-      it('uses the 5-day free window: 4 days out renews', async () => {
+      it('uses the 10-day free window: 9 days out renews', async () => {
         mockRepository.findOneBy.mockResolvedValue({
           ...issuedCert,
-          expiresAt: expiringIn(4),
+          expiresAt: expiringIn(9),
         });
         billingService.resolveUserTier.mockResolvedValue('free');
 
@@ -1659,7 +1659,7 @@ describe('TlsService', () => {
           ...certWithNames,
           expiresAt: new Date(Date.now() + 60 * DAY),
         });
-        billingService.resolveUserTier.mockResolvedValue('starter');
+        billingService.resolveUserTier.mockResolvedValue('pro');
         mockNewCsr(parsedFor('example.com', ['www.example.com']));
 
         const result = await service.renew(1, userId, {
@@ -1752,7 +1752,7 @@ describe('TlsService', () => {
         mockRepository.findOneBy.mockResolvedValue(
           connectorCert(40, { ariWindowStart: new Date(Date.now() + DAY) }),
         );
-        billingService.resolveUserTier.mockResolvedValue('starter');
+        billingService.resolveUserTier.mockResolvedValue('pro');
 
         const result = await service.renew(1, userId, { ifDue: true });
 
@@ -1767,7 +1767,7 @@ describe('TlsService', () => {
             ariReplacementRequestedAt: new Date(),
           }),
         );
-        billingService.resolveUserTier.mockResolvedValue('starter');
+        billingService.resolveUserTier.mockResolvedValue('pro');
 
         const result = await service.renew(1, userId, { ifDue: true });
 
@@ -1778,7 +1778,7 @@ describe('TlsService', () => {
         mockRepository.findOneBy.mockResolvedValue(
           connectorCert(40, { ariWindowStart: new Date(Date.now() - DAY) }),
         );
-        billingService.resolveUserTier.mockResolvedValue('starter');
+        billingService.resolveUserTier.mockResolvedValue('pro');
 
         const result = await service.renew(1, userId, { ifDue: true });
 

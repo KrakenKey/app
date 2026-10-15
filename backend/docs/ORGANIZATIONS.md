@@ -4,7 +4,7 @@ Organizations allow teams to share domains, certificates, and endpoints under a 
 
 ## Requirements
 
-- Organizations require a **Team** plan or higher
+- Organizations require the **Pro** plan or higher. Pro allows 3 members (owner included); Business and Enterprise have no member limit. Inviting a new member past the limit returns `402` with `code: "plan_limit_exceeded"`; existing members are never removed
 - A user can only belong to one organization at a time
 - Users with an active paid personal subscription cannot join an organization (cancel first or let it lapse)
 

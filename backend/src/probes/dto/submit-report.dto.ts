@@ -3,6 +3,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsDateString,
+  ArrayMaxSize,
   IsArray,
   ValidateNested,
   IsBoolean,
@@ -150,6 +151,9 @@ export class ScanResultDto {
   certificate?: CertificateResultDto;
 }
 
+/** Most results one probe report may carry. */
+export const MAX_REPORT_RESULTS = 1000;
+
 export class SubmitReportDto {
   @ApiProperty()
   @IsString()
@@ -170,8 +174,16 @@ export class SubmitReportDto {
   @IsDateString()
   timestamp: string;
 
-  @ApiProperty({ type: [ScanResultDto] })
+  /**
+   * At most MAX_REPORT_RESULTS per report. A connected probe scans at most
+   * its owner's monitored endpoints (300 on Business), and the request body
+   * limit (100 kB) already holds a report to roughly 100 to 150 results;
+   * the bound stops a raised body limit from turning into unbounded work
+   * per request.
+   */
+  @ApiProperty({ type: [ScanResultDto], maxItems: MAX_REPORT_RESULTS })
   @IsArray()
+  @ArrayMaxSize(MAX_REPORT_RESULTS)
   @ValidateNested({ each: true })
   @Type(() => ScanResultDto)
   results: ScanResultDto[];

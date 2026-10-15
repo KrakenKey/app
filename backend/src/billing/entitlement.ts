@@ -1,3 +1,4 @@
+import { normalizePlan, type SubscriptionPlan } from '@krakenkey/shared';
 import type { Subscription } from './entities/subscription.entity';
 
 /**
@@ -52,13 +53,16 @@ export function hasPlanEntitlement(
   return ends !== null && now < ends;
 }
 
-/** The plan whose limits apply to this subscription right now. */
+/**
+ * The plan whose limits apply to this subscription right now. A legacy plan
+ * id (starter, team) written by an older release reads as its replacement.
+ */
 export function effectivePlan(
   sub: EntitlementFields | null | undefined,
   now: Date = new Date(),
-): string {
+): SubscriptionPlan {
   if (!sub || !hasPlanEntitlement(sub, now)) return 'free';
-  return sub.plan;
+  return normalizePlan(sub.plan);
 }
 
 /**

@@ -240,8 +240,7 @@ describe('TierAwareThrottlerGuard', () => {
 
     it.each([
       ['free', 10, 5],
-      ['starter', 30, 10],
-      ['team', 120, 30],
+      ['pro', 120, 30],
       ['business', 300, 60],
       ['enterprise', 600, 100],
     ])(
@@ -361,7 +360,7 @@ describe('TierAwareThrottlerGuard', () => {
         return Promise.resolve(null);
       });
       mockTierResolver.resolve.mockImplementation((userId: string) =>
-        Promise.resolve(userId === 'user-starter' ? 'starter' : 'free'),
+        Promise.resolve(userId === 'user-starter' ? 'pro' : 'free'),
       );
     });
 
@@ -378,8 +377,7 @@ describe('TierAwareThrottlerGuard', () => {
       expect(parentHandleRequest).toHaveBeenCalledWith(
         expect.objectContaining({
           limit:
-            RATE_LIMIT_TIERS['starter'][RateLimitCategory.AUTHENTICATED_READ]
-              .limit,
+            RATE_LIMIT_TIERS['pro'][RateLimitCategory.AUTHENTICATED_READ].limit,
         }),
       );
       expect(await (guard as any).getTracker(req, context)).toBe(

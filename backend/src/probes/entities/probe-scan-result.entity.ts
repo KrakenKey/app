@@ -18,6 +18,11 @@ import { Endpoint } from '../../endpoints/entities/endpoint.entity';
   'port',
   'scannedAt',
 ])
+@Index('IDX_probe_scan_result_endpointId_probeId_createdAt', [
+  'endpointId',
+  'probeId',
+  'createdAt',
+])
 @Index('IDX_probe_scan_result_endpointId_scannedAt', [
   'endpointId',
   'scannedAt',

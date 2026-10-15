@@ -38,7 +38,7 @@ const purchase = (
   state: 'ready',
   subscriptionName: 'Acme KrakenKey',
   planId: 'kk-team',
-  plan: 'team',
+  plan: 'business',
   saasStatus: 'PendingFulfillmentStart',
   purchaserEmail: 'buyer@acme.example',
   beneficiaryEmail: 'admin@acme.example',
@@ -245,7 +245,7 @@ describe('Marketplace landing page', () => {
   it.each([
     ['linked_elsewhere', 'Linked to another account'],
     ['not_owner', 'Ask your organization owner'],
-    ['needs_team', 'Organizations need Team or higher'],
+    ['needs_team', 'Organizations need Pro or higher'],
     ['unknown_plan', 'Plan not available'],
     ['suspended', 'Subscription suspended'],
     ['ended', 'Subscription canceled'],

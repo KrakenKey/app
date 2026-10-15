@@ -18,9 +18,11 @@ import {
 } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
 import { BillingService } from './billing.service';
+import { normalizePlan } from '@krakenkey/shared';
 import { graceEndsAt } from './entitlement';
 import { CreateCheckoutDto } from './dto/create-checkout.dto';
 import { UpgradePlanDto } from './dto/upgrade-plan.dto';
+import { CreatePortalDto } from './dto/portal.dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-or-api-key.guard';
 import type { RequestWithUser } from '../auth/interfaces/request-with-user.interface';
 import { RateLimitCategoryDecorator } from '../throttler/decorators/rate-limit-category.decorator';
@@ -55,8 +57,22 @@ export class BillingController {
       req.user.userId,
       req.user.email ?? '',
       dto.plan,
+      dto.interval,
     );
     return { sessionUrl };
+  }
+
+  @Get('plans')
+  @RequireScope('account:read')
+  @UseGuards(JwtOrApiKeyGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Plans and billing intervals that can be bought with Stripe',
+  })
+  @ApiResponse({ status: 200, description: 'Purchasable plans' })
+  @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_READ)
+  plans() {
+    return { plans: this.billingService.purchasablePlans() };
   }
 
   @Get('subscription')
@@ -80,11 +96,12 @@ export class BillingController {
         graceEndsAt: null,
         source: 'stripe',
         marketplaceStatus: null,
+        interval: null,
       };
     }
     return {
       id: sub.id,
-      plan: sub.plan,
+      plan: normalizePlan(sub.plan),
       status: sub.status,
       currentPeriodEnd: sub.currentPeriodEnd,
       cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
@@ -94,6 +111,10 @@ export class BillingController {
       source: sub.source ?? 'stripe',
       marketplaceStatus:
         sub.source === 'marketplace' ? sub.marketplaceStatus : null,
+      interval:
+        sub.source !== 'marketplace' && sub.stripeSubscriptionId
+          ? (sub.billingInterval ?? 'month')
+          : null,
       createdAt: sub.createdAt,
     };
   }
@@ -107,9 +128,13 @@ export class BillingController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'No subscription found' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
-  async createPortal(@Request() req: RequestWithUser) {
+  async createPortal(
+    @Request() req: RequestWithUser,
+    @Body() dto: CreatePortalDto,
+  ) {
     const portalUrl = await this.billingService.createPortalSession(
       req.user.userId,
+      dto?.flow,
     );
     return { portalUrl };
   }
@@ -128,7 +153,11 @@ export class BillingController {
     @Request() req: RequestWithUser,
     @Body() dto: UpgradePlanDto,
   ) {
-    return this.billingService.previewUpgrade(req.user.userId, dto.plan);
+    return this.billingService.previewUpgrade(
+      req.user.userId,
+      dto.plan,
+      dto.interval,
+    );
   }
 
   @Post('upgrade')
@@ -142,7 +171,12 @@ export class BillingController {
   @ApiResponse({ status: 404, description: 'No active subscription' })
   @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
   async upgrade(@Request() req: RequestWithUser, @Body() dto: UpgradePlanDto) {
-    return this.billingService.upgradeSubscription(req.user.userId, dto.plan);
+    return this.billingService.upgradeSubscription(
+      req.user.userId,
+      dto.plan,
+      dto.interval,
+      dto.prorationDate,
+    );
   }
 
   @Post('webhook')

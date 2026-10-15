@@ -11,12 +11,15 @@ import { OrganizationsService } from './organizations.service';
 import { Organization } from './entities/organization.entity';
 import { User } from '../users/entities/user.entity';
 import { BillingService } from '../billing/billing.service';
+import { PlanLimitsService } from '../billing/limits/plan-limits.service';
+import { planLimitExceeded } from '../billing/limits/plan-limit-error';
 
 describe('OrganizationsService', () => {
   let service: OrganizationsService;
   let mockOrgRepo: Record<string, any>;
   let mockUserRepo: Record<string, jest.Mock>;
   let mockBillingService: Record<string, jest.Mock>;
+  let mockPlanLimits: { addMemberWithinLimit: jest.Mock };
 
   const ownerId = 'user-owner';
   const orgId = 'org-1';
@@ -49,9 +52,18 @@ describe('OrganizationsService', () => {
       queueDissolution: jest.fn(),
     };
 
+    // Runs the update through the given manager, like the real one
+    mockPlanLimits = {
+      addMemberWithinLimit: jest.fn(
+        (_org: string, _actor: string, save: (m: unknown) => unknown) =>
+          save({ getRepository: () => mockUserRepo }),
+      ),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         OrganizationsService,
+        { provide: PlanLimitsService, useValue: mockPlanLimits },
         { provide: getRepositoryToken(Organization), useValue: mockOrgRepo },
         { provide: getRepositoryToken(User), useValue: mockUserRepo },
         { provide: BillingService, useValue: mockBillingService },
@@ -67,7 +79,7 @@ describe('OrganizationsService', () => {
 
   describe('create', () => {
     it('should create an org and set the creator as owner', async () => {
-      mockBillingService.resolveUserTier.mockResolvedValue('team');
+      mockBillingService.resolveUserTier.mockResolvedValue('business');
       mockUserRepo.findOne.mockResolvedValue({
         id: ownerId,
         organizationId: null,
@@ -89,13 +101,32 @@ describe('OrganizationsService', () => {
     it('should reject if plan is not org-eligible', async () => {
       mockBillingService.resolveUserTier.mockResolvedValue('free');
 
-      await expect(service.create(ownerId, 'Acme')).rejects.toThrow(
-        HttpException,
-      );
+      const err = await service
+        .create(ownerId, 'Acme')
+        .catch((e: HttpException) => e);
+      expect((err as HttpException).getStatus()).toBe(402);
+      expect((err as HttpException).getResponse()).toMatchObject({
+        code: 'plan_limit_exceeded',
+        message:
+          'Organizations require the Pro plan or higher. Please upgrade to create an organization.',
+      });
+    });
+
+    it('lets a Pro account create an organization', async () => {
+      mockBillingService.resolveUserTier.mockResolvedValue('pro');
+      mockUserRepo.findOne.mockResolvedValue({
+        id: ownerId,
+        organizationId: null,
+      });
+      const savedOrg = { id: orgId, name: 'Acme', ownerId };
+      mockOrgRepo._mockManager.create.mockReturnValue(savedOrg);
+      mockOrgRepo._mockManager.save.mockResolvedValue(savedOrg);
+
+      await expect(service.create(ownerId, 'Acme')).resolves.toEqual(savedOrg);
     });
 
     it('should reject if user already belongs to an org', async () => {
-      mockBillingService.resolveUserTier.mockResolvedValue('team');
+      mockBillingService.resolveUserTier.mockResolvedValue('business');
       mockUserRepo.findOne.mockResolvedValue({
         id: ownerId,
         organizationId: 'other-org',
@@ -194,6 +225,56 @@ describe('OrganizationsService', () => {
       });
     });
 
+    it('checks for a free seat before adding a new member', async () => {
+      mockUserRepo.findOne.mockResolvedValueOnce({
+        id: 'target',
+        organizationId: null,
+        role: null,
+      });
+      mockBillingService.getSubscription.mockResolvedValue(null);
+      mockPlanLimits.addMemberWithinLimit.mockRejectedValue(
+        planLimitExceeded('orgMembers', 'pro', 3),
+      );
+
+      const err = await service
+        .inviteMember(orgId, ownerId, 'target@example.com', 'member')
+        .catch((e: HttpException) => e);
+
+      expect(mockPlanLimits.addMemberWithinLimit).toHaveBeenCalledWith(
+        orgId,
+        ownerId,
+        expect.any(Function),
+      );
+      expect((err as HttpException).getStatus()).toBe(402);
+      expect((err as HttpException).getResponse()).toMatchObject({
+        code: 'plan_limit_exceeded',
+        limit: 3,
+        current: 3,
+        plan: 'pro',
+        upgradeTo: 'business',
+        message:
+          'Organization member limit reached: the Pro plan includes 3. Upgrade to Business to remove the limit.',
+      });
+      expect(mockUserRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('lets a member already in the organization change role without a seat check', async () => {
+      mockUserRepo.findOne.mockResolvedValueOnce({
+        id: 'target',
+        organizationId: orgId,
+        role: 'member',
+      });
+      mockBillingService.getSubscription.mockResolvedValue(null);
+
+      await service.inviteMember(orgId, ownerId, 'target@example.com', 'admin');
+
+      expect(mockPlanLimits.addMemberWithinLimit).not.toHaveBeenCalled();
+      expect(mockUserRepo.update).toHaveBeenCalledWith('target', {
+        organizationId: orgId,
+        role: 'admin',
+      });
+    });
+
     it('should throw if target user not found', async () => {
       mockUserRepo.findOne.mockResolvedValueOnce(null);
 
@@ -221,7 +302,7 @@ describe('OrganizationsService', () => {
         role: null,
       });
       mockBillingService.getSubscription.mockResolvedValue({
-        plan: 'starter',
+        plan: 'pro',
         status: 'active',
         cancelAtPeriodEnd: false,
       });
@@ -238,7 +319,7 @@ describe('OrganizationsService', () => {
         role: null,
       });
       mockBillingService.getSubscription.mockResolvedValue({
-        plan: 'starter',
+        plan: 'pro',
         status: 'past_due',
         pastDueSince: new Date(),
         cancelAtPeriodEnd: false,

@@ -5,8 +5,8 @@ import axios from 'axios';
 import {
   REPORT_HOST_LIMITS,
   REPORT_SEVERITIES,
+  normalizePlan,
   type ReportListItem,
-  type SubscriptionPlan,
 } from '@krakenkey/shared';
 import { useAuth } from '../hooks/useAuth';
 import {
@@ -33,10 +33,7 @@ import {
 const POLL_MS = 4000;
 
 function hostLimit(plan: string | undefined): number {
-  return (
-    REPORT_HOST_LIMITS[(plan ?? 'free') as SubscriptionPlan] ??
-    REPORT_HOST_LIMITS.free
-  );
+  return REPORT_HOST_LIMITS[normalizePlan(plan)];
 }
 
 export function ReportCounts({ report }: { report: ReportListItem }) {

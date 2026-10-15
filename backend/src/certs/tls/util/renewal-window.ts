@@ -1,8 +1,9 @@
 import {
   CONNECTOR_MIN_RENEWAL_WINDOW_DAYS,
   CertStatus,
+  normalizePlan,
 } from '@krakenkey/shared';
-import type { CertManagedBy, SubscriptionPlan } from '@krakenkey/shared';
+import type { CertManagedBy } from '@krakenkey/shared';
 import { PLAN_LIMITS } from '../../../billing/constants/plan-limits';
 
 const MS_PER_DAY = 86_400_000;
@@ -75,13 +76,15 @@ export function daysUntilExpiry(expiresAt: Date, now = Date.now()): number {
 
 /** Renewal window for a plan in days. Unknown plans fall back to free. */
 export function renewalWindowDays(plan: string): number {
-  return (PLAN_LIMITS[plan as SubscriptionPlan] ?? PLAN_LIMITS.free)
-    .renewalWindowDays;
+  return PLAN_LIMITS[normalizePlan(plan)].renewalWindowDays;
 }
 
 /**
  * Renewal window for one certificate: the plan's window, but at least
  * CONNECTOR_MIN_RENEWAL_WINDOW_DAYS for certificates a connector renews.
+ * That minimum applies on every plan, the free one included: a connector
+ * renews on the customer's machine, which can be offline for days, and the
+ * free plan's other limits (one connector, 10 active certificates) bound it.
  */
 export function certRenewalWindowDays(
   plan: string,

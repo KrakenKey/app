@@ -64,6 +64,12 @@ describe('GithubOidcService.exchange', () => {
       auth as any,
       verifier as any,
       { lookup: jest.fn() } as any,
+      {
+        assertCanAdd: jest.fn(),
+        addWithinLimit: jest.fn((_u: string, _l: string, save: any) =>
+          save({ getRepository: () => repo }),
+        ),
+      } as any,
     );
   });
 
@@ -150,6 +156,7 @@ describe('GithubOidcService.create', () => {
   let repo: { count: jest.Mock; create: jest.Mock; save: jest.Mock };
   let auth: { validateRestrictions: jest.Mock };
   let lookup: { lookup: jest.Mock };
+  let planLimits: { assertCanAdd: jest.Mock; addWithinLimit: jest.Mock };
   let svc: GithubOidcService;
 
   const dto = (over: Record<string, unknown> = {}) => ({
@@ -177,12 +184,35 @@ describe('GithubOidcService.create', () => {
       }),
     };
     lookup = { lookup: jest.fn() };
+    planLimits = {
+      assertCanAdd: jest.fn(),
+      addWithinLimit: jest.fn((_u: string, _l: string, save: any) =>
+        save({ getRepository: () => repo }),
+      ),
+    };
     svc = new GithubOidcService(
       repo as any,
       auth as any,
       {} as any,
       lookup as any,
+      planLimits as any,
     );
+  });
+
+  it('checks the plan limit on trust policies before creating one', async () => {
+    planLimits.assertCanAdd.mockRejectedValue(
+      Object.assign(new Error('GitHub trust policy limit reached'), {
+        status: 402,
+      }),
+    );
+    await expect(svc.create('u1', dto() as any)).rejects.toMatchObject({
+      status: 402,
+    });
+    expect(planLimits.assertCanAdd).toHaveBeenCalledWith(
+      'u1',
+      'githubOidcTrusts',
+    );
+    expect(repo.save).not.toHaveBeenCalled();
   });
 
   it('pins a public repository right away', async () => {
