@@ -13,10 +13,11 @@ import {
   AWS_MARKETPLACE_CONSOLE_URL,
   PENDING_AWS_MARKETPLACE_REGISTRATION_KEY,
   fetchAwsMarketplaceStatus,
+  forgetAwsRegistration,
   linkAwsMarketplacePurchase,
   readAwsRegisterError,
-  readAwsRegistration,
   resolveAwsMarketplacePurchase,
+  takeAwsRegistration,
   type AwsMarketplaceRegisterError,
 } from '../services/awsMarketplaceService';
 
@@ -134,9 +135,7 @@ function PurchaseDetails({
 const AwsMarketplace: React.FC = () => {
   const { isAuthenticated, isLoading, login, register, loginWithMicrosoft } =
     useAuth();
-  const [registration] = useState(() =>
-    readAwsRegistration(window.location.search),
-  );
+  const [registration] = useState(() => takeAwsRegistration());
   const [registerError] = useState(() =>
     readAwsRegisterError(window.location.search),
   );
@@ -199,6 +198,8 @@ const AwsMarketplace: React.FC = () => {
     setResult({ kind: 'working', purchase: state.purchase });
     try {
       const purchase = await linkAwsMarketplacePurchase(registration);
+      // The API used the registration up; a reload shouldn't retry it.
+      forgetAwsRegistration();
       setResult({ kind: 'ready', purchase });
     } catch (err) {
       setResult({ kind: 'error', message: errorMessage(err) });

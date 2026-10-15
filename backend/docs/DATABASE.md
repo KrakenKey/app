@@ -240,7 +240,7 @@ CREATE INDEX "IDX_subscription_awsAgreementId" ON subscription("awsAgreementId")
 
 ### Marketplace Operation
 
-Microsoft Marketplace webhook operations that were handled, so a redelivered webhook is acknowledged without being applied twice. AWS Marketplace events are recorded here too, with the ID `aws:<EventBridge event id>` and the license ARN as `subscriptionId`, and changes the hourly AWS reconcile made as `aws-reconcile:<uuid>`.
+Microsoft Marketplace webhook operations that were handled, so a redelivered webhook is acknowledged without being applied twice. AWS Marketplace events are recorded here too, with the ID `aws:<EventBridge event id>` and the license ARN as `subscriptionId`, changes the hourly AWS reconcile made as `aws-reconcile:<uuid>`, entitled licenses that were never linked as `aws-unlinked:<uuid>`, and pending links an owner removed as `aws-unlink:<uuid>`.
 
 ```sql
 CREATE TABLE "marketplace_operation" (
@@ -260,7 +260,7 @@ CREATE TABLE "marketplace_operation" (
 
 ### AWS Marketplace Registration
 
-AWS Marketplace purchases resolved at the fulfillment URL, waiting for the buyer to sign in and link them. Kept for 24 hours; the hourly AWS reconcile deletes expired rows. The AWS registration token itself is never stored.
+AWS Marketplace purchases resolved at the fulfillment URL, waiting for the buyer to sign in and link them. Deleted when linked; otherwise kept for 24 hours, and the hourly AWS reconcile deletes expired rows. The AWS registration token itself is never stored.
 
 ```sql
 CREATE TABLE "aws_marketplace_registration" (

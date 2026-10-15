@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   Post,
@@ -87,6 +88,21 @@ export class AwsMarketplaceController {
       '/billing/aws-marketplace/resolve',
     );
     return this.awsMarketplace.describe(req.user.userId, dto.registration);
+  }
+
+  /**
+   * Removes an AWS Marketplace purchase that is linked to the account but
+   * still waiting for AWS, so the account can subscribe another way. It
+   * doesn't cancel anything in AWS. Available with the flag off too, since
+   * links made before it was turned off stay on the account.
+   */
+  @Delete('pending')
+  @HttpCode(204)
+  @SessionOnly()
+  @UseGuards(JwtOrApiKeyGuard)
+  @RateLimitCategoryDecorator(RateLimitCategory.AUTHENTICATED_WRITE)
+  async removePending(@Request() req: RequestWithUser): Promise<void> {
+    await this.awsMarketplace.removePendingLink(req.user.userId);
   }
 
   /** Links the purchase to the signed-in account (or its organization). */

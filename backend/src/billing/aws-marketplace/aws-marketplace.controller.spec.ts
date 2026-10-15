@@ -18,6 +18,7 @@ async function appWith(enabled: boolean) {
     get: (key: string) =>
       ({
         KK_AWS_MARKETPLACE_ENABLED: String(enabled),
+        KK_AWS_MARKETPLACE_PRODUCT_CODES: 'prod-code',
         KK_APP_DOMAIN: 'app.example.test',
       })[key],
   } as any);
@@ -28,6 +29,7 @@ async function appWith(enabled: boolean) {
     {} as any,
     {} as any,
     config,
+    {} as any,
     {} as any,
     {} as any,
   );
@@ -42,6 +44,9 @@ async function appWith(enabled: boolean) {
   const link = jest
     .spyOn(service, 'link')
     .mockResolvedValue({ state: 'active' } as any);
+  const removePending = jest
+    .spyOn(service, 'removePendingLink')
+    .mockResolvedValue(undefined);
 
   const moduleRef = await Test.createTestingModule({
     controllers: [AwsMarketplaceController],
@@ -58,7 +63,7 @@ async function appWith(enabled: boolean) {
   const app = moduleRef.createNestApplication();
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   await app.init();
-  return { app, register, describe, link };
+  return { app, register, describe, link, removePending };
 }
 
 describe('AwsMarketplaceController', () => {
@@ -99,6 +104,13 @@ describe('AwsMarketplaceController', () => {
       expect(mocks.register).not.toHaveBeenCalled();
       expect(mocks.describe).not.toHaveBeenCalled();
       expect(mocks.link).not.toHaveBeenCalled();
+    });
+
+    it('still lets an owner remove a pending link made before the flag went off', async () => {
+      await request(server())
+        .delete('/billing/aws-marketplace/pending')
+        .expect(204);
+      expect(mocks.removePending).toHaveBeenCalledWith('user-1');
     });
   });
 

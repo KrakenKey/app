@@ -67,6 +67,7 @@ describe('@SessionOnly routes', () => {
         'POST /billing/marketplace/activate',
         'POST /billing/aws-marketplace/resolve',
         'POST /billing/aws-marketplace/link',
+        'DELETE /billing/aws-marketplace/pending',
         'POST /auth/github-oidc/trusts',
         'DELETE /auth/github-oidc/trusts/:id',
         'POST /connectors',

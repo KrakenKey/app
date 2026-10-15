@@ -9,6 +9,13 @@ import type {
 export const PENDING_AWS_MARKETPLACE_REGISTRATION_KEY =
   'kk_pending_aws_marketplace_registration';
 
+/**
+ * sessionStorage key for the registration the landing page is working on,
+ * so it can be taken out of the address bar (and browser history).
+ */
+export const AWS_MARKETPLACE_REGISTRATION_KEY =
+  'kk_aws_marketplace_registration';
+
 /** AWS Marketplace console page where buyers change or cancel their subscriptions. */
 export const AWS_MARKETPLACE_CONSOLE_URL =
   'https://console.aws.amazon.com/marketplace/home#/subscriptions';
@@ -68,4 +75,53 @@ export async function linkAwsMarketplacePurchase(
     { registration },
   );
   return response.data;
+}
+
+/**
+ * Unlinks an AWS Marketplace purchase that is still waiting for AWS from
+ * the account. Nothing is canceled in AWS.
+ */
+export async function removePendingAwsPurchase(): Promise<void> {
+  await api.delete(API_ROUTES.BILLING.AWS_MARKETPLACE_PENDING);
+}
+
+/**
+ * The registration this visit is about: from the URL (which is then
+ * cleaned, so the id doesn't stay in the address bar or history) or from
+ * session storage on a reload.
+ */
+export function takeAwsRegistration(): string | null {
+  const fromUrl = readAwsRegistration(window.location.search);
+  if (fromUrl) {
+    try {
+      sessionStorage.setItem(AWS_MARKETPLACE_REGISTRATION_KEY, fromUrl);
+    } catch {
+      // Without storage a reload just asks to start again from AWS.
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.delete('registration');
+    window.history.replaceState(
+      window.history.state,
+      '',
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+    return fromUrl;
+  }
+  try {
+    const stored = sessionStorage.getItem(AWS_MARKETPLACE_REGISTRATION_KEY);
+    return stored && readAwsRegistration(`?registration=${stored}`)
+      ? stored
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Forgets the registration once it is linked (the API has used it up). */
+export function forgetAwsRegistration(): void {
+  try {
+    sessionStorage.removeItem(AWS_MARKETPLACE_REGISTRATION_KEY);
+  } catch {
+    // nothing stored
+  }
 }

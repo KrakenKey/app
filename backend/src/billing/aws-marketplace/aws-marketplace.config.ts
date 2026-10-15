@@ -67,21 +67,27 @@ export function queueRegion(queueUrl: string): string | null {
 /**
  * AWS Marketplace settings, read once from the environment. Selling through
  * AWS Marketplace is off unless KK_AWS_MARKETPLACE_ENABLED is "true"; while
- * it is off every /billing/aws-marketplace route except `status` answers
- * 404, the landing page says the offer isn't available, and neither the
- * event consumer nor the reconcile job runs.
+ * it is off, new purchases can't be made: the fulfillment URL and the
+ * landing page routes answer 404 and the landing page says the offer isn't
+ * available. Subscriptions AWS already bills keep being checked either way
+ * (the event consumer and the hourly reconcile run whenever their settings
+ * are present), so turning the flag off never leaves paid access open.
  */
 @Injectable()
 export class AwsMarketplaceConfig {
   private readonly logger = new Logger(AwsMarketplaceConfig.name);
 
+  /** New purchases are accepted (the flag is on and the settings it needs are set). */
   readonly enabled: boolean;
   /**
    * Role in the seller account to assume for ResolveCustomer and
    * GetEntitlements. Empty uses the default credentials as they are.
    */
   readonly roleArn: string;
-  /** Product codes whose purchases are accepted. Empty accepts any. */
+  /**
+   * Product codes whose purchases and events are accepted. Required while
+   * the flag is on; empty (flag off) accepts any, for existing licenses.
+   */
   readonly productCodes: string[];
   readonly dimensionMap: Record<string, AwsMarketplacePlan>;
   /** SQS queue the seller account's events are forwarded to. Empty: no consumer. */
@@ -90,7 +96,7 @@ export class AwsMarketplaceConfig {
   readonly appDomain: string;
 
   constructor(config: ConfigService) {
-    this.enabled =
+    const flag =
       (config.get<string>('KK_AWS_MARKETPLACE_ENABLED') ?? '').toLowerCase() ===
       'true';
     this.roleArn = (
@@ -108,7 +114,15 @@ export class AwsMarketplaceConfig {
     ).trim();
     this.appDomain = config.get<string>('KK_APP_DOMAIN') || 'app.krakenkey.io';
 
-    if (!this.enabled) return;
+    // Without product codes every product of the seller account would be
+    // accepted, including a test product's purchases in production.
+    this.enabled = flag && this.productCodes.length > 0;
+    if (!flag) return;
+    if (this.productCodes.length === 0) {
+      this.logger.error(
+        'KK_AWS_MARKETPLACE_ENABLED is true but KK_AWS_MARKETPLACE_PRODUCT_CODES is empty. AWS Marketplace purchases stay off until it is set',
+      );
+    }
     if (invalid.length > 0) {
       this.logger.error(
         `KK_AWS_MARKETPLACE_DIMENSION_MAP has entries that were ignored: ${invalid.join(', ')} (expected <dimension>=pro|business|enterprise)`,
@@ -144,8 +158,19 @@ export class AwsMarketplaceConfig {
     return this.dimensionMap[dimension] ?? null;
   }
 
-  /** Whether the SQS consumer should run. */
+  /**
+   * Whether the SQS consumer should run: whenever a valid queue is set,
+   * with or without the flag, so licenses already sold keep being followed.
+   */
   get consumerEnabled(): boolean {
-    return this.enabled && !!this.queueUrl && !!queueRegion(this.queueUrl);
+    return !!this.queueUrl && !!queueRegion(this.queueUrl);
+  }
+
+  /**
+   * Whether GetEntitlements can be called: the seller account role is set,
+   * or the flag is on (then the default credentials are used as they are).
+   */
+  get canCheckEntitlements(): boolean {
+    return this.enabled || !!this.roleArn;
   }
 }

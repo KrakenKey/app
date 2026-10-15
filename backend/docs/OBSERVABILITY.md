@@ -80,6 +80,7 @@ When they are, note that `endpoint_cert_expiry_days` and `endpoint_latency_by_re
 
 | Metric | Type | Labels | Notes |
 |--------|------|--------|-------|
+| `aws_marketplace_syncs_total` | Counter | `trigger`, `result` | AWS Marketplace license syncs. `trigger`: `link`, `event`, `reconcile`. `result`: `changed`, `unchanged` or `error` (GetEntitlements failed). Alert on a rising `error` count: AWS-billed accounts lose their paid limits when their term ends if checks keep failing. |
 | `alert_deliveries_total` | Counter | `type`, `result` | One increment per delivery attempt to a Slack, Teams or webhook channel. `type`: `slack`, `teams`, `webhook`. `result`: `ok`, `retry` (failed, BullMQ will try again) or `failed` (no retry follows). The test-send button is not counted. |
 
 ### Queues

@@ -1,5 +1,4 @@
 import {
-  AWS_PENDING_LINK_WINDOW_MS,
   hasLiveAwsMarketplaceSubscription,
   hasLiveMarketplaceSubscription,
   hasLiveStripeSubscription,
@@ -73,29 +72,19 @@ describe('subscription sources', () => {
     expect(liveMarketplaceBiller(null)).toBeNull();
   });
 
-  it('counts a pending AWS link as in progress for a day', () => {
-    const now = new Date('2026-10-15T12:00:00Z');
+  it('counts a pending AWS link as in progress for as long as it is pending', () => {
     const pending = {
       source: 'aws_marketplace' as const,
       marketplaceStatus: 'pending',
-      updatedAt: new Date(now.getTime() - AWS_PENDING_LINK_WINDOW_MS + 1000),
+      updatedAt: new Date('2020-01-01T00:00:00Z'),
     };
-    expect(isAwaitingAwsEntitlement(pending, now)).toBe(true);
+    expect(isAwaitingAwsEntitlement(pending)).toBe(true);
     expect(
-      isAwaitingAwsEntitlement(
-        {
-          ...pending,
-          updatedAt: new Date(now.getTime() - AWS_PENDING_LINK_WINDOW_MS),
-        },
-        now,
-      ),
+      isAwaitingAwsEntitlement({ ...pending, marketplaceStatus: 'active' }),
     ).toBe(false);
     expect(
-      isAwaitingAwsEntitlement(
-        { ...pending, marketplaceStatus: 'active' },
-        now,
-      ),
+      isAwaitingAwsEntitlement({ ...pending, source: 'marketplace' as const }),
     ).toBe(false);
-    expect(isAwaitingAwsEntitlement(null, now)).toBe(false);
+    expect(isAwaitingAwsEntitlement(null)).toBe(false);
   });
 });

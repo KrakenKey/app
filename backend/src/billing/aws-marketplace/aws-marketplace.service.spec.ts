@@ -29,6 +29,8 @@ const LICENSE_2 = 'arn:aws:license-manager::111122223333:license:l-def';
 const AGREEMENT = 'agmt-1';
 const REG_ID = 'reg-id-from-the-url';
 const FUTURE = new Date(Date.now() + 30 * 24 * 3600_000);
+/** Shaped like an AWS registration token. */
+const TOKEN = 'AbCdEf0123456789+/=xyz';
 
 function makeConfig(enabled = true): AwsMarketplaceConfig {
   return new AwsMarketplaceConfig({
@@ -134,6 +136,7 @@ describe('AwsMarketplaceService', () => {
   let client: any;
   let billing: any;
   let entitlements: AwsEntitlement[];
+  let metrics: any;
 
   const find = (where: any) => {
     const clauses = Array.isArray(where) ? where : [where];
@@ -169,6 +172,7 @@ describe('AwsMarketplaceService', () => {
         return row;
       }),
       create: jest.fn((_e: unknown, row: unknown) => ({ ...(row as object) })),
+      insert: jest.fn().mockResolvedValue(undefined),
     };
     subRepo = {
       findOne: jest.fn(async (opts: any) => find(opts.where)[0] ?? null),
@@ -199,7 +203,15 @@ describe('AwsMarketplaceService', () => {
       findOne: jest.fn(
         async (opts: any) => registrations.get(opts.where.id) ?? null,
       ),
-      delete: jest.fn().mockResolvedValue({ affected: 0 }),
+      find: jest.fn(async (opts: any) =>
+        [...registrations.values()].filter(
+          (r) => r.expiresAt < opts.where.expiresAt.value,
+        ),
+      ),
+      delete: jest.fn(async (where: any) => {
+        if (where.id) registrations.delete(where.id);
+        return { affected: 1 };
+      }),
     };
     client = {
       resolveCustomer: jest.fn().mockResolvedValue({
@@ -219,6 +231,7 @@ describe('AwsMarketplaceService', () => {
       }),
       queueDissolution: jest.fn().mockResolvedValue(undefined),
     };
+    metrics = { awsMarketplaceSyncsTotal: { inc: jest.fn() } };
     config = makeConfig();
     service = new AwsMarketplaceService(
       subRepo,
@@ -229,6 +242,7 @@ describe('AwsMarketplaceService', () => {
       config,
       client,
       billing,
+      metrics,
     );
   });
 
@@ -258,6 +272,7 @@ describe('AwsMarketplaceService', () => {
       makeConfig(false),
       client,
       billing,
+      metrics,
     );
     expect(off.enabled).toBe(false);
     expect(() => off.assertEnabled('POST', '/x')).toThrow('Cannot POST /x');
@@ -267,13 +282,13 @@ describe('AwsMarketplaceService', () => {
   // ---------------------------------------------------------------------------
   describe('register (fulfillment URL)', () => {
     it('resolves the token, stores the purchase under a hashed id and redirects with that id', async () => {
-      const url = new URL(await service.register(' tok-123 ', undefined));
-      expect(client.resolveCustomer).toHaveBeenCalledWith('tok-123');
+      const url = new URL(await service.register(` ${TOKEN} `, undefined));
+      expect(client.resolveCustomer).toHaveBeenCalledWith(TOKEN);
       expect(url.origin).toBe('https://app.example.test');
       expect(url.pathname).toBe('/aws-marketplace');
       const id = url.searchParams.get('registration')!;
       expect(id).toMatch(/^[A-Za-z0-9_-]{43}$/);
-      expect(url.toString()).not.toContain('tok-123');
+      expect(url.toString()).not.toContain(TOKEN);
       const stored = registrations.get(hashRegistrationId(id));
       expect(stored).toMatchObject({
         customerAwsAccountId: ACCOUNT,
@@ -287,14 +302,27 @@ describe('AwsMarketplaceService', () => {
     });
 
     it('records the offer type AWS sends for free trials', async () => {
-      await service.register('tok', 'free-trial');
+      await service.register(TOKEN, 'free-trial');
       expect([...registrations.values()][0].offerType).toBe('free-trial');
     });
 
     it('redirects with an error when the token is missing', async () => {
-      for (const token of [undefined, '', '  ', 42, 'x'.repeat(8193)]) {
+      for (const token of [undefined, '', '  ', 42]) {
         const url = new URL(await service.register(token, undefined));
         expect(url.searchParams.get('error')).toBe('missing_token');
+      }
+      expect(client.resolveCustomer).not.toHaveBeenCalled();
+    });
+
+    it('refuses a malformed token without calling AWS', async () => {
+      for (const token of [
+        'short',
+        'x'.repeat(4097),
+        'has spaces in it 1234567',
+        '<script>alert(1)</script>',
+      ]) {
+        const url = new URL(await service.register(token, undefined));
+        expect(url.searchParams.get('error')).toBe('invalid_token');
       }
       expect(client.resolveCustomer).not.toHaveBeenCalled();
     });
@@ -303,7 +331,7 @@ describe('AwsMarketplaceService', () => {
       client.resolveCustomer.mockRejectedValue(
         new AwsMarketplaceTokenError('ExpiredTokenException'),
       );
-      const url = new URL(await service.register('tok', undefined));
+      const url = new URL(await service.register(TOKEN, undefined));
       expect(url.searchParams.get('error')).toBe('invalid_token');
       expect(registrations.size).toBe(0);
     });
@@ -316,13 +344,13 @@ describe('AwsMarketplaceService', () => {
           400,
         ),
       );
-      const url = new URL(await service.register('tok', undefined));
+      const url = new URL(await service.register(TOKEN, undefined));
       expect(url.searchParams.get('error')).toBe('unavailable');
     });
 
     it('redirects with an error when the purchase cannot be stored', async () => {
       regRepo.insert.mockRejectedValue(new Error('db down'));
-      const url = new URL(await service.register('tok', undefined));
+      const url = new URL(await service.register(TOKEN, undefined));
       expect(url.searchParams.get('error')).toBe('unavailable');
     });
 
@@ -333,7 +361,7 @@ describe('AwsMarketplaceService', () => {
         productCode: 'someone-elses',
         agreementId: null,
       });
-      const url = new URL(await service.register('tok', undefined));
+      const url = new URL(await service.register(TOKEN, undefined));
       expect(url.searchParams.get('error')).toBe('unknown_product');
       expect(registrations.size).toBe(0);
     });
@@ -344,14 +372,14 @@ describe('AwsMarketplaceService', () => {
         jest.spyOn(Logger.prototype, 'warn'),
         jest.spyOn(Logger.prototype, 'error'),
       ];
-      await service.register('super-secret-token', undefined);
+      await service.register('super-secret-token-0123', undefined);
       client.resolveCustomer.mockRejectedValue(
         new AwsMarketplaceTokenError('InvalidTokenException'),
       );
-      await service.register('super-secret-token', undefined);
+      await service.register('super-secret-token-0123', undefined);
       for (const spy of logs) {
         for (const call of spy.mock.calls) {
-          expect(String(call[0])).not.toContain('super-secret-token');
+          expect(String(call[0])).not.toContain('super-secret-token-0123');
         }
       }
     });
@@ -540,6 +568,51 @@ describe('AwsMarketplaceService', () => {
         'SELECT pg_advisory_xact_lock(hashtext($1))',
         [`aws-marketplace:${LICENSE}`],
       );
+      // The setup link is used up.
+      expect(registrations.size).toBe(0);
+      expect(metrics.awsMarketplaceSyncsTotal.inc).toHaveBeenCalledWith({
+        trigger: 'link',
+        result: 'changed',
+      });
+    });
+
+    it('reads AWS before taking any lock, and bounds the apply transaction', async () => {
+      const order: string[] = [];
+      client.getEntitlements.mockImplementation(async () => {
+        order.push('aws');
+        return entitlements;
+      });
+      manager.query.mockImplementation(async (sql: string) => {
+        order.push(sql);
+        return [];
+      });
+      await service.link(USER_ID, REG_ID);
+      const lockAt = order.indexOf(
+        'SELECT pg_advisory_xact_lock(hashtext($1))',
+      );
+      expect(lockAt).toBeGreaterThan(order.lastIndexOf('aws'));
+      expect(order).toContain("SET LOCAL statement_timeout = '10s'");
+      expect(order).toContain(
+        "SET LOCAL idle_in_transaction_session_timeout = '15s'",
+      );
+    });
+
+    it('does not apply AWS state to a row unlinked while AWS was being asked', async () => {
+      rows.push(
+        linkedRow({
+          marketplaceStatus: 'pending',
+          plan: 'free',
+          status: 'incomplete',
+        }),
+      );
+      client.getEntitlements.mockImplementation(async () => {
+        rows[0].source = 'stripe';
+        return entitlements;
+      });
+      await expect(service.syncLicense(LICENSE)).resolves.toMatchObject({
+        result: 'ignored',
+      });
+      expect(rows[0].plan).toBe('free');
     });
 
     it('keeps the link pending until AWS grants the entitlement', async () => {
@@ -609,6 +682,7 @@ describe('AwsMarketplaceService', () => {
         state: 'active',
       });
       expect(manager.save).not.toHaveBeenCalled();
+      expect(registrations.size).toBe(0);
     });
 
     it('refuses organization members who are not the owner', async () => {
@@ -969,17 +1043,82 @@ describe('AwsMarketplaceService', () => {
       ).resolves.toBe('processed');
     });
 
-    it('records events for licenses that are not linked yet', async () => {
+    it('records and warns about an entitled license no account has linked', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn');
       await expect(
         service.handleEventMessage(
           event('License Updated - Manufacturer', licenseDetail()),
         ),
       ).resolves.toBe('processed');
-      expect(client.getEntitlements).not.toHaveBeenCalled();
+      expect(client.getEntitlements).toHaveBeenCalledWith(PRODUCT, LICENSE);
       expect(operations[0]).toMatchObject({
         result: 'ignored',
-        detail: 'not linked to an account',
+        detail: 'entitled, not linked to an account',
       });
+      expect(
+        warn.mock.calls.some((c) =>
+          String(c[0]).includes('entitled but not linked'),
+        ),
+      ).toBe(true);
+    });
+
+    it('records unlinked licenses without an entitlement quietly', async () => {
+      entitlements = [];
+      await service.handleEventMessage(
+        event('License Updated - Manufacturer', licenseDetail()),
+      );
+      expect(operations[0].detail).toBe('not linked to an account');
+      client.getEntitlements.mockRejectedValue(
+        new AwsMarketplaceApiError('GetEntitlements', 'Throttling', 400),
+      );
+      await service.handleEventMessage(
+        event('License Updated - Manufacturer', licenseDetail(), 'evt-2'),
+      );
+      expect(operations[1].detail).toMatch(
+        /entitlement not checked: Throttling/,
+      );
+    });
+
+    it('logs advisories for an operator without changing access', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn');
+      rows.push(linkedRow());
+      await expect(
+        service.handleEventMessage(
+          event('Purchase Agreement Advisory Issued - Manufacturer', {
+            agreement: { id: AGREEMENT },
+            acceptor: { accountId: ACCOUNT },
+          }),
+        ),
+      ).resolves.toBe('processed');
+      expect(client.getEntitlements).not.toHaveBeenCalled();
+      expect(rows[0].plan).toBe('pro');
+      expect(operations[0]).toMatchObject({
+        action: 'Purchase Agreement Advisory Issued - Manufacturer',
+        result: 'ignored',
+      });
+      expect(
+        warn.mock.calls.some((c) => String(c[0]).includes('Advisory Issued')),
+      ).toBe(true);
+    });
+
+    it('only ends licenses on the agreement that ended; others of the account are re-read', async () => {
+      rows.push(
+        linkedRow({
+          marketplaceStatus: 'pending',
+          plan: 'free',
+          status: 'incomplete',
+          awsAgreementId: 'agmt-other',
+        }),
+      );
+      entitlements = [];
+      await service.handleEventMessage(
+        event('Purchase Agreement Ended - Proposer', {
+          agreement: { id: AGREEMENT, status: 'CANCELLED' },
+          acceptor: { accountId: ACCOUNT },
+        }),
+      );
+      expect(client.getEntitlements).toHaveBeenCalled();
+      expect(rows[0].marketplaceStatus).toBe('pending');
     });
 
     it('ignores other sources, detail types and products', async () => {
@@ -1046,7 +1185,7 @@ describe('AwsMarketplaceService', () => {
         event('License Updated - Manufacturer', licenseDetail()),
       );
       expect(rows[0].source).toBe('stripe');
-      expect(operations[0].detail).toBe('not linked to an account');
+      expect(operations[0].detail).toBe('entitled, not linked to an account');
     });
   });
 
@@ -1093,7 +1232,6 @@ describe('AwsMarketplaceService', () => {
           result: 'applied',
         }),
       ]);
-      expect(regRepo.delete).toHaveBeenCalled();
     });
 
     it('ends a contract that expired without an event', async () => {
@@ -1127,12 +1265,173 @@ describe('AwsMarketplaceService', () => {
           new AwsMarketplaceApiError('GetEntitlements', 'Throttling', 400),
         )
         .mockResolvedValueOnce([ent({ licenseArn: LICENSE_2 })]);
+      const error = jest.spyOn(Logger.prototype, 'error');
       await expect(service.reconcile()).resolves.toEqual({
         checked: 2,
         changed: 1,
         failed: 1,
       });
       expect(rows[1].marketplaceStatus).toBe('active');
+      const errors = error.mock.calls.map((c) => String(c[0]));
+      expect(
+        errors.some((e) => e.includes(`license ${LICENSE}: Throttling`)),
+      ).toBe(true);
+      expect(errors.some((e) => e.includes('failed=1'))).toBe(true);
+      expect(metrics.awsMarketplaceSyncsTotal.inc).toHaveBeenCalledWith({
+        trigger: 'reconcile',
+        result: 'error',
+      });
+    });
+
+    function serviceWith(env: Record<string, string>) {
+      return new AwsMarketplaceService(
+        subRepo,
+        userRepo,
+        orgRepo,
+        opRepo,
+        regRepo,
+        new AwsMarketplaceConfig({ get: (key: string) => env[key] } as any),
+        client,
+        billing,
+        metrics,
+      );
+    }
+
+    it('keeps checking sold licenses with the flag off', async () => {
+      rows.push(
+        linkedRow({
+          marketplaceStatus: 'pending',
+          plan: 'free',
+          status: 'incomplete',
+        }),
+      );
+      const off = serviceWith({
+        KK_AWS_MARKETPLACE_ROLE_ARN: 'arn:aws:iam::111122223333:role/kk',
+        KK_AWS_MARKETPLACE_DIMENSION_MAP: 'pro=pro,business=business',
+      });
+      expect(off.enabled).toBe(false);
+      await expect(off.reconcile()).resolves.toMatchObject({ changed: 1 });
+      expect(rows[0].marketplaceStatus).toBe('active');
+    });
+
+    it('skips with an error when the seller role is missing and the flag is off', async () => {
+      const error = jest.spyOn(Logger.prototype, 'error');
+      rows.push(linkedRow());
+      const off = serviceWith({});
+      await expect(off.reconcile()).resolves.toMatchObject({ skipped: true });
+      expect(client.getEntitlements).not.toHaveBeenCalled();
+      expect(String(error.mock.calls.at(-1)?.[0])).toContain(
+        'KK_AWS_MARKETPLACE_ROLE_ARN is not set',
+      );
+    });
+
+    it('warns about an expired registration whose license is entitled but never linked, then deletes it', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn');
+      registration({ expiresAt: new Date(Date.now() - 1000) });
+      await service.reconcile();
+      expect(operations).toEqual([
+        expect.objectContaining({
+          id: expect.stringMatching(/^aws-unlinked:/),
+          subscriptionId: LICENSE,
+          result: 'ignored',
+        }),
+      ]);
+      expect(
+        warn.mock.calls.some((c) => String(c[0]).includes('never linked')),
+      ).toBe(true);
+      expect(regRepo.delete).toHaveBeenCalled();
+    });
+
+    it('says nothing about expired registrations that were linked or not entitled', async () => {
+      registration({ expiresAt: new Date(Date.now() - 1000) });
+      rows.push(
+        linkedRow({
+          marketplaceStatus: 'ended',
+          plan: 'free',
+          status: 'canceled',
+        }),
+      );
+      await service.reconcile();
+      expect(operations).toHaveLength(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  describe('removePendingLink', () => {
+    const pending = () =>
+      linkedRow({
+        marketplaceStatus: 'pending',
+        plan: 'free',
+        status: 'incomplete',
+        stripeCustomerId: 'cus_1',
+        currentPeriodEnd: null,
+      });
+
+    it('unlinks a purchase still waiting for AWS and records it', async () => {
+      rows.push(pending());
+      await service.removePendingLink(USER_ID);
+      expect(rows[0]).toMatchObject({
+        source: 'stripe',
+        stripeCustomerId: 'cus_1',
+        marketplaceSubscriptionId: null,
+        marketplaceStatus: null,
+        awsCustomerAccountId: null,
+        awsAgreementId: null,
+        plan: 'free',
+        status: 'active',
+      });
+      expect(manager.query).toHaveBeenCalledWith(
+        'SELECT pg_advisory_xact_lock(hashtext($1))',
+        [`aws-marketplace:${LICENSE}`],
+      );
+      expect(manager.insert).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          id: expect.stringMatching(/^aws-unlink:/),
+          subscriptionId: LICENSE,
+          action: 'RemovePendingLink',
+        }),
+      );
+      expect(client.getEntitlements).not.toHaveBeenCalled();
+    });
+
+    it('refuses when nothing is pending, including a purchase AWS confirmed', async () => {
+      await expect(service.removePendingLink(USER_ID)).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      rows.push(linkedRow());
+      await expect(service.removePendingLink(USER_ID)).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(rows[0].marketplaceStatus).toBe('active');
+    });
+
+    it('refuses when AWS confirmed it between the check and the lock', async () => {
+      rows.push(pending());
+      manager.findOne.mockImplementationOnce(async () => ({
+        ...rows[0],
+        marketplaceStatus: 'active',
+      }));
+      await expect(service.removePendingLink(USER_ID)).rejects.toThrow(
+        'no AWS Marketplace purchase waiting',
+      );
+      expect(manager.save).not.toHaveBeenCalled();
+    });
+
+    it('lets only the organization owner remove it', async () => {
+      user.organizationId = ORG_ID;
+      user.role = 'member';
+      rows.push({
+        ...pending(),
+        userId: null,
+        organizationId: ORG_ID,
+      } as Subscription);
+      await expect(service.removePendingLink(USER_ID)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      user.role = 'owner';
+      await service.removePendingLink(USER_ID);
+      expect(rows[0].source).toBe('stripe');
     });
   });
 });

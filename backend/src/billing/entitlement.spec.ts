@@ -116,8 +116,38 @@ describe('entitlement', () => {
     });
   });
 
-  it('binds both cutoffs for the SQL check', () => {
+  describe('AWS Marketplace subscriptions', () => {
+    const aws = (currentPeriodEnd: Date | null, status = 'active') => ({
+      plan: 'business',
+      status,
+      pastDueSince: null,
+      source: 'aws_marketplace' as const,
+      currentPeriodEnd,
+    });
+    const hours = (h: number) => new Date(now.getTime() + h * 3600_000);
+
+    it('keeps the plan inside the paid term and its 24-hour grace', () => {
+      expect(effectivePlan(aws(hours(240)), now)).toBe('business');
+      expect(effectivePlan(aws(hours(-23)), now)).toBe('business');
+    });
+
+    it('drops to Starter past the term, even while the row still says active', () => {
+      expect(effectivePlan(aws(hours(-25)), now)).toBe('free');
+      expect(hasPlanEntitlement(aws(hours(-25)), now)).toBe(false);
+    });
+
+    it('gives nothing to a row without a term end', () => {
+      expect(effectivePlan(aws(null), now)).toBe('free');
+    });
+
+    it('never applies a row that is not active', () => {
+      expect(effectivePlan(aws(hours(240), 'canceled'), now)).toBe('free');
+    });
+  });
+
+  it('binds the cutoffs for the SQL check', () => {
     expect(entitlementSqlParams(now)).toEqual({
+      awsTermCutoff: since(1),
       graceCutoff: since(14),
       marketplaceGraceCutoff: since(30),
     });
@@ -127,6 +157,9 @@ describe('entitlement', () => {
     );
     expect(sql).toContain(
       `s.source <> 'marketplace' AND s."pastDueSince" > :graceCutoff`,
+    );
+    expect(sql).toContain(
+      `(s.source <> 'aws_marketplace' OR s."currentPeriodEnd" > :awsTermCutoff) AND`,
     );
   });
 });

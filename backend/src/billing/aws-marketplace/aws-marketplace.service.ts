@@ -25,6 +25,8 @@ import { Subscription } from '../entities/subscription.entity';
 import { User } from '../../users/entities/user.entity';
 import { Organization } from '../../organizations/entities/organization.entity';
 import { BillingService } from '../billing.service';
+import { MetricsService } from '../../metrics/metrics.service';
+import { AWS_EXPIRATION_GRACE_MS } from '../entitlement';
 import {
   ORG_ELIGIBLE_PLANS,
   hasLiveAwsMarketplaceSubscription,
@@ -45,6 +47,7 @@ import {
 } from './aws-marketplace.client';
 import { AwsMarketplaceRegistration } from './entities/aws-marketplace-registration.entity';
 import {
+  ADVISORY_EVENT_TYPES,
   AGREEMENT_EVENT_TYPES,
   AWS_MARKETPLACE_EVENT_SOURCE,
   ENDING_EVENT_TYPES,
@@ -64,9 +67,21 @@ export const REGISTRATION_TTL_MS = 24 * 60 * 60 * 1000;
  * and the renewed date can show up in GetEntitlements a little after it;
  * without this an hourly check right at the renewal would drop the account
  * to Starter until the License Updated event. A license AWS deprovisions
- * (no entitlement at all) ends at once.
+ * (no entitlement at all) ends at once. The same grace bounds the plan in
+ * effectivePlan when AWS can't be reached (see entitlement.ts).
  */
-export const EXPIRATION_GRACE_MS = 24 * 60 * 60 * 1000;
+export const EXPIRATION_GRACE_MS = AWS_EXPIRATION_GRACE_MS;
+
+/**
+ * Shape of a registration token before it is sent to AWS: an opaque
+ * printable string. Anything else is refused without a ResolveCustomer
+ * call.
+ */
+const TOKEN_PATTERN = /^[A-Za-z0-9+/=_.:~-]{16,4096}$/;
+
+/** Bounds the apply step, which holds an advisory and a row lock. */
+const APPLY_STATEMENT_TIMEOUT = '10s';
+const APPLY_IDLE_TIMEOUT = '15s';
 
 /** Shown when the landing page's registration id is unknown or too old. */
 export const REGISTRATION_EXPIRED_MESSAGE =
@@ -114,6 +129,13 @@ export interface SyncHints {
 
 export type EventResult = 'processed' | 'duplicate' | 'ignored';
 
+/** Why a sync ran, for the sync metric. */
+type SyncTrigger = 'link' | 'event' | 'reconcile';
+
+/** Shown when the pending purchase to remove has changed meanwhile. */
+export const NO_PENDING_AWS_MESSAGE =
+  'This account has no AWS Marketplace purchase waiting for AWS.';
+
 interface Owner {
   userId: string | null;
   organizationId: string | null;
@@ -132,6 +154,12 @@ function isUniqueViolation(err: unknown): boolean {
     (err.driverError as { code?: string } | undefined)?.code ===
       POSTGRES_UNIQUE_VIOLATION
   );
+}
+
+/** An error's name for logs: the AWS error code, never its message. */
+function errorCode(err: unknown): string {
+  if (err instanceof AwsMarketplaceApiError) return err.code;
+  return err instanceof Error ? err.name : 'unknown';
 }
 
 /** The stored key for a registration id from the landing page URL. */
@@ -168,12 +196,18 @@ function latest(dates: (Date | null)[]): Date | null {
  * AWS account can hold several licenses for the product, and
  * CustomerIdentifier is empty for new products.
  *
- * Changes to a license run under a transaction-scoped Postgres advisory
- * lock on its ARN, and always copy what GetEntitlements reports right then.
- * Two API processes (a blue/green deploy) handling events for the same
- * license, or an event racing the reconcile job, therefore apply in turn,
- * and the last one applies AWS's latest state; no event is applied from its
+ * A sync reads GetEntitlements first, with no database transaction or lock
+ * held, then applies the result in a short transaction under a
+ * transaction-scoped Postgres advisory lock on the license ARN (plus a row
+ * lock, a statement timeout and an idle timeout). Two API processes (a
+ * blue/green deploy) handling events for the same license, or an event
+ * racing the reconcile job, therefore apply one at a time. Two reads made
+ * moments apart can still be applied in the opposite order; the next event
+ * or the hourly reconcile corrects that, and no event is applied from its
  * own payload, so order and redelivery don't matter.
+ *
+ * Paid access never depends on this running: effectivePlan stops applying
+ * an AWS plan 24 hours after its term ends (see entitlement.ts).
  */
 @Injectable()
 export class AwsMarketplaceService {
@@ -193,6 +227,7 @@ export class AwsMarketplaceService {
     private readonly config: AwsMarketplaceConfig,
     private readonly client: AwsMarketplaceClient,
     private readonly billingService: BillingService,
+    private readonly metrics: MetricsService,
   ) {}
 
   get enabled(): boolean {
@@ -225,9 +260,17 @@ export class AwsMarketplaceService {
    * and never put in a URL.
    */
   async register(token: unknown, offerType: unknown): Promise<string> {
-    if (typeof token !== 'string' || !token.trim() || token.length > 8192) {
+    if (typeof token !== 'string' || !token.trim()) {
       return this.landingUrl({
         error: 'missing_token' satisfies RegisterError,
+      });
+    }
+    if (!TOKEN_PATTERN.test(token.trim())) {
+      this.logger.warn(
+        `AWS Marketplace registration with a malformed token refused (length ${token.length})`,
+      );
+      return this.landingUrl({
+        error: 'invalid_token' satisfies RegisterError,
       });
     }
 
@@ -312,6 +355,7 @@ export class AwsMarketplaceService {
     const { response, owner } = await this.assess(userId, reg);
 
     if (response.state === 'active' || response.state === 'pending') {
+      await this.registrationRepository.delete({ id: reg.id });
       return response;
     }
     if (response.state === 'not_owner') {
@@ -329,12 +373,16 @@ export class AwsMarketplaceService {
     }
 
     await this.claim(owner, reg);
+    // The purchase is on the account now; the setup link has done its job.
+    await this.registrationRepository.delete({ id: reg.id });
 
     let outcome: SyncOutcome;
     try {
-      outcome = await this.syncLicense(reg.licenseArn, {
-        agreementId: reg.agreementId,
-      });
+      outcome = await this.syncLicense(
+        reg.licenseArn,
+        { agreementId: reg.agreementId },
+        'link',
+      );
     } catch (err) {
       // Linked and pending: the next event or the reconcile finishes it.
       const code = err instanceof AwsMarketplaceApiError ? err.code : 'unknown';
@@ -652,35 +700,69 @@ export class AwsMarketplaceService {
   }
 
   /**
-   * Re-reads the license's entitlements and applies them to the linked row,
-   * under an advisory lock on the license (see the class comment). Throws
-   * when AWS can't be reached, so an event is retried. The caller queues
-   * any organization dissolution the outcome asks for, after the commit.
+   * Re-reads the license's entitlements and applies them to the linked row.
+   * GetEntitlements (and any STS refresh) runs first, outside any
+   * transaction; then a short transaction takes the advisory lock on the
+   * license (see the class comment), re-loads the row with a row lock and
+   * applies what AWS reported. Throws when AWS can't be reached, so an event
+   * is retried. The caller queues any organization dissolution the outcome
+   * asks for, after the commit.
    */
   async syncLicense(
     licenseArn: string,
     hints: SyncHints = {},
+    trigger: SyncTrigger = 'event',
   ): Promise<SyncOutcome> {
-    return this.subscriptionRepository.manager.transaction(async (m) => {
-      await m.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
-        `aws-marketplace:${licenseArn}`,
-      ]);
-      const sub = await m.findOne(Subscription, {
-        where: { marketplaceSubscriptionId: licenseArn },
-        lock: { mode: 'pessimistic_write' },
-      });
-      // Not linked yet (the buyer hasn't finished on the landing page), or a
-      // later Stripe checkout or Microsoft purchase replaced it. The landing
-      // page reads entitlements itself when the buyer gets there.
-      if (!sub || sub.source !== 'aws_marketplace') {
-        return { result: 'ignored', detail: 'not linked to an account' };
-      }
-      const entitlement = await this.readEntitlement(
-        sub.marketplaceOfferId ?? '',
-        licenseArn,
-      );
-      return this.apply(m, sub, entitlement, hints);
+    const linked = await this.subscriptionRepository.findOne({
+      where: { marketplaceSubscriptionId: licenseArn },
     });
+    // Not linked yet (the buyer hasn't finished on the landing page), or a
+    // later Stripe checkout or Microsoft purchase replaced it. The landing
+    // page reads entitlements itself when the buyer gets there.
+    if (!linked || linked.source !== 'aws_marketplace') {
+      return { result: 'ignored', detail: 'not linked to an account' };
+    }
+    const productCode = linked.marketplaceOfferId ?? '';
+
+    let entitlement: EntitlementState;
+    try {
+      entitlement = await this.readEntitlement(productCode, licenseArn);
+    } catch (err) {
+      this.metrics.awsMarketplaceSyncsTotal.inc({ trigger, result: 'error' });
+      throw err;
+    }
+
+    const outcome = await this.subscriptionRepository.manager.transaction(
+      async (m): Promise<SyncOutcome> => {
+        await m.query(
+          `SET LOCAL statement_timeout = '${APPLY_STATEMENT_TIMEOUT}'`,
+        );
+        await m.query(
+          `SET LOCAL idle_in_transaction_session_timeout = '${APPLY_IDLE_TIMEOUT}'`,
+        );
+        await m.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+          `aws-marketplace:${licenseArn}`,
+        ]);
+        const sub = await m.findOne(Subscription, {
+          where: { marketplaceSubscriptionId: licenseArn },
+          lock: { mode: 'pessimistic_write' },
+        });
+        // Unlinked or replaced while AWS was being asked.
+        if (
+          !sub ||
+          sub.source !== 'aws_marketplace' ||
+          sub.marketplaceOfferId !== linked.marketplaceOfferId
+        ) {
+          return { result: 'ignored', detail: 'not linked to an account' };
+        }
+        return this.apply(m, sub, entitlement, hints);
+      },
+    );
+    this.metrics.awsMarketplaceSyncsTotal.inc({
+      trigger,
+      result: outcome.result === 'applied' ? 'changed' : 'unchanged',
+    });
+    return outcome;
   }
 
   private async apply(
@@ -711,7 +793,18 @@ export class AwsMarketplaceService {
         sub.pastDueSince = null;
         sub.marketplaceStatus = 'active';
         sub.marketplacePlanId = entitlement.dimension;
-        sub.currentPeriodEnd = entitlement.expiresAt;
+        // An entitlement without an end date (contracts have one) is
+        // treated as verified for a day at a time, so effectivePlan still
+        // stops applying it if KrakenKey can't reach AWS.
+        if (entitlement.expiresAt) {
+          sub.currentPeriodEnd = entitlement.expiresAt;
+        } else if (
+          !sub.currentPeriodEnd ||
+          sub.currentPeriodEnd.getTime() <
+            Date.now() + AWS_EXPIRATION_GRACE_MS / 2
+        ) {
+          sub.currentPeriodEnd = new Date(Date.now() + AWS_EXPIRATION_GRACE_MS);
+        }
         if (previous === 'ended') sub.cancelAtPeriodEnd = false;
         if (
           hints.autoRenewalEnabled !== undefined &&
@@ -836,6 +929,23 @@ export class AwsMarketplaceService {
       return 'duplicate';
     }
 
+    if (
+      event.source === AWS_MARKETPLACE_EVENT_SOURCE &&
+      ADVISORY_EVENT_TYPES.has(event.detailType)
+    ) {
+      // AWS flags (or clears) a possible problem with the buyer's account,
+      // such as fraud or closure. Access isn't changed automatically; an
+      // operator decides.
+      this.logger.warn(
+        `AWS Marketplace ${event.detailType}: agreement=${event.agreementId ?? '-'} account=${event.acceptorAccountId ?? '-'} event=${event.id}`,
+      );
+      await this.record(event, null, {
+        result: 'ignored',
+        detail: 'advisory: review the account',
+      });
+      return 'processed';
+    }
+
     const handled =
       event.source === AWS_MARKETPLACE_EVENT_SOURCE &&
       (AGREEMENT_EVENT_TYPES.has(event.detailType) ||
@@ -859,7 +969,7 @@ export class AwsMarketplaceService {
     if (rows.length === 0) {
       await this.record(event, null, {
         result: 'ignored',
-        detail: 'not linked to an account',
+        detail: await this.unlinkedDetail(event),
       });
       return 'processed';
     }
@@ -873,10 +983,13 @@ export class AwsMarketplaceService {
         licenseArnCandidates(event.licenseArn).includes(licenseArn);
       const sameAgreement =
         !!event.agreementId && row.awsAgreementId === event.agreementId;
+      // An ending event only ends the license it names, or licenses on the
+      // agreement it names. Other licenses of the same buyer account are
+      // only re-read.
       const outcome = await this.syncLicense(licenseArn, {
         agreementId: isLicenseEvent ? event.agreementId : undefined,
         autoRenewalEnabled: sameAgreement ? event.autoRenewalEnabled : null,
-        ending,
+        ending: ending && (isLicenseEvent || sameAgreement),
       });
       outcomes.push(outcome);
       await this.queueDissolution(outcome);
@@ -898,6 +1011,38 @@ export class AwsMarketplaceService {
       dissolveOrg: outcomes.find((o) => o.dissolveOrg)?.dissolveOrg,
     });
     return 'processed';
+  }
+
+  /**
+   * The note recorded for an event about a license no account has linked.
+   * For License Updated, an entitled license of a product sold here means a
+   * buyer paid and hasn't finished setting up (or a link was removed), so
+   * it is logged as a warning for follow-up.
+   */
+  private async unlinkedDetail(event: AwsMarketplaceEvent): Promise<string> {
+    if (
+      event.detailType !== 'License Updated - Manufacturer' ||
+      !event.licenseArn ||
+      !event.productCode
+    ) {
+      return 'not linked to an account';
+    }
+    const candidates = licenseArnCandidates(event.licenseArn);
+    const licenseArn = candidates[candidates.length - 1];
+    try {
+      const entitlement = await this.readEntitlement(
+        event.productCode,
+        licenseArn,
+      );
+      if (entitlement.kind !== 'entitled') return 'not linked to an account';
+    } catch (err) {
+      const code = err instanceof AwsMarketplaceApiError ? err.code : 'unknown';
+      return `not linked to an account (entitlement not checked: ${code})`;
+    }
+    this.logger.warn(
+      `AWS Marketplace license is entitled but not linked to an account yet: license=${licenseArn} account=${event.acceptorAccountId ?? '-'}`,
+    );
+    return 'entitled, not linked to an account';
   }
 
   /**
@@ -995,15 +1140,21 @@ export class AwsMarketplaceService {
 
   /**
    * Re-checks every linked license that is pending or active, so a missed
-   * or delayed event (or an expiry without one) is still applied, and
-   * deletes expired registrations. Changes are recorded in
-   * marketplace_operation as `aws-reconcile:<uuid>`. One failing license
-   * doesn't stop the others.
+   * or delayed event (or an expiry without one) is still applied. Runs with
+   * or without the feature flag: licenses already sold keep being followed.
+   * Changes are recorded in marketplace_operation as `aws-reconcile:<uuid>`.
+   * One failing license doesn't stop the others; failures are logged as
+   * errors and counted in `aws_marketplace_syncs_total{result="error"}`.
+   *
+   * Expired registrations are checked once before they are deleted: a
+   * license that is entitled but was never linked means a buyer paid and
+   * didn't finish setting up, which is logged as a warning and recorded.
    */
   async reconcile(): Promise<{
     checked: number;
     changed: number;
     failed: number;
+    skipped?: true;
   }> {
     const rows = await this.subscriptionRepository.find({
       where: {
@@ -1012,13 +1163,27 @@ export class AwsMarketplaceService {
       },
       select: { id: true, marketplaceSubscriptionId: true },
     });
+    if (!this.config.canCheckEntitlements) {
+      if (rows.length > 0) {
+        this.logger.error(
+          `AWS Marketplace reconcile skipped: ${rows.length} AWS-billed subscription(s) exist but KK_AWS_MARKETPLACE_ROLE_ARN is not set, so their entitlements can't be checked. Their paid limits end with the current term`,
+        );
+      }
+      return { checked: 0, changed: 0, failed: 0, skipped: true };
+    }
+    if (rows.length > 0 && !this.config.consumerEnabled) {
+      this.logger.warn(
+        'AWS-billed subscriptions exist but KK_AWS_MARKETPLACE_QUEUE_URL is not set: AWS Marketplace events are not read, only this hourly check',
+      );
+    }
+
     let changed = 0;
     let failed = 0;
     for (const row of rows) {
       const licenseArn = row.marketplaceSubscriptionId;
       if (!licenseArn) continue;
       try {
-        const outcome = await this.syncLicense(licenseArn);
+        const outcome = await this.syncLicense(licenseArn, {}, 'reconcile');
         if (outcome.result === 'applied') {
           changed++;
           await this.operationRepository.insert({
@@ -1035,23 +1200,158 @@ export class AwsMarketplaceService {
         }
       } catch (err) {
         failed++;
-        const code =
-          err instanceof AwsMarketplaceApiError
-            ? err.code
-            : err instanceof Error
-              ? err.name
-              : 'unknown';
-        this.logger.warn(
-          `AWS Marketplace reconcile failed for license ${licenseArn}: ${code}`,
+        this.logger.error(
+          `AWS Marketplace reconcile failed for license ${licenseArn}: ${errorCode(err)}`,
         );
       }
     }
-    await this.registrationRepository.delete({
-      expiresAt: LessThan(new Date()),
-    });
-    this.logger.log(
-      `AWS Marketplace reconcile: checked=${rows.length} changed=${changed} failed=${failed}`,
-    );
+
+    await this.checkAbandonedRegistrations();
+
+    const summary = `AWS Marketplace reconcile: checked=${rows.length} changed=${changed} failed=${failed}`;
+    if (failed > 0) {
+      this.logger.error(
+        `${summary}. Licenses that keep failing lose their paid limits when their term ends`,
+      );
+    } else {
+      this.logger.log(summary);
+    }
     return { checked: rows.length, changed, failed };
+  }
+
+  /**
+   * Looks at registrations that expired without being linked, then deletes
+   * them. An entitled license among them is logged and recorded as
+   * `aws-unlinked:<uuid>`.
+   */
+  private async checkAbandonedRegistrations(): Promise<void> {
+    const expired = await this.registrationRepository.find({
+      where: { expiresAt: LessThan(new Date()) },
+    });
+    const seen = new Set<string>();
+    for (const reg of expired) {
+      if (seen.has(reg.licenseArn)) continue;
+      seen.add(reg.licenseArn);
+      const linked = await this.subscriptionRepository.findOne({
+        where: { marketplaceSubscriptionId: reg.licenseArn },
+      });
+      if (linked?.source === 'aws_marketplace') continue;
+      try {
+        const entitlement = await this.readEntitlement(
+          reg.productCode,
+          reg.licenseArn,
+        );
+        if (entitlement.kind !== 'entitled') continue;
+      } catch (err) {
+        this.logger.warn(
+          `Could not check an unlinked AWS Marketplace license: license=${reg.licenseArn} error=${errorCode(err)}`,
+        );
+        continue;
+      }
+      this.logger.warn(
+        `AWS Marketplace license is entitled but was never linked to an account: license=${reg.licenseArn} account=${reg.customerAwsAccountId}`,
+      );
+      await this.operationRepository.insert({
+        id: `aws-unlinked:${randomUUID()}`,
+        subscriptionId: reg.licenseArn,
+        action: 'Reconcile',
+        result: 'ignored',
+        detail: `entitled, never linked (account ${reg.customerAwsAccountId})`,
+        ackStatus: null,
+        dissolveOrganizationId: null,
+        dissolveCancel: null,
+      });
+    }
+    if (expired.length > 0) {
+      await this.registrationRepository.delete({
+        expiresAt: LessThan(new Date()),
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Removing a pending link
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Removes an AWS Marketplace purchase that is linked to the account but
+   * still waiting for AWS, so the account can be billed another way. It
+   * only unlinks the purchase in KrakenKey; nothing is canceled in AWS. A
+   * purchase AWS has confirmed meanwhile is not removed.
+   */
+  async removePendingLink(userId: string): Promise<void> {
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      select: { id: true, organizationId: true, role: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+    if (user.organizationId && user.role !== 'owner') {
+      throw new ForbiddenException(
+        'Only the organization owner can manage billing',
+      );
+    }
+    const where = user.organizationId
+      ? { organizationId: user.organizationId }
+      : { userId };
+    const current = await this.subscriptionRepository.findOne({ where });
+    const licenseArn = current?.marketplaceSubscriptionId;
+    if (
+      !current ||
+      !licenseArn ||
+      current.source !== 'aws_marketplace' ||
+      current.marketplaceStatus !== 'pending'
+    ) {
+      throw new ConflictException(NO_PENDING_AWS_MESSAGE);
+    }
+
+    await this.subscriptionRepository.manager.transaction(async (m) => {
+      await m.query(
+        `SET LOCAL statement_timeout = '${APPLY_STATEMENT_TIMEOUT}'`,
+      );
+      await m.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+        `aws-marketplace:${licenseArn}`,
+      ]);
+      const sub = await m.findOne(Subscription, {
+        where: { id: current.id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (
+        !sub ||
+        sub.source !== 'aws_marketplace' ||
+        sub.marketplaceSubscriptionId !== licenseArn ||
+        sub.marketplaceStatus !== 'pending'
+      ) {
+        throw new ConflictException(NO_PENDING_AWS_MESSAGE);
+      }
+      Object.assign(sub, {
+        source: 'stripe',
+        marketplaceSubscriptionId: null,
+        marketplaceOfferId: null,
+        marketplacePlanId: null,
+        marketplaceStatus: null,
+        marketplaceQuantity: null,
+        awsCustomerAccountId: null,
+        awsAgreementId: null,
+        plan: 'free',
+        status: 'active',
+        pastDueSince: null,
+        currentPeriodEnd: null,
+        cancelAtPeriodEnd: false,
+      } satisfies Partial<Subscription>);
+      await m.save(Subscription, sub);
+      await m.insert(MarketplaceOperation, {
+        id: `aws-unlink:${randomUUID()}`,
+        subscriptionId: licenseArn,
+        action: 'RemovePendingLink',
+        result: 'applied',
+        detail: `removed by user ${userId}`,
+        ackStatus: null,
+        dissolveOrganizationId: null,
+        dissolveCancel: null,
+      });
+    });
+    this.logger.warn(
+      `Pending AWS Marketplace link removed: license=${licenseArn} ${user.organizationId ? `org=${user.organizationId}` : `user=${userId}`}`,
+    );
   }
 }

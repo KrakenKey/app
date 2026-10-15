@@ -20,8 +20,18 @@ export const MARKETPLACE_SUSPENDED_GRACE_DAYS = 30;
 export const MARKETPLACE_SUSPENDED_GRACE_MS =
   MARKETPLACE_SUSPENDED_GRACE_DAYS * 24 * 60 * 60 * 1000;
 
+/**
+ * How long an AWS Marketplace subscription keeps its plan after the
+ * current term's end (`currentPeriodEnd`, AWS's ExpirationDate). For an
+ * auto-renewing contract that date is the renewal date, and the renewed
+ * date reaches KrakenKey a little later through an event or the hourly
+ * reconcile. Past it the plan stops applying even if KrakenKey can't reach
+ * AWS, so an outage or a broken role never keeps paid limits open.
+ */
+export const AWS_EXPIRATION_GRACE_MS = 24 * 60 * 60 * 1000;
+
 type GraceFields = Pick<Subscription, 'status' | 'pastDueSince'> &
-  Partial<Pick<Subscription, 'source'>>;
+  Partial<Pick<Subscription, 'source' | 'currentPeriodEnd'>>;
 
 type EntitlementFields = GraceFields & Pick<Subscription, 'plan'>;
 
@@ -39,15 +49,32 @@ export function graceEndsAt(sub: GraceFields): Date | null {
 }
 
 /**
+ * Whether an AWS Marketplace subscription's paid term (plus the renewal
+ * grace) still covers `now`. A row without a term end never does.
+ */
+export function withinAwsTerm(
+  sub: Partial<Pick<Subscription, 'currentPeriodEnd'>>,
+  now: Date = new Date(),
+): boolean {
+  const end = sub.currentPeriodEnd;
+  return !!end && end.getTime() + AWS_EXPIRATION_GRACE_MS > now.getTime();
+}
+
+/**
  * Whether the subscription's plan applies right now: it is active, or it is
  * past_due and still inside the grace period. A past_due row without
  * pastDueSince (written before the grace period existed) gets no grace
- * until the next Stripe event for it records the start.
+ * until the next Stripe event for it records the start. An AWS Marketplace
+ * subscription also has to be inside its paid term (see
+ * AWS_EXPIRATION_GRACE_MS).
  */
 export function hasPlanEntitlement(
   sub: GraceFields,
   now: Date = new Date(),
 ): boolean {
+  if (sub.source === 'aws_marketplace' && !withinAwsTerm(sub, now)) {
+    return false;
+  }
   if (sub.status === 'active') return true;
   const ends = graceEndsAt(sub);
   return ends !== null && now < ends;
@@ -71,9 +98,10 @@ export function effectivePlan(
  */
 export function entitledSubscriptionSql(alias: string): string {
   return (
+    `((${alias}.source <> 'aws_marketplace' OR ${alias}."currentPeriodEnd" > :awsTermCutoff) AND ` +
     `(${alias}.status = 'active' OR (${alias}.status = 'past_due' AND (` +
     `(${alias}.source = 'marketplace' AND ${alias}."pastDueSince" > :marketplaceGraceCutoff) OR ` +
-    `(${alias}.source <> 'marketplace' AND ${alias}."pastDueSince" > :graceCutoff))))`
+    `(${alias}.source <> 'marketplace' AND ${alias}."pastDueSince" > :graceCutoff)))))`
   );
 }
 
@@ -86,8 +114,10 @@ export function pastDueGraceCutoff(now: Date = new Date()): Date {
 export function entitlementSqlParams(now: Date = new Date()): {
   graceCutoff: Date;
   marketplaceGraceCutoff: Date;
+  awsTermCutoff: Date;
 } {
   return {
+    awsTermCutoff: new Date(now.getTime() - AWS_EXPIRATION_GRACE_MS),
     graceCutoff: pastDueGraceCutoff(now),
     marketplaceGraceCutoff: new Date(
       now.getTime() - MARKETPLACE_SUSPENDED_GRACE_MS,

@@ -2199,30 +2199,37 @@ describe('BillingService', () => {
       expect(mockStripe.customers.create).not.toHaveBeenCalled();
     });
 
-    it('allows a Stripe checkout over a pending AWS link older than a day, or one that ended', async () => {
-      mockStripe.checkout.sessions.create.mockResolvedValue({
-        url: 'https://checkout.stripe.com/session123',
-      });
-      for (const row of [
+    it('keeps refusing a Stripe checkout for a pending AWS link however old it is', async () => {
+      mockRepository.findOne.mockResolvedValue(
         awsSub({
           marketplaceStatus: 'pending',
           status: 'incomplete',
           plan: 'free',
           stripeCustomerId: 'cus_1',
-          updatedAt: new Date(Date.now() - 25 * 60 * 60 * 1000),
+          updatedAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
         }),
+      );
+      await expect(
+        service.createCheckoutSession(userId, 'test@example.com', 'pro'),
+      ).rejects.toThrow(/remove the pending purchase on the billing page/);
+      expect(mockStripe.checkout.sessions.create).not.toHaveBeenCalled();
+    });
+
+    it('allows a Stripe checkout once the AWS license ended', async () => {
+      mockStripe.checkout.sessions.create.mockResolvedValue({
+        url: 'https://checkout.stripe.com/session123',
+      });
+      mockRepository.findOne.mockResolvedValue(
         awsSub({
           marketplaceStatus: 'ended',
           status: 'canceled',
           plan: 'free',
           stripeCustomerId: 'cus_1',
         }),
-      ]) {
-        mockRepository.findOne.mockResolvedValue(row);
-        await expect(
-          service.createCheckoutSession(userId, 'test@example.com', 'pro'),
-        ).resolves.toBe('https://checkout.stripe.com/session123');
-      }
+      );
+      await expect(
+        service.createCheckoutSession(userId, 'test@example.com', 'pro'),
+      ).resolves.toBe('https://checkout.stripe.com/session123');
     });
 
     it('refuses the Stripe portal and upgrades with 409', async () => {

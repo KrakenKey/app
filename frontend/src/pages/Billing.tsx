@@ -28,7 +28,10 @@ import {
   upgradeSubscription,
 } from '../services/billingService';
 import { AZURE_PORTAL_SAAS_URL } from '../services/marketplaceService';
-import { AWS_MARKETPLACE_CONSOLE_URL } from '../services/awsMarketplaceService';
+import {
+  AWS_MARKETPLACE_CONSOLE_URL,
+  removePendingAwsPurchase,
+} from '../services/awsMarketplaceService';
 import {
   formatLimit,
   planLimits,
@@ -204,6 +207,8 @@ export default function Billing() {
     preview: UpgradePreviewResponse;
   } | null>(null);
   const [upgradeError, setUpgradeError] = useState<string | null>(null);
+  const [removeAwsOpen, setRemoveAwsOpen] = useState(false);
+  const [removeAwsError, setRemoveAwsError] = useState<string | null>(null);
   // Plans with a Stripe price here, to offer yearly billing only once it is set up
   const [purchasable, setPurchasable] = useState<PurchasablePlan[]>([]);
   const [chosenInterval, setChosenInterval] = useState<BillingInterval | null>(
@@ -216,6 +221,27 @@ export default function Billing() {
       .then((res) => setPurchasable(res.plans))
       .catch(() => setPurchasable([]));
   }, []);
+
+  async function handleRemovePendingAws() {
+    setActionLoading(true);
+    setRemoveAwsError(null);
+    try {
+      await removePendingAwsPurchase();
+      setRemoveAwsOpen(false);
+      await loadSubscription();
+    } catch (err) {
+      const msg = axios.isAxiosError(err)
+        ? err.response?.data?.message
+        : undefined;
+      setRemoveAwsError(
+        typeof msg === 'string'
+          ? msg
+          : 'Something went wrong. Try again in a minute.',
+      );
+    } finally {
+      setActionLoading(false);
+    }
+  }
 
   async function loadSubscription() {
     try {
@@ -521,8 +547,20 @@ export default function Billing() {
               <p className="text-sm text-text-secondary mt-2">
                 Your AWS Marketplace purchase is linked and waiting for AWS to
                 confirm it. The plan applies automatically, usually within a few
-                minutes.
+                minutes. While it waits, plans can&apos;t be bought here.
               </p>
+            )}
+            {awsPending && canManageBilling && (
+              <button
+                type="button"
+                onClick={() => {
+                  setRemoveAwsError(null);
+                  setRemoveAwsOpen(true);
+                }}
+                className="mt-2 cursor-pointer border-none bg-transparent p-0 text-sm text-cyan-300 hover:text-cyan-200"
+              >
+                Remove pending AWS purchase
+              </button>
             )}
             {isPaid && subscription?.currentPeriodEnd && (
               <p className="text-sm text-text-muted mt-2">
@@ -688,6 +726,42 @@ export default function Billing() {
           )}
         </section>
       )}
+
+      {/* Remove a pending AWS Marketplace purchase */}
+      <Modal
+        open={removeAwsOpen}
+        onClose={() => setRemoveAwsOpen(false)}
+        title="Remove pending AWS purchase"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-zinc-300">
+            This unlinks the AWS Marketplace purchase from this{' '}
+            {user?.organizationId ? 'organization' : 'account'}, so you can
+            subscribe here instead. It doesn&apos;t cancel anything in AWS: if
+            you no longer want the AWS subscription, cancel it in the AWS
+            Marketplace console too, or AWS keeps billing for it.
+          </p>
+          {removeAwsError && (
+            <p className="text-sm text-red-400">{removeAwsError}</p>
+          )}
+          <div className="flex gap-3 justify-end pt-2">
+            <Button
+              variant="secondary"
+              onClick={() => setRemoveAwsOpen(false)}
+              disabled={actionLoading}
+            >
+              Keep it
+            </Button>
+            <Button
+              variant="primary"
+              onClick={handleRemovePendingAws}
+              disabled={actionLoading}
+            >
+              {actionLoading ? 'Removing...' : 'Remove'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Upgrade Confirmation Modal */}
       <Modal

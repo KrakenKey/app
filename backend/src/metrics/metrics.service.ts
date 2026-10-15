@@ -121,6 +121,14 @@ export class MetricsService implements OnModuleInit {
     registers: [this.registry],
   });
 
+  // --- AWS Marketplace ---
+  readonly awsMarketplaceSyncsTotal = new Counter({
+    name: 'aws_marketplace_syncs_total',
+    help: 'AWS Marketplace license syncs by trigger (link, event, reconcile) and result (changed, unchanged, error)',
+    labelNames: ['trigger', 'result'] as const,
+    registers: [this.registry],
+  });
+
   onModuleInit() {
     collectDefaultMetrics({ register: this.registry });
   }

@@ -168,6 +168,15 @@ describe('AWS Marketplace landing page', () => {
     expect(mockLoginWithMicrosoft).toHaveBeenCalled();
   });
 
+  it('picks the registration up from session storage after a reload', async () => {
+    window.history.pushState({}, '', '/aws-marketplace');
+    sessionStorage.setItem('kk_aws_marketplace_registration', REGISTRATION);
+    const seen = awsApi({});
+    render(<AwsMarketplace />);
+    expect(await screen.findByText('Link your purchase')).toBeInTheDocument();
+    expect(seen.resolve).toEqual([{ registration: REGISTRATION }]);
+  });
+
   it('explains how to start over when there is no registration', async () => {
     window.history.pushState({}, '', '/aws-marketplace');
     awsApi({});
@@ -213,6 +222,11 @@ describe('AWS Marketplace landing page', () => {
     expect(screen.getByText('Jan 15, 2027')).toBeInTheDocument();
     expect(screen.getByText(/right away/)).toBeInTheDocument();
     expect(seen.resolve).toEqual([{ registration: REGISTRATION }]);
+    // Out of the address bar, kept for a reload.
+    expect(window.location.search).toBe('');
+    expect(sessionStorage.getItem('kk_aws_marketplace_registration')).toBe(
+      REGISTRATION,
+    );
 
     await user.click(
       screen.getByRole('button', { name: 'Link to this account' }),
@@ -221,6 +235,9 @@ describe('AWS Marketplace landing page', () => {
       await screen.findByText('Your subscription is active'),
     ).toBeInTheDocument();
     expect(seen.link).toEqual([{ registration: REGISTRATION }]);
+    expect(
+      sessionStorage.getItem('kk_aws_marketplace_registration'),
+    ).toBeNull();
     expect(
       screen.getByRole('link', {
         name: /Manage in the AWS Marketplace console/,

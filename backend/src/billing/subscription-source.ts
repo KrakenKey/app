@@ -105,28 +105,17 @@ export function hasLiveAwsMarketplaceSubscription(
 }
 
 /**
- * How long an AWS Marketplace purchase linked on the landing page, but not
- * yet entitled, keeps a Stripe checkout from starting. AWS usually grants
- * the entitlement within minutes; after a day the link is treated as
- * abandoned for this check (the reconcile job still activates it if AWS
- * grants it later, unless the account bought through Stripe meanwhile).
+ * True while an AWS Marketplace purchase linked here waits for its
+ * entitlement. It keeps a Stripe checkout from starting for as long as it
+ * is pending, so the account is never billed twice; the owner can remove
+ * the pending link from the billing page (DELETE
+ * /billing/aws-marketplace/pending) to bill another way.
  */
-export const AWS_PENDING_LINK_WINDOW_MS = 24 * 60 * 60 * 1000;
-
-/** True while an AWS Marketplace purchase linked here waits for its entitlement. */
 export function isAwaitingAwsEntitlement(
-  sub:
-    | (Pick<Subscription, 'source' | 'marketplaceStatus'> &
-        Partial<Pick<Subscription, 'updatedAt'>>)
-    | null
-    | undefined,
-  now: Date = new Date(),
+  sub: Pick<Subscription, 'source' | 'marketplaceStatus'> | null | undefined,
 ): boolean {
   return (
-    sub?.source === 'aws_marketplace' &&
-    sub.marketplaceStatus === 'pending' &&
-    !!sub.updatedAt &&
-    now.getTime() - sub.updatedAt.getTime() < AWS_PENDING_LINK_WINDOW_MS
+    sub?.source === 'aws_marketplace' && sub.marketplaceStatus === 'pending'
   );
 }
 
@@ -152,4 +141,4 @@ export const BILLED_BY_AWS_MESSAGE =
 
 /** 409 message for a Stripe checkout while an AWS purchase waits for its entitlement. */
 export const AWAITING_AWS_MESSAGE =
-  'An AWS Marketplace purchase is linked to this account and waiting for AWS to confirm it. Wait a few minutes, then check the billing page.';
+  'An AWS Marketplace purchase is linked to this account and waiting for AWS to confirm it. Wait a few minutes, or remove the pending purchase on the billing page to subscribe here instead.';

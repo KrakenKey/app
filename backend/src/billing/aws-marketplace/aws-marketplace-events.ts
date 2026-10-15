@@ -36,6 +36,15 @@ export const LICENSE_EVENT_TYPES = new Set([
 ]);
 
 /**
+ * AWS flags (or clears) a possible problem with the buyer, such as account
+ * closure or fraud. Logged for an operator; access isn't changed.
+ */
+export const ADVISORY_EVENT_TYPES = new Set([
+  'Purchase Agreement Advisory Issued - Manufacturer',
+  'Purchase Agreement Advisory Resolved - Manufacturer',
+]);
+
+/**
  * Events after which a license with no entitlement left is over, even if it
  * was still waiting for its first entitlement.
  */

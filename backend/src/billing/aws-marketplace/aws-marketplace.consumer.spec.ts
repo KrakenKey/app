@@ -120,10 +120,10 @@ describe('AwsMarketplaceEventConsumer', () => {
     await expect(consumer.pollOnce()).resolves.toBe(1);
   });
 
-  it('does not start while the feature or the queue is off', () => {
+  it('does not start without a queue', () => {
     const envs: Record<string, string>[] = [
-      { KK_AWS_MARKETPLACE_ENABLED: 'false' },
       { KK_AWS_MARKETPLACE_QUEUE_URL: '' },
+      { KK_AWS_MARKETPLACE_QUEUE_URL: 'https://example.com/q' },
     ];
     for (const env of envs) {
       const { sqs, consumer } = setup(env);
@@ -131,6 +131,51 @@ describe('AwsMarketplaceEventConsumer', () => {
       expect(consumer.running).toBe(false);
       expect(sqs.send).not.toHaveBeenCalled();
     }
+  });
+
+  it('keeps following sold licenses with the feature flag off', async () => {
+    const { sqs, consumer } = setup({ KK_AWS_MARKETPLACE_ENABLED: 'false' });
+    sqs.send.mockImplementation(
+      async (command: unknown, opts?: { abortSignal?: AbortSignal }) =>
+        command instanceof ReceiveMessageCommand
+          ? new Promise((_r, reject) =>
+              opts?.abortSignal?.addEventListener('abort', () =>
+                reject(new Error('aborted')),
+              ),
+            )
+          : { Attributes: { RedrivePolicy: '{}' } },
+    );
+    consumer.onApplicationBootstrap();
+    expect(consumer.running).toBe(true);
+    consumer.onModuleDestroy();
+    await consumer.beforeApplicationShutdown();
+  });
+
+  it('warns when the queue has no dead-letter queue', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn');
+    const { sqs, consumer } = setup();
+    sqs.send.mockImplementation(
+      async (command: unknown, opts?: { abortSignal?: AbortSignal }) => {
+        if (command instanceof GetQueueAttributesCommand) {
+          expect(command.input.AttributeNames).toContain('RedrivePolicy');
+          return { Attributes: { ApproximateNumberOfMessages: '0' } };
+        }
+        return new Promise((_r, reject) =>
+          opts?.abortSignal?.addEventListener('abort', () =>
+            reject(new Error('aborted')),
+          ),
+        );
+      },
+    );
+    consumer.onApplicationBootstrap();
+    await new Promise((r) => setImmediate(r));
+    consumer.onModuleDestroy();
+    await consumer.beforeApplicationShutdown();
+    expect(
+      warn.mock.calls.some((c) =>
+        String(c[0]).includes('no dead-letter queue'),
+      ),
+    ).toBe(true);
   });
 
   it('checks the queue, polls until shutdown, and waits for the batch in progress', async () => {

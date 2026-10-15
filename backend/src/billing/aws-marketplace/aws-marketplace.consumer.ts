@@ -62,8 +62,10 @@ function errorName(err: unknown): string {
  * advisory lock, always to what GetEntitlements reports, and an event id is
  * recorded once.
  *
- * Runs only with KK_AWS_MARKETPLACE_ENABLED=true and a queue URL. SQS is
- * called with the default credentials (the instance role of the account
+ * Runs whenever a valid queue URL is set, with or without
+ * KK_AWS_MARKETPLACE_ENABLED: the flag only stops new purchases, and
+ * licenses already sold must keep being followed. SQS is called with the
+ * default credentials (the instance role of the account
  * the queue is in), not the seller account role.
  *
  * Shutdown: onModuleDestroy stops polling and cancels the long poll;
@@ -159,12 +161,17 @@ export class AwsMarketplaceEventConsumer
       const out = await this.client().send(
         new GetQueueAttributesCommand({
           QueueUrl: this.config.queueUrl,
-          AttributeNames: ['ApproximateNumberOfMessages'],
+          AttributeNames: ['ApproximateNumberOfMessages', 'RedrivePolicy'],
         }),
       );
       this.logger.log(
         `AWS Marketplace event consumer started: ${out.Attributes?.ApproximateNumberOfMessages ?? '?'} message(s) waiting`,
       );
+      if (!out.Attributes?.RedrivePolicy) {
+        this.logger.warn(
+          'AWS Marketplace event queue has no dead-letter queue (RedrivePolicy): a message that keeps failing is retried until it expires',
+        );
+      }
     } catch (err) {
       this.logger.error(
         `AWS Marketplace event queue is not reachable (${errorName(err)}); will keep trying`,

@@ -76,12 +76,21 @@ describe('AwsMarketplaceConfig', () => {
   afterEach(() => jest.restoreAllMocks());
 
   it('is off unless KK_AWS_MARKETPLACE_ENABLED is "true"', () => {
-    expect(configWith({}).enabled).toBe(false);
-    expect(configWith({ KK_AWS_MARKETPLACE_ENABLED: 'yes' }).enabled).toBe(
-      false,
-    );
-    expect(configWith({ KK_AWS_MARKETPLACE_ENABLED: 'TRUE' }).enabled).toBe(
-      true,
+    const codes = { KK_AWS_MARKETPLACE_PRODUCT_CODES: 'abc' };
+    expect(configWith(codes).enabled).toBe(false);
+    expect(
+      configWith({ ...codes, KK_AWS_MARKETPLACE_ENABLED: 'yes' }).enabled,
+    ).toBe(false);
+    expect(
+      configWith({ ...codes, KK_AWS_MARKETPLACE_ENABLED: 'TRUE' }).enabled,
+    ).toBe(true);
+  });
+
+  it('stays off with an error when the flag is on but no product codes are set', () => {
+    const config = configWith({ KK_AWS_MARKETPLACE_ENABLED: 'true' });
+    expect(config.enabled).toBe(false);
+    expect(String(error.mock.calls[0][0])).toContain(
+      'KK_AWS_MARKETPLACE_PRODUCT_CODES is empty',
     );
   });
 
@@ -94,6 +103,7 @@ describe('AwsMarketplaceConfig', () => {
   it('logs ignored map entries, an empty map and a missing queue by name when on', () => {
     configWith({
       KK_AWS_MARKETPLACE_ENABLED: 'true',
+      KK_AWS_MARKETPLACE_PRODUCT_CODES: 'abc',
       KK_AWS_MARKETPLACE_DIMENSION_MAP: 'x=y',
     });
     expect(error.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(
@@ -107,6 +117,7 @@ describe('AwsMarketplaceConfig', () => {
   it('logs a queue URL that is not an SQS URL', () => {
     const config = configWith({
       KK_AWS_MARKETPLACE_ENABLED: 'true',
+      KK_AWS_MARKETPLACE_PRODUCT_CODES: 'abc',
       KK_AWS_MARKETPLACE_DIMENSION_MAP: 'pro=pro',
       KK_AWS_MARKETPLACE_QUEUE_URL: 'https://example.com/q',
     });
@@ -132,10 +143,25 @@ describe('AwsMarketplaceConfig', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it('runs no consumer while off, even with a queue', () => {
+  it('runs the consumer whenever a queue is set, flag or not', () => {
     expect(
       configWith({ KK_AWS_MARKETPLACE_QUEUE_URL: QUEUE }).consumerEnabled,
-    ).toBe(false);
+    ).toBe(true);
+    expect(configWith({}).consumerEnabled).toBe(false);
+  });
+
+  it('can check entitlements with the seller role, or with the flag on', () => {
+    expect(configWith({}).canCheckEntitlements).toBe(false);
+    expect(
+      configWith({ KK_AWS_MARKETPLACE_ROLE_ARN: 'arn:aws:iam::1:role/r' })
+        .canCheckEntitlements,
+    ).toBe(true);
+    expect(
+      configWith({
+        KK_AWS_MARKETPLACE_ENABLED: 'true',
+        KK_AWS_MARKETPLACE_PRODUCT_CODES: 'abc',
+      }).canCheckEntitlements,
+    ).toBe(true);
   });
 
   it('accepts any product when no codes are set, otherwise only listed ones', () => {
