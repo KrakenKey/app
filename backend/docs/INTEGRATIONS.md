@@ -340,6 +340,184 @@ Use a separate DEV offer in Partner Center with a preview audience and never tak
 
 ---
 
+## AWS Marketplace (Billing)
+
+**Source:** `src/billing/aws-marketplace/`
+
+Pro and Business (and Enterprise through private offers) can be bought on an AWS bill through a SaaS contract listing: the buyer picks one tier (contract dimension `pro` or `business`) for a monthly or 12-month term, with no metering and no free trial. AWS bills the customer; KrakenKey resolves the purchase, links it to an account and follows the entitlement. Everything is off until `KK_AWS_MARKETPLACE_ENABLED=true` (see [Configuration](./CONFIGURATION.md#billing-aws-marketplace)).
+
+Purchases are identified by license ARN together with the buyer's AWS account ID. `CustomerIdentifier` is empty for new SaaS products, and with Concurrent Agreements one AWS account can hold several licenses for the product, so nothing is keyed on the account alone.
+
+### Listing settings
+
+| Field | Value |
+|-------|-------|
+| Fulfillment URL | `https://<api domain>/billing/aws-marketplace/register` |
+| Pricing | SaaS contract, one tier per buyer; dimensions match `KK_AWS_MARKETPLACE_DIMENSION_MAP` |
+| Product code | `KK_AWS_MARKETPLACE_PRODUCT_CODES` |
+
+Use a separate Limited (hidden) test product for dev and set each environment's product code, so a test purchase never reaches production.
+
+### Fulfillment URL and landing page
+
+1. After a purchase, and whenever the buyer chooses Set up your account in the AWS Marketplace console, the buyer's browser POSTs a form to the fulfillment URL with `x-amzn-marketplace-token` (plus `x-amzn-marketplace-offer-type=free-trial` for trials, which this listing doesn't offer). The route is unauthenticated and rate limited per IP like other public routes.
+2. The API calls `ResolveCustomer` right away (8 second timeout, one retry). AWS returns the buyer's account ID, the license ARN, the product code and, when available, the agreement ID. A product code that isn't in `KK_AWS_MARKETPLACE_PRODUCT_CODES` is refused.
+3. The purchase is stored in `aws_marketplace_registration` under the SHA-256 of a new random ID, for 24 hours, and the browser gets `303 See Other` to `https://<app domain>/aws-marketplace?registration=<id>`. The AWS token is never stored, logged or put in a URL. If AWS refuses the token (invalid, expired or already used) or can't be reached, the redirect carries `?error=invalid_token|missing_token|unknown_product|unavailable` instead and the page tells the buyer how to start again from the AWS console.
+4. A signed-out buyer creates an account or signs in (the registration ID is kept in session storage across the sign-in). Signing up satisfies AWS's requirement to collect an email address, and existing customers sign in with their usual login.
+5. `POST /billing/aws-marketplace/resolve` shows what was bought: the dimension and plan (from `GetEntitlements`), the AWS account, the end of the current term, and what can be done with it: link it, already linked here (active or waiting for AWS), linked to another account, a conflict with an existing paid plan, not the organization owner, a dimension that isn't mapped, or a contract that ended.
+6. `POST /billing/aws-marketplace/link` claims the license on the user's subscription row, or the organization's for its owner, as pending (Free limits). This is where an account with a live Stripe, Microsoft or other AWS subscription is refused. It then syncs the license from `GetEntitlements`: with a current entitlement the plan applies at once; without one the link stays pending until a `License Updated` event or the hourly reconcile finds the entitlement. The page says which.
+
+Both landing page routes need a dashboard session (API keys get `403`). While a pending link is less than a day old, `POST /billing/checkout` answers `409` for that account.
+
+### Entitlements
+
+`GetEntitlements` (us-east-1) is always filtered by `LICENSE_ARN` and the product code. An entry counts when its value grants something (a positive integer or double, `true`, or a non-empty string; contract tiers are reported as `1`). With more than one current entry (for example during an upgrade) the highest mapped plan wins.
+
+| What `GetEntitlements` reports | Stored as |
+|-------------------------------|-----------|
+| A current entitlement for a mapped dimension | `active`, `plan` from the dimension map, `currentPeriodEnd` = `ExpirationDate`, `marketplaceStatus` `active` |
+| A dimension that isn't mapped | Plan unchanged, logged as an error |
+| Entitlements whose `ExpirationDate` passed more than 24 hours ago | Free plan, `canceled`, `marketplaceStatus` `ended` |
+| No entitlement, for an active license | Free plan, `canceled`, `marketplaceStatus` `ended` |
+| No entitlement, for a pending link | Stays pending, unless the event ends the agreement or license |
+
+For an auto-renewing contract `ExpirationDate` is the renewal date, so an entitlement keeps counting for 24 hours after it (`EXPIRATION_GRACE_MS`) while the renewed date shows up. An `ended` license whose entitlement comes back (a new term) is reactivated. Ending a license that backs an organization dissolves the organization, as with a Stripe cancellation.
+
+### Events
+
+AWS Marketplace sends agreement and license events to the seller account's default EventBridge bus in us-east-1 ([Seller Guide](https://docs.aws.amazon.com/marketplace/latest/userguide/saas-eventbridge-integration.html), [event payloads](https://docs.aws.amazon.com/marketplace/latest/userguide/notifications-eventbridge.html)). A rule there forwards them to an SQS queue in each environment's account, and every API process long-polls that queue (`KK_AWS_MARKETPLACE_QUEUE_URL`, 20 second polls, 10 messages, 5 minute visibility timeout).
+
+Handled detail types (source `aws.agreement-marketplace`): `Purchase Agreement Created`, `Purchase Agreement Amended` and `Purchase Agreement Ended` (each `- Proposer` and `- Manufacturer`), `License Updated - Manufacturer` and `License Deprovisioned - Manufacturer`. Anything else is recorded as ignored and deleted.
+
+- An event is only a hint about which licenses to re-read. License events name the license (`detail.license.arn`); agreement events don't, so they re-read every linked license on that agreement, on the agreement a renewal replaces (`previousAgreementId`), or held by the buyer's AWS account (`detail.acceptor.accountId`). The state applied always comes from `GetEntitlements`, so order and redelivery don't matter.
+- `License Updated` also records the license's current agreement ID. `Purchase Agreement Amended` for the license's agreement sets `cancelAtPeriodEnd` from `autoRenewalEnabled`.
+- License events for a product code that isn't in `KK_AWS_MARKETPLACE_PRODUCT_CODES` are ignored. Events for licenses that aren't linked yet are recorded and deleted; the landing page reads the entitlement itself when the buyer gets there.
+- Each event is recorded in `marketplace_operation` as `aws:<event id>`, after its licenses are synced. A redelivered event is deleted without being applied again (an organization dissolution it recorded is queued again). A message is deleted only after it was handled; if AWS or the database fails, it stays on the queue and comes back after the visibility timeout. Configure a dead-letter queue (for example after 5 receives). Malformed messages are logged and deleted.
+
+**Several API processes.** Both containers of a blue/green deploy consume the queue. SQS hands each message to one of them at a time, and a license is only changed in a transaction that first takes `pg_advisory_xact_lock(hashtext('aws-marketplace:<license ARN>'))` and then reads `GetEntitlements` (10 second timeout), so two events for the same license, or an event and the reconcile job, apply one after the other and the last one applies AWS's latest state. On shutdown the consumer stops polling (the long poll is aborted) and waits up to 45 seconds for the batch in progress.
+
+### Reconcile
+
+`AwsMarketplaceReconciler` runs hourly at :25 through `ScheduledJobLock` (once across API processes) and only while the feature is on. It re-syncs every license that is `pending` or `active`, records changes in `marketplace_operation` as `aws-reconcile:<uuid>`, keeps going when one license fails, and deletes expired registrations. It catches lost or delayed events, contracts that expire without one, and links made before AWS granted the entitlement.
+
+### Credentials and IAM
+
+`ResolveCustomer` must be called from the seller account (the account that publishes the product), and both Marketplace APIs are only served in us-east-1. With `KK_AWS_MARKETPLACE_ROLE_ARN` set, the API assumes that role in the seller account with STS (session name `krakenkey-aws-marketplace`, 1 hour) and reuses the credentials until 5 minutes before they expire; the base credentials come from the default chain (the EC2 instance role). SQS is called with the base credentials, since the queue is in the environment's own account.
+
+Role in the seller account (`KK_AWS_MARKETPLACE_ROLE_ARN`), permissions:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "aws-marketplace:ResolveCustomer",
+        "aws-marketplace:GetEntitlements"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+Its trust policy names each environment's instance role:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::<environment account id>:role/<api instance role>"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+```
+
+The environment's instance role:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": "arn:aws:iam::<seller account id>:role/<marketplace role>"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes"
+      ],
+      "Resource": "arn:aws:sqs:us-east-1:<environment account id>:<queue name>"
+    }
+  ]
+}
+```
+
+Use SSE-SQS (or no encryption) on the queue; with a customer managed KMS key the EventBridge role needs `kms:GenerateDataKey` and `kms:Decrypt`, and the instance role `kms:Decrypt`, on it.
+
+### Forwarding events from the seller account
+
+EventBridge delivers to an SQS queue in another account only in the same region, so each environment's queue is in us-east-1. In the seller account, on the default event bus in us-east-1, create one rule per environment with this pattern:
+
+```json
+{
+  "source": ["aws.agreement-marketplace"],
+  "detail-type": [
+    "Purchase Agreement Created - Proposer",
+    "Purchase Agreement Created - Manufacturer",
+    "Purchase Agreement Amended - Proposer",
+    "Purchase Agreement Amended - Manufacturer",
+    "Purchase Agreement Ended - Proposer",
+    "Purchase Agreement Ended - Manufacturer",
+    "License Updated - Manufacturer",
+    "License Deprovisioned - Manufacturer"
+  ]
+}
+```
+
+The target is the environment's queue ("Target in another AWS account"), sent as is (no input transformer), with an execution role in the seller account that `events.amazonaws.com` can assume and that allows `sqs:SendMessage` on that queue ARN. The queue's resource policy allows that role to send:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::<seller account id>:role/<eventbridge execution role>"
+      },
+      "Action": "sqs:SendMessage",
+      "Resource": "arn:aws:sqs:us-east-1:<environment account id>:<queue name>"
+    }
+  ]
+}
+```
+
+Agreement events don't carry a product code, so both environments see each other's agreement events. That is harmless: they only re-read licenses linked in that environment, and license events for other products are ignored.
+
+### Turning it on
+
+1. Deploy the release with the flag off. The migration only adds nullable columns and a table, so the previous release keeps running beside it.
+2. Create the role in the seller account, the queue (with a dead-letter queue) in the environment account, the EventBridge rule, and grant the instance role `sts:AssumeRole` and the SQS permissions.
+3. Set `KK_AWS_MARKETPLACE_ROLE_ARN`, `KK_AWS_MARKETPLACE_PRODUCT_CODES`, `KK_AWS_MARKETPLACE_DIMENSION_MAP` and `KK_AWS_MARKETPLACE_QUEUE_URL`, then `KK_AWS_MARKETPLACE_ENABLED=true`, and restart. Startup logs name any setting that is missing or malformed, and the consumer logs whether the queue is reachable.
+4. Set the product's fulfillment URL and make a test purchase on the Limited test product.
+
+### Testing
+
+Use the Limited test product (test prices) with an allowlisted buyer account, and never make it public. Cancel test agreements with a refund request.
+
+---
+
 ## Probe Service (Internal)
 
 ### Overview

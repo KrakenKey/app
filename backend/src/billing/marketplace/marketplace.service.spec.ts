@@ -515,6 +515,24 @@ describe('MarketplaceService', () => {
       );
     });
 
+    it('refuses with 409 while AWS Marketplace bills the account', async () => {
+      billing.getSubscription.mockResolvedValue(
+        linkedRow({
+          source: 'aws_marketplace',
+          marketplaceSubscriptionId:
+            'arn:aws:license-manager::111122223333:license:l-abc',
+          marketplaceStatus: 'active',
+        }),
+      );
+      const described = await service.describe(USER_ID, 'token');
+      expect(described.state).toBe('conflict');
+      expect(described.message).toMatch(/AWS Marketplace/);
+      await expect(service.activate(USER_ID, 'token')).rejects.toThrow(
+        ConflictException,
+      );
+      expect(client.activate).not.toHaveBeenCalled();
+    });
+
     it('refuses an org member who is not the owner', async () => {
       user.organizationId = 'org-1';
       user.role = 'admin';

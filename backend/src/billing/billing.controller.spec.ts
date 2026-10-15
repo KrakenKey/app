@@ -172,6 +172,27 @@ describe('BillingController', () => {
       expect(result.graceEndsAt).toEqual(new Date('2026-10-31T12:00:00Z'));
     });
 
+    it('says when AWS Marketplace bills the subscription', async () => {
+      mockBillingService.getSubscription.mockResolvedValue({
+        id: 'sub-1',
+        plan: 'pro',
+        status: 'active',
+        source: 'aws_marketplace',
+        marketplaceStatus: 'active',
+        stripeSubscriptionId: null,
+        billingInterval: null,
+        pastDueSince: null,
+        currentPeriodEnd: new Date('2027-01-01T00:00:00Z'),
+        cancelAtPeriodEnd: false,
+        createdAt: new Date(),
+      });
+
+      const result = await controller.getSubscription(mockReq);
+      expect(result.source).toBe('aws_marketplace');
+      expect(result.marketplaceStatus).toBe('active');
+      expect(result.interval).toBeNull();
+    });
+
     it('returns when the grace period ends for a past_due subscription', async () => {
       const pastDueSince = new Date('2026-10-01T12:00:00Z');
       mockBillingService.getSubscription.mockResolvedValue({

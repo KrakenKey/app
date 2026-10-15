@@ -9,6 +9,7 @@ import Home from './pages/Home';
 import Callback from './pages/Callback';
 import Device from './pages/Device';
 import Marketplace from './pages/Marketplace';
+import AwsMarketplace from './pages/AwsMarketplace';
 import Overview from './pages/Overview';
 import Settings from './pages/Settings';
 import DomainManagement from './components/DomainManagement';
@@ -49,6 +50,7 @@ function AppRoutes() {
       <Route path="/auth/callback" element={<Callback />} />
       <Route path="/device" element={<Device />} />
       <Route path="/marketplace" element={<Marketplace />} />
+      <Route path="/aws-marketplace" element={<AwsMarketplace />} />
       <Route path="/r/:token" element={<SharedReport />} />
       <Route
         path="/dashboard"

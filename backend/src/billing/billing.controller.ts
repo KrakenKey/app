@@ -20,6 +20,7 @@ import { SkipThrottle } from '@nestjs/throttler';
 import { BillingService } from './billing.service';
 import { normalizePlan } from '@krakenkey/shared';
 import { graceEndsAt } from './entitlement';
+import { isMarketplaceSource } from './subscription-source';
 import { CreateCheckoutDto } from './dto/create-checkout.dto';
 import { UpgradePlanDto } from './dto/upgrade-plan.dto';
 import { CreatePortalDto } from './dto/portal.dto';
@@ -110,10 +111,11 @@ export class BillingController {
       pastDueSince: sub.pastDueSince ?? null,
       graceEndsAt: graceEndsAt(sub),
       source: sub.source ?? 'stripe',
-      marketplaceStatus:
-        sub.source === 'marketplace' ? sub.marketplaceStatus : null,
+      marketplaceStatus: isMarketplaceSource(sub.source)
+        ? sub.marketplaceStatus
+        : null,
       interval:
-        sub.source !== 'marketplace' && sub.stripeSubscriptionId
+        !isMarketplaceSource(sub.source) && sub.stripeSubscriptionId
           ? (sub.billingInterval ?? 'month')
           : null,
       scheduledChange: await this.billingService.scheduledChange(sub),

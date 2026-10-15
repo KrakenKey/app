@@ -28,6 +28,7 @@ import {
   upgradeSubscription,
 } from '../services/billingService';
 import { AZURE_PORTAL_SAAS_URL } from '../services/marketplaceService';
+import { AWS_MARKETPLACE_CONSOLE_URL } from '../services/awsMarketplaceService';
 import {
   formatLimit,
   planLimits,
@@ -244,7 +245,9 @@ export default function Billing() {
   // A downgrade or interval switch made in the Stripe portal that waits for
   // the end of the period. A pending cancellation is shown on its own.
   const scheduledChange =
-    subscription?.source !== 'marketplace' && !isCanceling
+    subscription?.source !== 'marketplace' &&
+    subscription?.source !== 'aws_marketplace' &&
+    !isCanceling
       ? (subscription?.scheduledChange ?? null)
       : null;
   // Microsoft bills Marketplace subscriptions: plan changes, payment and
@@ -252,6 +255,16 @@ export default function Billing() {
   const billedByMicrosoft =
     subscription?.source === 'marketplace' &&
     (subscription.status === 'active' || subscription.status === 'past_due');
+  // Same for AWS Marketplace, which bills and cancels in the AWS console.
+  // A purchase linked here that AWS hasn't confirmed yet counts too, so no
+  // Stripe checkout is started on top of it.
+  const awsPending =
+    subscription?.source === 'aws_marketplace' &&
+    subscription.marketplaceStatus === 'pending';
+  const billedByAws =
+    subscription?.source === 'aws_marketplace' &&
+    subscription.status === 'active';
+  const billedElsewhere = billedByMicrosoft || billedByAws || awsPending;
   // The API only lets the owner manage an org's subscription, so other
   // members get a read-only view instead of buttons that would return 403.
   const canManageBilling = !user?.organizationId || user.role === 'owner';
@@ -281,7 +294,7 @@ export default function Billing() {
     orgMembers: user?.organizationId ? (counts?.orgMembers ?? null) : undefined,
   });
 
-  const canChangePlanHere = canManageBilling && !billedByMicrosoft;
+  const canChangePlanHere = canManageBilling && !billedElsewhere;
   // Only plans with a Stripe price here: a plan without one can't be bought
   const upgradeTargets = canChangePlanHere
     ? (UPGRADE_TARGETS[plan] ?? []).filter((p) =>
@@ -303,7 +316,7 @@ export default function Billing() {
     isPaid &&
     !scheduledChange &&
     canManageBilling &&
-    !billedByMicrosoft &&
+    !billedElsewhere &&
     subscription?.status === 'active' &&
     !!subscription?.interval &&
     purchasable.some(
@@ -449,7 +462,7 @@ export default function Billing() {
               <ExternalLink className="w-4 h-4" />
             </a>
           )}
-          {canManageBilling && !billedByMicrosoft && (
+          {canManageBilling && !billedElsewhere && (
             <Button
               variant="primary"
               icon={<ExternalLink className="w-4 h-4" />}
@@ -475,7 +488,7 @@ export default function Billing() {
                 {planLabel}
               </span>
               {isPaid &&
-                !billedByMicrosoft &&
+                !billedElsewhere &&
                 planPrice(plan, currentInterval) && (
                   <span className="text-sm text-text-muted tabular-nums">
                     {planPrice(plan, currentInterval)}
@@ -496,6 +509,19 @@ export default function Billing() {
               <p className="text-sm text-text-secondary mt-2">
                 Billed through Microsoft. Change your plan, payment method or
                 cancel in the Azure portal.
+              </p>
+            )}
+            {billedByAws && (
+              <p className="text-sm text-text-secondary mt-2">
+                Billed through AWS Marketplace. Change your plan or cancel in
+                the AWS Marketplace console.
+              </p>
+            )}
+            {awsPending && (
+              <p className="text-sm text-text-secondary mt-2">
+                Your AWS Marketplace purchase is linked and waiting for AWS to
+                confirm it. The plan applies automatically, usually within a few
+                minutes.
               </p>
             )}
             {isPaid && subscription?.currentPeriodEnd && (
@@ -533,6 +559,17 @@ export default function Billing() {
               </p>
             )}
           </div>
+          {(billedByAws || awsPending) && canManageBilling && (
+            <a
+              href={AWS_MARKETPLACE_CONSOLE_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex h-9 items-center justify-center gap-2 self-start rounded-lg border border-border-strong bg-surface-elevated px-3.5 text-sm font-medium text-text transition-colors hover:border-[#4a5b78] hover:bg-[#2e3c55] sm:self-auto"
+            >
+              <ExternalLink className="w-4 h-4" />
+              Manage in AWS Marketplace
+            </a>
+          )}
           {billedByMicrosoft && canManageBilling && (
             <a
               href={AZURE_PORTAL_SAAS_URL}
@@ -544,7 +581,7 @@ export default function Billing() {
               Manage in Azure portal
             </a>
           )}
-          {isPaid && canManageBilling && !billedByMicrosoft && (
+          {isPaid && canManageBilling && !billedElsewhere && (
             <Button
               variant="secondary"
               icon={<ExternalLink className="w-4 h-4" />}

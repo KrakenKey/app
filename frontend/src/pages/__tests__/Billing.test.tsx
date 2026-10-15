@@ -841,6 +841,87 @@ describe('Billing', () => {
     });
   });
 
+  describe('billed through AWS Marketplace', () => {
+    const aws = (
+      plan: string,
+      status = 'active',
+      marketplaceStatus = 'active',
+    ) => ({
+      ...sub(plan),
+      status,
+      source: 'aws_marketplace',
+      marketplaceStatus,
+      interval: null,
+    });
+
+    it('says AWS bills it and links to the AWS Marketplace console instead of Stripe', async () => {
+      mockFetchSubscription.mockResolvedValue(aws('business'));
+      render(<Billing />);
+
+      expect(
+        await screen.findByText(/Billed through AWS Marketplace/),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole('link', { name: /manage in aws marketplace/i }),
+      ).toHaveAttribute(
+        'href',
+        'https://console.aws.amazon.com/marketplace/home#/subscriptions',
+      );
+      expect(
+        screen.queryByRole('button', { name: /manage subscription/i }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /upgrade to/i }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /switch to/i }),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText('$149/mo')).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(/Billed through Microsoft/),
+      ).not.toBeInTheDocument();
+    });
+
+    it('shows a linked purchase waiting for AWS without Stripe actions', async () => {
+      mockFetchSubscription.mockResolvedValue(
+        aws('free', 'incomplete', 'pending'),
+      );
+      render(<Billing />);
+
+      expect(
+        await screen.findByText(/waiting for AWS to confirm it/),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /upgrade to/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('hides the console link from org members', async () => {
+      authState.user = { organizationId: 'org_001', role: 'member' };
+      mockFetchSubscription.mockResolvedValue(aws('business'));
+      render(<Billing />);
+
+      expect(
+        await screen.findByText(/managed by its owner/i),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole('link', { name: /manage in aws marketplace/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('offers Stripe upgrades again after the AWS contract ended', async () => {
+      mockFetchSubscription.mockResolvedValue(aws('free', 'canceled', 'ended'));
+      render(<Billing />);
+
+      expect(
+        await screen.findByRole('button', { name: 'Upgrade to Pro' }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText(/Billed through AWS Marketplace/),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   it('is unchanged for a Stripe subscription', async () => {
     mockFetchSubscription.mockResolvedValue({
       ...sub('pro'),

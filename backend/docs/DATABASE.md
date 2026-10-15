@@ -199,7 +199,7 @@ Key format: `kk_svc_` prefix. Can be revoked (soft delete via `revokedAt`).
 
 ### Subscription
 
-Subscription records linked to users or organizations, billed by Stripe or by Microsoft Marketplace.
+Subscription records linked to users or organizations, billed by Stripe, Microsoft Marketplace or AWS Marketplace.
 
 ```sql
 CREATE TABLE "subscription" (
@@ -208,12 +208,14 @@ CREATE TABLE "subscription" (
   "status" VARCHAR NOT NULL,                      -- active/past_due/unpaid/canceled/incomplete/trialing
   "stripeCustomerId" VARCHAR,                    -- null for Marketplace-only accounts
   "stripeSubscriptionId" VARCHAR UNIQUE,
-  "source" VARCHAR NOT NULL DEFAULT 'stripe',     -- stripe/marketplace
-  "marketplaceSubscriptionId" VARCHAR,            -- unique when set
-  "marketplaceOfferId" VARCHAR,
-  "marketplacePlanId" VARCHAR,
-  "marketplaceStatus" VARCHAR,                    -- Subscribed/Suspended/Unsubscribed
+  "source" VARCHAR NOT NULL DEFAULT 'stripe',     -- stripe/marketplace/aws_marketplace
+  "marketplaceSubscriptionId" VARCHAR,            -- Microsoft subscription ID or AWS license ARN; unique when set
+  "marketplaceOfferId" VARCHAR,                   -- Microsoft offer ID or AWS product code
+  "marketplacePlanId" VARCHAR,                    -- Microsoft plan ID or AWS contract dimension
+  "marketplaceStatus" VARCHAR,                    -- Subscribed/Suspended/Unsubscribed, or AWS pending/active/ended
   "marketplaceQuantity" INTEGER,
+  "awsCustomerAccountId" VARCHAR,                 -- buyer's AWS account ID
+  "awsAgreementId" VARCHAR,                       -- AWS agreement behind the license
   "currentPeriodStart" TIMESTAMP,
   "currentPeriodEnd" TIMESTAMP,
   "pastDueSince" TIMESTAMP,                       -- first failed payment while past_due; null otherwise
@@ -227,6 +229,8 @@ CREATE INDEX idx_subscription_user ON subscription("userId");
 CREATE INDEX idx_subscription_org ON subscription("organizationId");
 CREATE UNIQUE INDEX "UQ_subscription_marketplaceSubscriptionId"
   ON subscription("marketplaceSubscriptionId") WHERE "marketplaceSubscriptionId" IS NOT NULL;
+CREATE INDEX "IDX_subscription_awsCustomerAccountId" ON subscription("awsCustomerAccountId");
+CREATE INDEX "IDX_subscription_awsAgreementId" ON subscription("awsAgreementId");
 ```
 
 **Relationships:**
@@ -236,7 +240,7 @@ CREATE UNIQUE INDEX "UQ_subscription_marketplaceSubscriptionId"
 
 ### Marketplace Operation
 
-Microsoft Marketplace webhook operations that were handled, so a redelivered webhook is acknowledged without being applied twice.
+Microsoft Marketplace webhook operations that were handled, so a redelivered webhook is acknowledged without being applied twice. AWS Marketplace events are recorded here too, with the ID `aws:<EventBridge event id>` and the license ARN as `subscriptionId`, and changes the hourly AWS reconcile made as `aws-reconcile:<uuid>`.
 
 ```sql
 CREATE TABLE "marketplace_operation" (
@@ -249,6 +253,25 @@ CREATE TABLE "marketplace_operation" (
   "dissolveOrganizationId" UUID,                  -- organization this operation dissolves, if any
   "dissolveCancel" BOOLEAN,
   "createdAt" TIMESTAMP NOT NULL DEFAULT now()
+);
+```
+
+---
+
+### AWS Marketplace Registration
+
+AWS Marketplace purchases resolved at the fulfillment URL, waiting for the buyer to sign in and link them. Kept for 24 hours; the hourly AWS reconcile deletes expired rows. The AWS registration token itself is never stored.
+
+```sql
+CREATE TABLE "aws_marketplace_registration" (
+  "id" VARCHAR PRIMARY KEY,                       -- SHA-256 (hex) of the ID in the landing page URL
+  "customerAwsAccountId" VARCHAR NOT NULL,
+  "licenseArn" VARCHAR NOT NULL,
+  "productCode" VARCHAR NOT NULL,
+  "agreementId" VARCHAR,                          -- ResolveCustomer Metadata.AgreementId, if returned
+  "offerType" VARCHAR,                            -- x-amzn-marketplace-offer-type (free-trial), if sent
+  "createdAt" TIMESTAMP NOT NULL DEFAULT now(),
+  "expiresAt" TIMESTAMP NOT NULL                  -- indexed
 );
 ```
 

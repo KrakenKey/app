@@ -23,8 +23,10 @@ import { BillingService } from '../billing.service';
 import {
   ORG_ELIGIBLE_PLANS,
   ORG_MIN_PLAN_LABEL,
+  hasLiveAwsMarketplaceSubscription,
   hasLiveMarketplaceSubscription,
   hasLiveStripeSubscription,
+  isAwaitingAwsEntitlement,
 } from '../subscription-source';
 import { MarketplaceConfig, type MarketplacePlan } from './marketplace.config';
 import {
@@ -380,6 +382,15 @@ export class MarketplaceService {
         'This account already has another Microsoft Marketplace subscription. Cancel it in the Azure portal first, or sign in with another account.',
       );
     }
+    if (
+      hasLiveAwsMarketplaceSubscription(own) ||
+      isAwaitingAwsEntitlement(own)
+    ) {
+      return result(
+        'conflict',
+        'This account already has an AWS Marketplace subscription. Cancel it in the AWS Marketplace console first, or sign in with another account.',
+      );
+    }
     return result('ready');
   }
 
@@ -418,6 +429,9 @@ export class MarketplaceService {
       marketplaceStatus: PENDING,
       marketplaceQuantity:
         purchase.quantity ?? purchase.subscription.quantity ?? null,
+      // Left over from an ended AWS Marketplace license on this row.
+      awsCustomerAccountId: null,
+      awsAgreementId: null,
       // Stripe events for an older, ended Stripe subscription must not
       // touch this row.
       stripeSubscriptionId: null,
@@ -444,7 +458,9 @@ export class MarketplaceService {
           if (
             !same &&
             (hasLiveStripeSubscription(existing) ||
-              hasLiveMarketplaceSubscription(existing))
+              hasLiveMarketplaceSubscription(existing) ||
+              hasLiveAwsMarketplaceSubscription(existing) ||
+              isAwaitingAwsEntitlement(existing))
           ) {
             throw new ConflictException(
               'This account already has a paid subscription.',
