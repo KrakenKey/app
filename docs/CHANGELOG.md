@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Dates a
 
 ## [Unreleased]
 
+---
+
+## [1.0.0] - 2026-10-15
+
 ### Added
 - **Annual billing.** Pro and Business can be billed yearly (a year costs ten months). Stripe prices are keyed by plan and interval: `KK_STRIPE_PRICE_PRO_MONTHLY`, `KK_STRIPE_PRICE_PRO_YEARLY`, `KK_STRIPE_PRICE_BUSINESS_MONTHLY` and `KK_STRIPE_PRICE_BUSINESS_YEARLY`; there are no fallbacks to the old Starter and Team prices, and a plan and interval without its price isn't offered. `POST /billing/checkout`, `/billing/upgrade/preview` and `/billing/upgrade` take an optional `interval` (`month` or `year`); every upgrade is one prorated Stripe update that is invoiced at once and changes nothing unless the payment succeeds (`error_if_incomplete`, a new idempotency key per request; a declined card answers `402`), and one that changes the interval starts a new period. The preview is Stripe's preview of the same change. `POST /billing/portal` takes `flow: "switch_interval"` to open the portal on confirming a monthly/yearly switch, and `KK_STRIPE_PORTAL_CONFIGURATION_ID` can pick the portal configuration. New `GET /billing/plans` lists the plans and intervals that have a price. `GET /billing/subscription` returns `interval`. The billing page has a monthly/yearly toggle (shown once yearly prices exist), shows the interval and offers the switch. `@krakenkey/shared` gains `BillingInterval`, `PlansResponse`, `PLAN_LIST_PRICES_CENTS` and `API_ROUTES.BILLING.PLANS`. Migration `AddSubscriptionBillingInterval1791700000000` adds the nullable `subscription.billingInterval` column.
 - **Scheduled plan changes.** `GET /billing/subscription` returns `scheduledChange` (`plan`, `interval`, `effectiveAt`) when a Stripe subscription has a downgrade or a yearly-to-monthly switch waiting for the end of the period, as the billing portal schedules them, and `null` otherwise. It is read from the subscription's schedule in Stripe on each request; if Stripe can't be reached it is `null` and the rest of the response is unchanged. The billing page shows it under the current plan ("Changes to Pro, monthly on October 14, 2027") and hides the monthly/yearly switch while a change is scheduled. `@krakenkey/shared` gains `ScheduledPlanChange` and `Subscription.scheduledChange`.
@@ -39,8 +43,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Dates a
 - `/health/readiness` can check Authentik without going through its public hostname. Set the new optional `KK_AUTHENTIK_HEALTH_URL` (for example `http://authentik-server:9000/-/health/ready/`) and the check fetches that URL instead of the issuer's OIDC discovery document. Without it nothing changes. Login and JWT validation still use `KK_AUTHENTIK_ISSUER_URL`, so token issuers are unaffected. See [CONFIGURATION.md](../backend/docs/CONFIGURATION.md#authentication-authentik-oidc).
 - `GET /auth/profile` no longer counts short-lived keys (GitHub OIDC and connector keys) in `resourceCounts.apiKeys`, matching the key list and the plan limit.
 - The `POST /certs/tls/:id/renew` response now includes `"skipped": false` when a renewal is queued (`RenewTlsCertResponse.skipped` in `@krakenkey/shared`).
-
-### Changed
 - `DELETE /auth/api-keys/:id` revokes the key instead of deleting the row. A revoked key stops working immediately and frees its plan slot, and a revoked key presented for auth is logged. `GET /auth/api-keys?includeRevoked=true` lists keys revoked in the last 30 days (without the flag only active keys are returned, so existing clients are unaffected), and a daily job at 04:30 deletes older ones. The dashboard's Delete button is now Revoke, and revoked keys stay visible, dimmed, with the date. See [API_REFERENCE.md](../backend/docs/API_REFERENCE.md#delete-authapi-keysid).
 
 ### Fixed
