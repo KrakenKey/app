@@ -4,6 +4,7 @@ import { useAuth } from '../hooks/useAuth';
 import { Loader2 } from 'lucide-react';
 import { PENDING_DEVICE_CODE_KEY } from '../services/deviceAuthService';
 import { PENDING_MARKETPLACE_TOKEN_KEY } from '../services/marketplaceService';
+import { PENDING_AWS_MARKETPLACE_REGISTRATION_KEY } from '../services/awsMarketplaceService';
 
 /** Reads and forgets a value stashed in sessionStorage before sign-in. */
 function takePending(key: string): string | null {
@@ -39,6 +40,9 @@ const Callback: React.FC = () => {
         .then(() => {
           const deviceCode = takePending(PENDING_DEVICE_CODE_KEY);
           const marketplaceToken = takePending(PENDING_MARKETPLACE_TOKEN_KEY);
+          const awsRegistration = takePending(
+            PENDING_AWS_MARKETPLACE_REGISTRATION_KEY,
+          );
           if (deviceCode) {
             navigate(`/device?code=${encodeURIComponent(deviceCode)}`);
             return;
@@ -47,6 +51,13 @@ const Callback: React.FC = () => {
             // Back to the Marketplace landing page to finish the purchase.
             navigate(
               `/marketplace?token=${encodeURIComponent(marketplaceToken)}`,
+            );
+            return;
+          }
+          if (awsRegistration) {
+            // Back to the AWS Marketplace landing page to link the purchase.
+            navigate(
+              `/aws-marketplace?registration=${encodeURIComponent(awsRegistration)}`,
             );
             return;
           }

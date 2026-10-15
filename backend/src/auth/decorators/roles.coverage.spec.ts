@@ -30,6 +30,11 @@ const OPEN_TO_VIEWERS: Record<string, string> = {
   'POST /auth/device/approve': "the caller's own credentials",
   'POST /auth/device/deny': "the caller's own credentials",
   'POST /auth/github-oidc/trusts': "the caller's own credentials",
+  'DELETE /billing/aws-marketplace/pending':
+    'AwsMarketplaceService allows only the org owner',
+  'POST /billing/aws-marketplace/link':
+    'AwsMarketplaceService allows only the org owner',
+  'POST /billing/aws-marketplace/resolve': 'read-only purchase lookup',
   'POST /billing/checkout': 'BillingService allows only the org owner',
   'POST /billing/marketplace/activate':
     'MarketplaceService allows only the org owner',

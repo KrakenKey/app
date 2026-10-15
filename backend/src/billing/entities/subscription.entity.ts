@@ -67,34 +67,61 @@ export class Subscription {
   pastDueSince: Date | null;
 
   /**
-   * Who bills this subscription: 'stripe' (direct) or 'marketplace'
-   * (Microsoft Marketplace SaaS offer). Rows written before Marketplace
-   * support are 'stripe'.
+   * Who bills this subscription: 'stripe' (direct), 'marketplace'
+   * (Microsoft Marketplace SaaS offer) or 'aws_marketplace' (AWS Marketplace
+   * SaaS contract). Rows written before Marketplace support are 'stripe'.
    */
   @Column({ type: 'varchar', default: 'stripe' })
-  source: 'stripe' | 'marketplace';
+  source: 'stripe' | 'marketplace' | 'aws_marketplace';
 
-  /** Microsoft's SaaS subscription id. Unique when set. */
+  /**
+   * Microsoft's SaaS subscription id, or the AWS Marketplace license ARN.
+   * Unique when set.
+   */
   @ApiHideProperty()
   @Column({ type: 'varchar', nullable: true, default: null })
   marketplaceSubscriptionId: string | null;
 
+  /** Microsoft's offer id, or the AWS Marketplace product code. */
   @ApiHideProperty()
   @Column({ type: 'varchar', nullable: true, default: null })
   marketplaceOfferId: string | null;
 
-  /** The Marketplace plan id; `plan` holds the KrakenKey plan it maps to. */
+  /**
+   * The Marketplace plan id (Microsoft) or contract dimension (AWS); `plan`
+   * holds the KrakenKey plan it maps to.
+   */
   @ApiHideProperty()
   @Column({ type: 'varchar', nullable: true, default: null })
   marketplacePlanId: string | null;
 
-  /** Microsoft's status: PendingFulfillmentStart, Subscribed, Suspended or Unsubscribed. */
+  /**
+   * Microsoft's status (PendingFulfillmentStart, Subscribed, Suspended or
+   * Unsubscribed), or for AWS the license status KrakenKey derives from
+   * GetEntitlements: pending, active or ended.
+   */
   @Column({ type: 'varchar', nullable: true, default: null })
   marketplaceStatus: string | null;
 
   @ApiHideProperty()
   @Column({ type: 'integer', nullable: true, default: null })
   marketplaceQuantity: number | null;
+
+  /** The buyer's AWS account id, for an AWS Marketplace license. */
+  @ApiHideProperty()
+  @Index('IDX_subscription_awsCustomerAccountId')
+  @Column({ type: 'varchar', nullable: true, default: null })
+  awsCustomerAccountId: string | null;
+
+  /**
+   * The AWS Marketplace agreement behind the license, as last reported by
+   * ResolveCustomer or a License Updated event. Agreement events carry only
+   * this id, not the license ARN.
+   */
+  @ApiHideProperty()
+  @Index('IDX_subscription_awsAgreementId')
+  @Column({ type: 'varchar', nullable: true, default: null })
+  awsAgreementId: string | null;
 
   @ManyToOne(() => User, { onDelete: 'CASCADE', nullable: true })
   @JoinColumn({ name: 'userId' })

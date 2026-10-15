@@ -27,7 +27,11 @@
     "openapi:export": "ts-node -r tsconfig-paths/register scripts/export-openapi.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-marketplace-entitlement-service": "^3.1146.0",
+    "@aws-sdk/client-marketplace-metering": "^3.1146.0",
     "@aws-sdk/client-route-53": "^3.1146.0",
+    "@aws-sdk/client-sqs": "^3.1146.0",
+    "@aws-sdk/credential-providers": "^3.1146.0",
     "@krakenkey/shared": "file:../shared",
     "@nest-lab/throttler-storage-redis": "^1.2.0",
     "@nestjs/axios": "^4.0.1",

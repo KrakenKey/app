@@ -1,6 +1,6 @@
 # Billing & Subscriptions
 
-KrakenKey uses Stripe for subscription management with four plans that control feature access and resource limits. Pro, Business and Enterprise (through private offers) can also be bought through Microsoft Marketplace (see [Microsoft Marketplace](#microsoft-marketplace)).
+KrakenKey uses Stripe for subscription management with four plans that control feature access and resource limits. Pro, Business and Enterprise (through private offers) can also be bought through Microsoft Marketplace (see [Microsoft Marketplace](#microsoft-marketplace)) and AWS Marketplace (see [AWS Marketplace](#aws-marketplace)).
 
 ## Plans
 
@@ -273,6 +273,17 @@ Off unless `KK_MARKETPLACE_ENABLED=true`. A subscription row has a `source`: `st
 
 `GET /billing/subscription` returns `source` and `marketplaceStatus` (Microsoft's status, `null` for Stripe).
 
+## AWS Marketplace
+
+New purchases are off unless `KK_AWS_MARKETPLACE_ENABLED=true` (with product codes set); existing AWS subscriptions keep being followed either way. AWS-billed rows have `source` `aws_marketplace`. Setup, the fulfillment URL, the landing page, events and the reconcile job are described in [Integrations](./INTEGRATIONS.md#aws-marketplace-billing).
+
+- **One live subscription per account across all sources.** `POST /billing/checkout` answers `409` while an AWS license is `active`, or linked and waiting for its entitlement (for as long as it waits). The owner can remove a pending link on the billing page (`DELETE /billing/aws-marketplace/pending`); that doesn't cancel anything in AWS. The landing page refuses to link a purchase for an account with a live Stripe, Microsoft or other AWS subscription, and the Microsoft landing page refuses one for an account AWS bills. `POST /billing/portal`, `/billing/upgrade/preview` and `/billing/upgrade` answer `409` while AWS bills the account. A Stripe checkout that completes after AWS started billing is canceled like any duplicate.
+- **Entitlement.** Copied from `GetEntitlements`: a current entitlement is `active` with the plan its dimension maps to and `currentPeriodEnd` set to the contract's expiration (renewal) date. Upgrades to a higher tier apply when AWS reports them. When the contract ends or AWS deprovisions the license the account drops to Free at once. Contracts are paid up front, so there is no `past_due` state. `effectivePlan()` and `entitledSubscriptionSql()` also stop applying the plan 24 hours after `currentPeriodEnd` (`AWS_EXPIRATION_GRACE_MS`), so the plan can't outlive its paid term if AWS can't be reached.
+- **Billing page.** An AWS-billed subscription shows "Billed through AWS Marketplace" and a link to the AWS Marketplace console (`https://console.aws.amazon.com/marketplace/home#/subscriptions`) instead of the Stripe portal and upgrade buttons. A linked purchase waiting for AWS says so, and the owner gets "Remove pending AWS purchase" with a confirmation that explains nothing is canceled in AWS.
+- A later Stripe checkout on an account whose AWS license ended clears the Marketplace and AWS fields and sets `source` back to `stripe`.
+
+For AWS rows `marketplaceStatus` is KrakenKey's license status: `pending` (linked, waiting for AWS), `active` or `ended`. `interval` is `null`.
+
 ## Organization Billing
 
 Organizations have their own billing relationship:
@@ -324,14 +335,16 @@ The error message names the owner, both subscription IDs and the organization, b
 | `plan` | varchar | Plan id (`free`, `pro`, `business`, `enterprise`) |
 | `status` | varchar | Subscription status |
 | `billingInterval` | varchar | `month` or `year` for a Stripe subscription; null otherwise and for rows from before annual billing |
-| `stripeCustomerId` | varchar | Stripe customer ID; null for an account that only bought through Microsoft |
+| `stripeCustomerId` | varchar | Stripe customer ID; null for an account that only bought through a marketplace |
 | `stripeSubscriptionId` | varchar | Stripe subscription ID (unique, indexed) |
-| `source` | varchar | `stripe` (default) or `marketplace` |
-| `marketplaceSubscriptionId` | varchar | Microsoft SaaS subscription ID (unique when set) |
-| `marketplaceOfferId` | varchar | Marketplace offer ID |
-| `marketplacePlanId` | varchar | Marketplace plan ID; `plan` holds the KrakenKey plan it maps to |
-| `marketplaceStatus` | varchar | Microsoft's status: `Subscribed`, `Suspended` or `Unsubscribed` |
-| `marketplaceQuantity` | integer | Purchased quantity, if any |
+| `source` | varchar | `stripe` (default), `marketplace` (Microsoft) or `aws_marketplace` |
+| `marketplaceSubscriptionId` | varchar | Microsoft SaaS subscription ID, or AWS license ARN (unique when set) |
+| `marketplaceOfferId` | varchar | Microsoft offer ID, or AWS product code |
+| `marketplacePlanId` | varchar | Microsoft plan ID or AWS contract dimension; `plan` holds the KrakenKey plan it maps to |
+| `marketplaceStatus` | varchar | Microsoft's status (`Subscribed`, `Suspended` or `Unsubscribed`), or for AWS `pending`, `active` or `ended` |
+| `marketplaceQuantity` | integer | Purchased quantity, if any (Microsoft) |
+| `awsCustomerAccountId` | varchar | Buyer's AWS account ID (indexed) |
+| `awsAgreementId` | varchar | AWS Marketplace agreement behind the license (indexed); agreement events are matched on it |
 | `currentPeriodStart` | timestamp | Current billing period start |
 | `currentPeriodEnd` | timestamp | Current billing period end |
 | `userId` | varchar | Owner user ID (nullable, indexed) |

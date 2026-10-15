@@ -10,9 +10,11 @@ const {
   mockCreatePortalSession,
   mockPreviewUpgrade,
   mockUpgradeSubscription,
+  mockRemovePendingAws,
   authState,
   healthState,
 } = vi.hoisted(() => ({
+  mockRemovePendingAws: vi.fn(),
   mockFetchSubscription: vi.fn(),
   mockFetchPlans: vi.fn(),
   mockCreateCheckout: vi.fn(),
@@ -53,6 +55,11 @@ vi.mock('../../hooks/useHealth', () => ({
       domains: 'loaded',
     },
   }),
+}));
+
+vi.mock('../../services/awsMarketplaceService', async () => ({
+  ...(await vi.importActual('../../services/awsMarketplaceService')),
+  removePendingAwsPurchase: mockRemovePendingAws,
 }));
 
 vi.mock('../../services/billingService', () => ({
@@ -837,6 +844,154 @@ describe('Billing', () => {
       ).toBeInTheDocument();
       expect(
         screen.queryByText(/Billed through Microsoft/),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  describe('billed through AWS Marketplace', () => {
+    const aws = (
+      plan: string,
+      status = 'active',
+      marketplaceStatus = 'active',
+    ) => ({
+      ...sub(plan),
+      status,
+      source: 'aws_marketplace',
+      marketplaceStatus,
+      interval: null,
+    });
+
+    it('says AWS bills it and links to the AWS Marketplace console instead of Stripe', async () => {
+      mockFetchSubscription.mockResolvedValue(aws('business'));
+      render(<Billing />);
+
+      expect(
+        await screen.findByText(/Billed through AWS Marketplace/),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole('link', { name: /manage in aws marketplace/i }),
+      ).toHaveAttribute(
+        'href',
+        'https://console.aws.amazon.com/marketplace/home#/subscriptions',
+      );
+      expect(
+        screen.queryByRole('button', { name: /manage subscription/i }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /upgrade to/i }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /switch to/i }),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText('$149/mo')).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(/Billed through Microsoft/),
+      ).not.toBeInTheDocument();
+    });
+
+    it('shows a linked purchase waiting for AWS without Stripe actions', async () => {
+      mockFetchSubscription.mockResolvedValue(
+        aws('free', 'incomplete', 'pending'),
+      );
+      render(<Billing />);
+
+      expect(
+        await screen.findByText(/waiting for AWS to confirm it/),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /upgrade to/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('lets the owner remove a pending purchase after explaining AWS is not canceled', async () => {
+      const user = userEvent.setup();
+      mockFetchSubscription
+        .mockResolvedValueOnce(aws('free', 'incomplete', 'pending'))
+        .mockResolvedValueOnce(sub('free'));
+      mockRemovePendingAws.mockResolvedValue(undefined);
+      render(<Billing />);
+
+      await user.click(
+        await screen.findByRole('button', {
+          name: 'Remove pending AWS purchase',
+        }),
+      );
+      expect(
+        screen.getByText(/doesn't cancel anything in AWS/),
+      ).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Remove' }));
+      await waitFor(() => expect(mockRemovePendingAws).toHaveBeenCalled());
+      expect(
+        await screen.findByRole('button', { name: 'Upgrade to Pro' }),
+      ).toBeInTheDocument();
+    });
+
+    it('shows why a pending purchase could not be removed', async () => {
+      const user = userEvent.setup();
+      mockFetchSubscription.mockResolvedValue(
+        aws('free', 'incomplete', 'pending'),
+      );
+      mockRemovePendingAws.mockRejectedValue(
+        new AxiosError('conflict', '409', undefined, undefined, {
+          status: 409,
+          statusText: 'Conflict',
+          headers: {},
+          config: { headers: new AxiosHeaders() },
+          data: {
+            message:
+              'This account has no AWS Marketplace purchase waiting for AWS.',
+          },
+        }),
+      );
+      render(<Billing />);
+
+      await user.click(
+        await screen.findByRole('button', {
+          name: 'Remove pending AWS purchase',
+        }),
+      );
+      await user.click(screen.getByRole('button', { name: 'Remove' }));
+      expect(
+        await screen.findByText(/no AWS Marketplace purchase waiting/),
+      ).toBeInTheDocument();
+    });
+
+    it('does not offer removal to org members', async () => {
+      authState.user = { organizationId: 'org_001', role: 'member' };
+      mockFetchSubscription.mockResolvedValue(
+        aws('free', 'incomplete', 'pending'),
+      );
+      render(<Billing />);
+      expect(
+        await screen.findByText(/waiting for AWS to confirm it/),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: 'Remove pending AWS purchase' }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('hides the console link from org members', async () => {
+      authState.user = { organizationId: 'org_001', role: 'member' };
+      mockFetchSubscription.mockResolvedValue(aws('business'));
+      render(<Billing />);
+
+      expect(
+        await screen.findByText(/managed by its owner/i),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole('link', { name: /manage in aws marketplace/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('offers Stripe upgrades again after the AWS contract ended', async () => {
+      mockFetchSubscription.mockResolvedValue(aws('free', 'canceled', 'ended'));
+      render(<Billing />);
+
+      expect(
+        await screen.findByRole('button', { name: 'Upgrade to Pro' }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText(/Billed through AWS Marketplace/),
       ).not.toBeInTheDocument();
     });
   });

@@ -29,6 +29,10 @@ import {
 } from '../services/billingService';
 import { AZURE_PORTAL_SAAS_URL } from '../services/marketplaceService';
 import {
+  AWS_MARKETPLACE_CONSOLE_URL,
+  removePendingAwsPurchase,
+} from '../services/awsMarketplaceService';
+import {
   formatLimit,
   planLimits,
   upgradeHint,
@@ -203,6 +207,8 @@ export default function Billing() {
     preview: UpgradePreviewResponse;
   } | null>(null);
   const [upgradeError, setUpgradeError] = useState<string | null>(null);
+  const [removeAwsOpen, setRemoveAwsOpen] = useState(false);
+  const [removeAwsError, setRemoveAwsError] = useState<string | null>(null);
   // Plans with a Stripe price here, to offer yearly billing only once it is set up
   const [purchasable, setPurchasable] = useState<PurchasablePlan[]>([]);
   const [chosenInterval, setChosenInterval] = useState<BillingInterval | null>(
@@ -215,6 +221,27 @@ export default function Billing() {
       .then((res) => setPurchasable(res.plans))
       .catch(() => setPurchasable([]));
   }, []);
+
+  async function handleRemovePendingAws() {
+    setActionLoading(true);
+    setRemoveAwsError(null);
+    try {
+      await removePendingAwsPurchase();
+      setRemoveAwsOpen(false);
+      await loadSubscription();
+    } catch (err) {
+      const msg = axios.isAxiosError(err)
+        ? err.response?.data?.message
+        : undefined;
+      setRemoveAwsError(
+        typeof msg === 'string'
+          ? msg
+          : 'Something went wrong. Try again in a minute.',
+      );
+    } finally {
+      setActionLoading(false);
+    }
+  }
 
   async function loadSubscription() {
     try {
@@ -244,7 +271,9 @@ export default function Billing() {
   // A downgrade or interval switch made in the Stripe portal that waits for
   // the end of the period. A pending cancellation is shown on its own.
   const scheduledChange =
-    subscription?.source !== 'marketplace' && !isCanceling
+    subscription?.source !== 'marketplace' &&
+    subscription?.source !== 'aws_marketplace' &&
+    !isCanceling
       ? (subscription?.scheduledChange ?? null)
       : null;
   // Microsoft bills Marketplace subscriptions: plan changes, payment and
@@ -252,6 +281,16 @@ export default function Billing() {
   const billedByMicrosoft =
     subscription?.source === 'marketplace' &&
     (subscription.status === 'active' || subscription.status === 'past_due');
+  // Same for AWS Marketplace, which bills and cancels in the AWS console.
+  // A purchase linked here that AWS hasn't confirmed yet counts too, so no
+  // Stripe checkout is started on top of it.
+  const awsPending =
+    subscription?.source === 'aws_marketplace' &&
+    subscription.marketplaceStatus === 'pending';
+  const billedByAws =
+    subscription?.source === 'aws_marketplace' &&
+    subscription.status === 'active';
+  const billedElsewhere = billedByMicrosoft || billedByAws || awsPending;
   // The API only lets the owner manage an org's subscription, so other
   // members get a read-only view instead of buttons that would return 403.
   const canManageBilling = !user?.organizationId || user.role === 'owner';
@@ -281,7 +320,7 @@ export default function Billing() {
     orgMembers: user?.organizationId ? (counts?.orgMembers ?? null) : undefined,
   });
 
-  const canChangePlanHere = canManageBilling && !billedByMicrosoft;
+  const canChangePlanHere = canManageBilling && !billedElsewhere;
   // Only plans with a Stripe price here: a plan without one can't be bought
   const upgradeTargets = canChangePlanHere
     ? (UPGRADE_TARGETS[plan] ?? []).filter((p) =>
@@ -303,7 +342,7 @@ export default function Billing() {
     isPaid &&
     !scheduledChange &&
     canManageBilling &&
-    !billedByMicrosoft &&
+    !billedElsewhere &&
     subscription?.status === 'active' &&
     !!subscription?.interval &&
     purchasable.some(
@@ -449,7 +488,7 @@ export default function Billing() {
               <ExternalLink className="w-4 h-4" />
             </a>
           )}
-          {canManageBilling && !billedByMicrosoft && (
+          {canManageBilling && !billedElsewhere && (
             <Button
               variant="primary"
               icon={<ExternalLink className="w-4 h-4" />}
@@ -475,7 +514,7 @@ export default function Billing() {
                 {planLabel}
               </span>
               {isPaid &&
-                !billedByMicrosoft &&
+                !billedElsewhere &&
                 planPrice(plan, currentInterval) && (
                   <span className="text-sm text-text-muted tabular-nums">
                     {planPrice(plan, currentInterval)}
@@ -497,6 +536,31 @@ export default function Billing() {
                 Billed through Microsoft. Change your plan, payment method or
                 cancel in the Azure portal.
               </p>
+            )}
+            {billedByAws && (
+              <p className="text-sm text-text-secondary mt-2">
+                Billed through AWS Marketplace. Change your plan or cancel in
+                the AWS Marketplace console.
+              </p>
+            )}
+            {awsPending && (
+              <p className="text-sm text-text-secondary mt-2">
+                Your AWS Marketplace purchase is linked and waiting for AWS to
+                confirm it. The plan applies automatically, usually within a few
+                minutes. While it waits, plans can&apos;t be bought here.
+              </p>
+            )}
+            {awsPending && canManageBilling && (
+              <button
+                type="button"
+                onClick={() => {
+                  setRemoveAwsError(null);
+                  setRemoveAwsOpen(true);
+                }}
+                className="mt-2 cursor-pointer border-none bg-transparent p-0 text-sm text-cyan-300 hover:text-cyan-200"
+              >
+                Remove pending AWS purchase
+              </button>
             )}
             {isPaid && subscription?.currentPeriodEnd && (
               <p className="text-sm text-text-muted mt-2">
@@ -533,6 +597,17 @@ export default function Billing() {
               </p>
             )}
           </div>
+          {(billedByAws || awsPending) && canManageBilling && (
+            <a
+              href={AWS_MARKETPLACE_CONSOLE_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex h-9 items-center justify-center gap-2 self-start rounded-lg border border-border-strong bg-surface-elevated px-3.5 text-sm font-medium text-text transition-colors hover:border-[#4a5b78] hover:bg-[#2e3c55] sm:self-auto"
+            >
+              <ExternalLink className="w-4 h-4" />
+              Manage in AWS Marketplace
+            </a>
+          )}
           {billedByMicrosoft && canManageBilling && (
             <a
               href={AZURE_PORTAL_SAAS_URL}
@@ -544,7 +619,7 @@ export default function Billing() {
               Manage in Azure portal
             </a>
           )}
-          {isPaid && canManageBilling && !billedByMicrosoft && (
+          {isPaid && canManageBilling && !billedElsewhere && (
             <Button
               variant="secondary"
               icon={<ExternalLink className="w-4 h-4" />}
@@ -651,6 +726,42 @@ export default function Billing() {
           )}
         </section>
       )}
+
+      {/* Remove a pending AWS Marketplace purchase */}
+      <Modal
+        open={removeAwsOpen}
+        onClose={() => setRemoveAwsOpen(false)}
+        title="Remove pending AWS purchase"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-zinc-300">
+            This unlinks the AWS Marketplace purchase from this{' '}
+            {user?.organizationId ? 'organization' : 'account'}, so you can
+            subscribe here instead. It doesn&apos;t cancel anything in AWS: if
+            you no longer want the AWS subscription, cancel it in the AWS
+            Marketplace console too, or AWS keeps billing for it.
+          </p>
+          {removeAwsError && (
+            <p className="text-sm text-red-400">{removeAwsError}</p>
+          )}
+          <div className="flex gap-3 justify-end pt-2">
+            <Button
+              variant="secondary"
+              onClick={() => setRemoveAwsOpen(false)}
+              disabled={actionLoading}
+            >
+              Keep it
+            </Button>
+            <Button
+              variant="primary"
+              onClick={handleRemovePendingAws}
+              disabled={actionLoading}
+            >
+              {actionLoading ? 'Removing...' : 'Remove'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Upgrade Confirmation Modal */}
       <Modal

@@ -28,7 +28,19 @@ export const ORG_ELIGIBLE_PLANS: ReadonlySet<string> = new Set(ORG_PLANS);
 export const ORG_MIN_PLAN_LABEL = PLAN_LABELS[ORG_PLANS[0]];
 
 type SourceFields = Pick<Subscription, 'stripeSubscriptionId' | 'status'> &
-  Partial<Pick<Subscription, 'source' | 'marketplaceSubscriptionId'>>;
+  Partial<
+    Pick<
+      Subscription,
+      'source' | 'marketplaceSubscriptionId' | 'marketplaceStatus'
+    >
+  >;
+
+/** True for a subscription billed by Microsoft or AWS Marketplace. */
+export function isMarketplaceSource(
+  source: Subscription['source'] | null | undefined,
+): boolean {
+  return source === 'marketplace' || source === 'aws_marketplace';
+}
 
 /** True when the row points at a Stripe subscription that is still live. */
 export function hasLiveStripeSubscription(
@@ -36,7 +48,7 @@ export function hasLiveStripeSubscription(
 ): boolean {
   return (
     !!sub?.stripeSubscriptionId &&
-    sub.source !== 'marketplace' &&
+    !isMarketplaceSource(sub.source) &&
     LIVE_STRIPE_STATUSES.has(sub.status ?? '')
   );
 }
@@ -79,3 +91,54 @@ export function isActivatingMarketplacePurchase(
 /** 409 message for a Stripe checkout while Microsoft bills the account. */
 export const BILLED_BY_MICROSOFT_MESSAGE =
   'Your subscription is billed through Microsoft. Change or cancel it in the Azure portal instead of starting a checkout here.';
+
+/** True when the row is an AWS Marketplace license with a current entitlement. */
+export function hasLiveAwsMarketplaceSubscription(
+  sub: SourceFields | null | undefined,
+): boolean {
+  return (
+    sub?.source === 'aws_marketplace' &&
+    !!sub.marketplaceSubscriptionId &&
+    sub.marketplaceStatus === 'active' &&
+    sub.status === 'active'
+  );
+}
+
+/**
+ * True while an AWS Marketplace purchase linked here waits for its
+ * entitlement. It keeps a Stripe checkout from starting for as long as it
+ * is pending, so the account is never billed twice; the owner can remove
+ * the pending link from the billing page (DELETE
+ * /billing/aws-marketplace/pending) to bill another way.
+ */
+export function isAwaitingAwsEntitlement(
+  sub: Pick<Subscription, 'source' | 'marketplaceStatus'> | null | undefined,
+): boolean {
+  return (
+    sub?.source === 'aws_marketplace' && sub.marketplaceStatus === 'pending'
+  );
+}
+
+/**
+ * The marketplace that bills this row right now, or null when none does
+ * (Stripe, the free plan, or a marketplace subscription that ended).
+ */
+export function liveMarketplaceBiller(
+  sub: SourceFields | null | undefined,
+): 'microsoft' | 'aws' | null {
+  if (hasLiveMarketplaceSubscription(sub)) return 'microsoft';
+  if (hasLiveAwsMarketplaceSubscription(sub)) return 'aws';
+  return null;
+}
+
+/** AWS Marketplace console page where buyers manage their subscriptions. */
+export const AWS_MARKETPLACE_CONSOLE_URL =
+  'https://console.aws.amazon.com/marketplace/home#/subscriptions';
+
+/** 409 message for a Stripe checkout while AWS Marketplace bills the account. */
+export const BILLED_BY_AWS_MESSAGE =
+  'Your subscription is billed through AWS Marketplace. Change or cancel it in the AWS Marketplace console instead of starting a checkout here.';
+
+/** 409 message for a Stripe checkout while an AWS purchase waits for its entitlement. */
+export const AWAITING_AWS_MESSAGE =
+  'An AWS Marketplace purchase is linked to this account and waiting for AWS to confirm it. Wait a few minutes, or remove the pending purchase on the billing page to subscribe here instead.';

@@ -91,6 +91,24 @@ describe('Callback', () => {
     expect(sessionStorage.getItem('kk_pending_marketplace_token')).toBeNull();
   });
 
+  it('returns to the AWS Marketplace landing page with the registration', async () => {
+    sessionStorage.setItem(
+      'kk_pending_aws_marketplace_registration',
+      'AbC_-123',
+    );
+    mockHandleCallback.mockResolvedValue(undefined);
+    render(<Callback />);
+
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith(
+        '/aws-marketplace?registration=AbC_-123',
+      );
+    });
+    expect(
+      sessionStorage.getItem('kk_pending_aws_marketplace_registration'),
+    ).toBeNull();
+  });
+
   it('navigates to home on callback error', async () => {
     mockHandleCallback.mockRejectedValue(new Error('Auth failed'));
     render(<Callback />);

@@ -6,6 +6,7 @@ import { UsersController } from '../../users/users.controller';
 import { OrganizationsController } from '../../organizations/organizations.controller';
 import { BillingController } from '../../billing/billing.controller';
 import { MarketplaceController } from '../../billing/marketplace/marketplace.controller';
+import { AwsMarketplaceController } from '../../billing/aws-marketplace/aws-marketplace.controller';
 import { DomainsController } from '../../domains/domains.controller';
 import { TlsController } from '../../certs/tls/tls.controller';
 import { EndpointsController } from '../../endpoints/endpoints.controller';
@@ -20,6 +21,7 @@ const controllers = [
   OrganizationsController,
   BillingController,
   MarketplaceController,
+  AwsMarketplaceController,
   DomainsController,
   TlsController,
   EndpointsController,
@@ -63,6 +65,9 @@ describe('@SessionOnly routes', () => {
         'POST /billing/upgrade',
         'POST /billing/marketplace/resolve',
         'POST /billing/marketplace/activate',
+        'POST /billing/aws-marketplace/resolve',
+        'POST /billing/aws-marketplace/link',
+        'DELETE /billing/aws-marketplace/pending',
         'POST /auth/github-oidc/trusts',
         'DELETE /auth/github-oidc/trusts/:id',
         'POST /connectors',

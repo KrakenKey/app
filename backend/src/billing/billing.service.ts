@@ -39,12 +39,18 @@ import {
 } from './entitlement';
 import { StripePriceMap, type PlanPrice } from './stripe-prices';
 import {
+  AWAITING_AWS_MESSAGE,
+  BILLED_BY_AWS_MESSAGE,
   BILLED_BY_MICROSOFT_MESSAGE,
   LIVE_STRIPE_STATUSES,
   ORG_ELIGIBLE_PLANS,
+  hasLiveAwsMarketplaceSubscription,
   hasLiveMarketplaceSubscription,
   hasLiveStripeSubscription,
   isActivatingMarketplacePurchase,
+  isAwaitingAwsEntitlement,
+  isMarketplaceSource,
+  liveMarketplaceBiller,
 } from './subscription-source';
 
 /** An upgrade worked out against the subscription's current Stripe item. */
@@ -148,11 +154,40 @@ function isStripeError(
 
 /**
  * True when someone still bills for the subscription: a Stripe subscription
- * that has not ended, or a live Microsoft Marketplace subscription.
+ * that has not ended, or a live Microsoft or AWS Marketplace subscription.
  */
 function isBillingLive(sub: Subscription): boolean {
   if (sub.source === 'marketplace') return hasLiveMarketplaceSubscription(sub);
+  if (sub.source === 'aws_marketplace') {
+    return hasLiveAwsMarketplaceSubscription(sub);
+  }
   return !!sub.stripeSubscriptionId && !ENDED_STRIPE_STATUSES.has(sub.status);
+}
+
+/**
+ * The 409 for a Stripe portal, upgrade or plan change on a subscription a
+ * marketplace bills, or null when Stripe bills it (or nothing does).
+ */
+function marketplaceBilledError(
+  sub: Subscription | null,
+  action: 'manage' | 'change',
+): ConflictException | null {
+  switch (liveMarketplaceBiller(sub)) {
+    case 'microsoft':
+      return new ConflictException(
+        action === 'manage'
+          ? 'Your subscription is billed through Microsoft. Manage it in the Azure portal.'
+          : 'Your subscription is billed through Microsoft. Change your plan in the Azure portal.',
+      );
+    case 'aws':
+      return new ConflictException(
+        action === 'manage'
+          ? 'Your subscription is billed through AWS Marketplace. Manage it in the AWS Marketplace console.'
+          : 'Your subscription is billed through AWS Marketplace. Change your plan in the AWS Marketplace console.',
+      );
+    default:
+      return null;
+  }
 }
 
 @Injectable()
@@ -361,10 +396,16 @@ export class BillingService {
     if (hasLiveMarketplaceSubscription(existing)) {
       throw new ConflictException(BILLED_BY_MICROSOFT_MESSAGE);
     }
+    if (hasLiveAwsMarketplaceSubscription(existing)) {
+      throw new ConflictException(BILLED_BY_AWS_MESSAGE);
+    }
     if (isActivatingMarketplacePurchase(existing)) {
       throw new ConflictException(
         'A Microsoft Marketplace purchase is being activated for this account. Wait a few minutes, then check the billing page.',
       );
+    }
+    if (isAwaitingAwsEntitlement(existing)) {
+      throw new ConflictException(AWAITING_AWS_MESSAGE);
     }
     if (hasLiveStripeSubscription(existing)) {
       throw new ConflictException(
@@ -428,11 +469,8 @@ export class BillingService {
     await this.assertBillingAccess(userId);
 
     const sub = await this.getSubscription(userId);
-    if (hasLiveMarketplaceSubscription(sub)) {
-      throw new ConflictException(
-        'Your subscription is billed through Microsoft. Manage it in the Azure portal.',
-      );
-    }
+    const billedElsewhere = marketplaceBilledError(sub, 'manage');
+    if (billedElsewhere) throw billedElsewhere;
     if (!sub?.stripeCustomerId) {
       throw new NotFoundException('No subscription record found');
     }
@@ -688,7 +726,7 @@ export class BillingService {
   ): Promise<ScheduledPlanChange | null> {
     if (
       !sub ||
-      sub.source === 'marketplace' ||
+      isMarketplaceSource(sub.source) ||
       !isBillingLive(sub) ||
       sub.cancelAtPeriodEnd
     ) {
@@ -798,11 +836,8 @@ export class BillingService {
     newPlan: string,
   ): Promise<Subscription> {
     const sub = await this.getSubscription(userId);
-    if (hasLiveMarketplaceSubscription(sub)) {
-      throw new ConflictException(
-        'Your subscription is billed through Microsoft. Change your plan in the Azure portal.',
-      );
-    }
+    const billedElsewhere = marketplaceBilledError(sub, 'change');
+    if (billedElsewhere) throw billedElsewhere;
     if (!sub || !sub.stripeSubscriptionId) {
       throw new NotFoundException('No active subscription found');
     }
@@ -1038,6 +1073,7 @@ export class BillingService {
           sub.stripeSubscriptionId = null;
           if (sub.source === 'marketplace')
             sub.marketplaceStatus = 'Unsubscribed';
+          if (sub.source === 'aws_marketplace') sub.marketplaceStatus = 'ended';
           sub.currentPeriodEnd = null;
           sub.cancelAtPeriodEnd = false;
           sub.pastDueSince = null;
@@ -1138,12 +1174,12 @@ export class BillingService {
       return;
     }
 
-    if (sub && hasLiveMarketplaceSubscription(sub)) {
-      // Microsoft started billing this account (Marketplace) after the
-      // checkout was opened. Keep the Marketplace subscription.
+    if (sub && liveMarketplaceBiller(sub)) {
+      // Microsoft or AWS started billing this account (Marketplace) after
+      // the checkout was opened. Keep the Marketplace subscription.
       await this.cancelDuplicateSubscription(
         owner,
-        `marketplace:${sub.marketplaceSubscriptionId}`,
+        `${sub.source}:${sub.marketplaceSubscriptionId}`,
         stripeSubscriptionId,
         session.id,
       );
@@ -1184,6 +1220,8 @@ export class BillingService {
       marketplacePlanId: null,
       marketplaceStatus: null,
       marketplaceQuantity: null,
+      awsCustomerAccountId: null,
+      awsAgreementId: null,
       plan: paid?.plan ?? plan,
       billingInterval:
         paid?.interval ??
@@ -1201,10 +1239,10 @@ export class BillingService {
       const latest = await this.subscriptionRepository.findOne({
         where: { id: sub.id },
       });
-      if (hasLiveMarketplaceSubscription(latest)) {
+      if (liveMarketplaceBiller(latest)) {
         await this.cancelDuplicateSubscription(
           owner,
-          `marketplace:${latest!.marketplaceSubscriptionId}`,
+          `${latest!.source}:${latest!.marketplaceSubscriptionId}`,
           stripeSubscriptionId,
           session.id,
         );

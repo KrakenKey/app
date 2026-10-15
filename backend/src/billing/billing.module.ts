@@ -15,6 +15,13 @@ import { MarketplaceFulfillmentClient } from './marketplace/marketplace-fulfillm
 import { MarketplaceService } from './marketplace/marketplace.service';
 import { MarketplaceWebhookVerifier } from './marketplace/marketplace-webhook.verifier';
 import { PlanLimitsService } from './limits/plan-limits.service';
+import { AwsMarketplaceRegistration } from './aws-marketplace/entities/aws-marketplace-registration.entity';
+import { AwsMarketplaceConfig } from './aws-marketplace/aws-marketplace.config';
+import { AwsMarketplaceClient } from './aws-marketplace/aws-marketplace.client';
+import { AwsMarketplaceService } from './aws-marketplace/aws-marketplace.service';
+import { AwsMarketplaceController } from './aws-marketplace/aws-marketplace.controller';
+import { AwsMarketplaceEventConsumer } from './aws-marketplace/aws-marketplace.consumer';
+import { AwsMarketplaceReconciler } from './aws-marketplace/aws-marketplace.reconciler';
 import { Connector } from '../connectors/entities/connector.entity';
 import { NotificationChannel } from '../notifications/channels/entities/notification-channel.entity';
 import { GithubOidcTrust } from '../auth/entities/github-oidc-trust.entity';
@@ -26,6 +33,7 @@ import { GithubOidcTrust } from '../auth/entities/github-oidc-trust.entity';
       User,
       Organization,
       MarketplaceOperation,
+      AwsMarketplaceRegistration,
       Connector,
       NotificationChannel,
       GithubOidcTrust,
@@ -34,7 +42,11 @@ import { GithubOidcTrust } from '../auth/entities/github-oidc-trust.entity';
       name: 'orgDissolution',
     }),
   ],
-  controllers: [BillingController, MarketplaceController],
+  controllers: [
+    BillingController,
+    MarketplaceController,
+    AwsMarketplaceController,
+  ],
   providers: [
     BillingService,
     SubscriptionTierResolver,
@@ -43,6 +55,11 @@ import { GithubOidcTrust } from '../auth/entities/github-oidc-trust.entity';
     MarketplaceFulfillmentClient,
     MarketplaceWebhookVerifier,
     MarketplaceService,
+    AwsMarketplaceConfig,
+    AwsMarketplaceClient,
+    AwsMarketplaceService,
+    AwsMarketplaceEventConsumer,
+    AwsMarketplaceReconciler,
     PlanLimitsService,
   ],
   exports: [BillingService, SubscriptionTierResolver, PlanLimitsService],

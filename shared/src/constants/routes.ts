@@ -69,6 +69,11 @@ export const API_ROUTES = {
     MARKETPLACE_RESOLVE: '/billing/marketplace/resolve',
     MARKETPLACE_ACTIVATE: '/billing/marketplace/activate',
     MARKETPLACE_WEBHOOK: '/billing/marketplace/webhook',
+    AWS_MARKETPLACE_STATUS: '/billing/aws-marketplace/status',
+    AWS_MARKETPLACE_REGISTER: '/billing/aws-marketplace/register',
+    AWS_MARKETPLACE_RESOLVE: '/billing/aws-marketplace/resolve',
+    AWS_MARKETPLACE_LINK: '/billing/aws-marketplace/link',
+    AWS_MARKETPLACE_PENDING: '/billing/aws-marketplace/pending',
   },
   ORGANIZATIONS: {
     BASE: '/organizations',

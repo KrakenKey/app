@@ -2155,6 +2155,174 @@ describe('BillingService', () => {
     });
   });
 
+  describe('AWS Marketplace subscriptions (one live subscription across sources)', () => {
+    const awsSub = (
+      overrides: Partial<Subscription> = {},
+    ): Partial<Subscription> => ({
+      ...mockSubscription,
+      source: 'aws_marketplace',
+      stripeCustomerId: null,
+      stripeSubscriptionId: null,
+      marketplaceSubscriptionId:
+        'arn:aws:license-manager::111122223333:license:l-abc',
+      marketplaceOfferId: 'prod-code',
+      marketplacePlanId: 'business',
+      marketplaceStatus: 'active',
+      awsCustomerAccountId: '444455556666',
+      awsAgreementId: 'agmt-1',
+      plan: 'business',
+      status: 'active',
+      updatedAt: new Date(),
+      ...overrides,
+    });
+
+    it('refuses a Stripe checkout with 409 while AWS bills the account', async () => {
+      mockRepository.findOne.mockResolvedValue(awsSub());
+      await expect(
+        service.createCheckoutSession(userId, 'test@example.com', 'business'),
+      ).rejects.toThrow(/billed through AWS Marketplace/);
+      expect(mockStripe.customers.create).not.toHaveBeenCalled();
+      expect(mockStripe.checkout.sessions.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a Stripe checkout with 409 while a linked AWS purchase waits for its entitlement', async () => {
+      mockRepository.findOne.mockResolvedValue(
+        awsSub({
+          marketplaceStatus: 'pending',
+          status: 'incomplete',
+          plan: 'free',
+        }),
+      );
+      await expect(
+        service.createCheckoutSession(userId, 'test@example.com', 'pro'),
+      ).rejects.toThrow(/waiting for AWS to confirm it/);
+      expect(mockStripe.customers.create).not.toHaveBeenCalled();
+    });
+
+    it('keeps refusing a Stripe checkout for a pending AWS link however old it is', async () => {
+      mockRepository.findOne.mockResolvedValue(
+        awsSub({
+          marketplaceStatus: 'pending',
+          status: 'incomplete',
+          plan: 'free',
+          stripeCustomerId: 'cus_1',
+          updatedAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+        }),
+      );
+      await expect(
+        service.createCheckoutSession(userId, 'test@example.com', 'pro'),
+      ).rejects.toThrow(/remove the pending purchase on the billing page/);
+      expect(mockStripe.checkout.sessions.create).not.toHaveBeenCalled();
+    });
+
+    it('allows a Stripe checkout once the AWS license ended', async () => {
+      mockStripe.checkout.sessions.create.mockResolvedValue({
+        url: 'https://checkout.stripe.com/session123',
+      });
+      mockRepository.findOne.mockResolvedValue(
+        awsSub({
+          marketplaceStatus: 'ended',
+          status: 'canceled',
+          plan: 'free',
+          stripeCustomerId: 'cus_1',
+        }),
+      );
+      await expect(
+        service.createCheckoutSession(userId, 'test@example.com', 'pro'),
+      ).resolves.toBe('https://checkout.stripe.com/session123');
+    });
+
+    it('refuses the Stripe portal and upgrades with 409', async () => {
+      mockRepository.findOne.mockResolvedValue(awsSub({ plan: 'pro' }));
+      await expect(service.createPortalSession(userId)).rejects.toThrow(
+        /AWS Marketplace console/,
+      );
+      await expect(service.previewUpgrade(userId, 'business')).rejects.toThrow(
+        /AWS Marketplace console/,
+      );
+      await expect(
+        service.upgradeSubscription(userId, 'business'),
+      ).rejects.toThrow(ConflictException);
+      expect(mockStripe.billingPortal.sessions.create).not.toHaveBeenCalled();
+      expect(mockStripe.subscriptions.update).not.toHaveBeenCalled();
+    });
+
+    it('cancels a Stripe checkout that completes after AWS started billing', async () => {
+      mockRepository.findOne.mockResolvedValue(awsSub());
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        id: 'sub_new',
+        status: 'active',
+      });
+      jest
+        .spyOn((service as any).logger, 'error')
+        .mockImplementation(() => undefined);
+
+      await service.handleWebhookEvent({
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            id: 'cs_late',
+            metadata: { userId, plan: 'pro' },
+            subscription: 'sub_new',
+            customer: 'cus_test123',
+          },
+        },
+      } as any);
+
+      expect(mockStripe.subscriptions.cancel).toHaveBeenCalledWith('sub_new');
+      expect(mockRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('clears the AWS fields when a Stripe checkout replaces an ended license', async () => {
+      mockRepository.findOne.mockResolvedValue(
+        awsSub({
+          marketplaceStatus: 'ended',
+          status: 'canceled',
+          plan: 'free',
+        }),
+      );
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        id: 'sub_new',
+        status: 'active',
+        current_period_end: Math.floor(Date.now() / 1000) + 86400 * 30,
+        cancel_at_period_end: false,
+        cancel_at: null,
+        items: { data: [] },
+      });
+      mockRepository.save.mockImplementation((d: any) => Promise.resolve(d));
+
+      await service.handleWebhookEvent({
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            id: 'cs_new',
+            metadata: { userId, plan: 'pro' },
+            subscription: 'sub_new',
+            customer: 'cus_test123',
+          },
+        },
+      } as any);
+
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: 'stripe',
+          stripeSubscriptionId: 'sub_new',
+          marketplaceSubscriptionId: null,
+          marketplaceStatus: null,
+          awsCustomerAccountId: null,
+          awsAgreementId: null,
+        }),
+      );
+    });
+
+    it('reports no scheduled change for an AWS subscription', async () => {
+      await expect(
+        service.scheduledChange(awsSub() as Subscription),
+      ).resolves.toBeNull();
+      expect(mockStripe.subscriptions.retrieve).not.toHaveBeenCalled();
+    });
+  });
+
   describe('scheduledChange', () => {
     const periodEnd = Math.floor(Date.parse('2027-10-14T00:00:00Z') / 1000);
     const periodStart = periodEnd - 365 * 86400;

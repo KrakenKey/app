@@ -17,8 +17,12 @@ export type BillingInterval = 'month' | 'year';
 
 export const BILLING_INTERVALS: readonly BillingInterval[] = ['month', 'year'];
 
-/** Where a subscription is billed: directly by KrakenKey (Stripe) or by Microsoft Marketplace. */
-export type BillingSource = 'stripe' | 'marketplace';
+/**
+ * Where a subscription is billed: directly by KrakenKey (Stripe), by
+ * Microsoft Marketplace (`marketplace`) or by AWS Marketplace
+ * (`aws_marketplace`).
+ */
+export type BillingSource = 'stripe' | 'marketplace' | 'aws_marketplace';
 
 /** A Microsoft Marketplace SaaS subscription's status as Microsoft reports it. */
 export type MarketplaceSaasStatus =
@@ -26,6 +30,14 @@ export type MarketplaceSaasStatus =
   | 'Subscribed'
   | 'Suspended'
   | 'Unsubscribed';
+
+/**
+ * An AWS Marketplace license as KrakenKey tracks it:
+ * - `pending`: linked to an account, waiting for AWS to grant the entitlement
+ * - `active`: AWS reports a current entitlement for a plan sold here
+ * - `ended`: the contract expired, was canceled or the license was deprovisioned
+ */
+export type AwsMarketplaceLicenseStatus = 'pending' | 'active' | 'ended';
 
 /**
  * A plan or billing interval change Stripe will apply at a later date,
@@ -55,8 +67,14 @@ export interface Subscription {
   graceEndsAt?: string | null;
   /** Who bills the subscription. Missing on responses from older API versions (Stripe). */
   source?: BillingSource;
-  /** Microsoft's status for a Marketplace subscription, null for Stripe. */
-  marketplaceStatus?: MarketplaceSaasStatus | null;
+  /**
+   * The marketplace's status: Microsoft's for `marketplace`, KrakenKey's
+   * license status for `aws_marketplace`, null for Stripe.
+   */
+  marketplaceStatus?:
+    | MarketplaceSaasStatus
+    | AwsMarketplaceLicenseStatus
+    | null;
   /**
    * How often a Stripe subscription is billed; null on the free plan, for
    * Marketplace subscriptions and for rows from before annual billing.
@@ -190,5 +208,57 @@ export interface MarketplaceLandingResponse {
    */
   accountMatchesPurchase: boolean;
   /** The KrakenKey account the subscription applies to. */
+  target: { kind: 'user' | 'organization'; name: string };
+}
+
+export interface AwsMarketplaceStatusResponse {
+  /** Whether this KrakenKey installation sells plans through AWS Marketplace. */
+  enabled: boolean;
+}
+
+export interface AwsMarketplaceRegistrationRequest {
+  /**
+   * The `registration` query parameter the fulfillment URL redirects to. It
+   * stands for a purchase AWS confirmed; it is not the AWS token.
+   */
+  registration: string;
+}
+
+/**
+ * What the AWS Marketplace landing page can do with a purchase:
+ * - `ready`: AWS reports an entitlement; it can be linked to this account
+ * - `awaiting_entitlement`: can be linked, but AWS hasn't granted the entitlement yet. Linking now applies the plan as soon as it does
+ * - `active`: linked to this account and entitled
+ * - `pending`: linked to this account, waiting for AWS to grant the entitlement
+ * - `linked_elsewhere`: linked to a different KrakenKey account
+ * - `conflict`: this account already has a paid subscription (Stripe, Microsoft or another AWS one)
+ * - `not_owner`: the user is in an organization and isn't its owner
+ * - `unknown_plan`: the purchased dimension isn't sold through this installation
+ * - `ended`: the contract has ended
+ */
+export type AwsMarketplaceLandingState =
+  | 'ready'
+  | 'awaiting_entitlement'
+  | 'active'
+  | 'pending'
+  | 'linked_elsewhere'
+  | 'conflict'
+  | 'not_owner'
+  | 'unknown_plan'
+  | 'ended';
+
+export interface AwsMarketplaceLandingResponse {
+  state: AwsMarketplaceLandingState;
+  /** Why the purchase can't be linked here, for `conflict`. */
+  message?: string;
+  /** The buyer's AWS account ID. */
+  awsAccountId: string;
+  /** The purchased contract dimension (for example `pro`), or null before AWS grants it. */
+  dimension: string | null;
+  /** The KrakenKey plan the dimension maps to, or null when unknown. */
+  plan: SubscriptionPlan | null;
+  /** When the current contract term ends or renews (ISO 8601), if known. */
+  expiresAt: string | null;
+  /** The KrakenKey account the purchase applies to. */
   target: { kind: 'user' | 'organization'; name: string };
 }

@@ -134,6 +134,21 @@ Sells plans through a transactable SaaS offer in Microsoft Marketplace (SaaS ful
 
 **Required when `KK_MARKETPLACE_ENABLED=true`. Missing values are logged by name at startup.
 
+### Billing (AWS Marketplace)
+
+Sells plans through a SaaS contract listing in AWS Marketplace. See [Integrations](./INTEGRATIONS.md#aws-marketplace-billing) for the IAM policies and the EventBridge rule.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `KK_AWS_MARKETPLACE_ENABLED` | No | `false` | `true` (with `KK_AWS_MARKETPLACE_PRODUCT_CODES` set) turns on new purchases: the fulfillment URL (`POST /billing/aws-marketplace/register`) and the `/aws-marketplace` landing page. While off, the landing page says the offer isn't available, the fulfillment URL answers `404`, `/billing/aws-marketplace/resolve` and `/link` answer `404` to a signed-in user (`401` without a session), and Stripe billing is unchanged. The event consumer and the hourly reconcile don't depend on it: they keep following subscriptions AWS already bills whenever the queue URL and role are set. Turn it on only after a deploy has fully replaced the previous release's containers |
+| `KK_AWS_MARKETPLACE_ROLE_ARN` | Yes*** | - | Role in the AWS Marketplace seller account to assume for `ResolveCustomer` and `GetEntitlements`. When empty and the flag is on, the default credentials are used as they are, which only works where they belong to the seller account. With the flag off it is what lets the reconcile keep checking existing AWS subscriptions; without it the reconcile logs an error and skips |
+| `KK_AWS_MARKETPLACE_PRODUCT_CODES` | Yes** | - | Comma-separated product codes to accept. Required for the flag to take effect: when empty, new purchases stay off and an error is logged. Set it per environment so a test product's purchases never reach production |
+| `KK_AWS_MARKETPLACE_DIMENSION_MAP` | Yes** | - | Comma-separated `<contract dimension>=<plan>` pairs, where plan is `pro`, `business` or `enterprise`, e.g. `pro=pro,business=business`. A purchase of a dimension that isn't listed is refused on the landing page |
+| `KK_AWS_MARKETPLACE_QUEUE_URL` | No | - | URL of the SQS queue (us-east-1) the seller account's EventBridge rule forwards Marketplace events to. Read whenever set, with or without the flag. When unset no events are read and changes are only picked up by the hourly reconcile |
+
+**Required when `KK_AWS_MARKETPLACE_ENABLED=true`. Missing or malformed values are logged at startup.
+***In production. The region for the Marketplace APIs is always `us-east-1`; SQS uses the region in the queue URL.
+
 ### Email Notifications
 
 | Variable | Required | Default | Description |
