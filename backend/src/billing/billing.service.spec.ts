@@ -13,6 +13,7 @@ import { User } from '../users/entities/user.entity';
 import { Organization } from '../organizations/entities/organization.entity';
 import { UnrecoverableError } from 'bullmq';
 import { EmailService } from '../notifications/email.service';
+import { effectivePlan } from './entitlement';
 
 // Mock Stripe
 const mockStripe = {
@@ -342,6 +343,24 @@ describe('BillingService', () => {
       },
     );
 
+    it('rejects with 409 while the first payment is still clearing', async () => {
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        plan: 'pro',
+        status: 'incomplete',
+      });
+
+      const err = await service
+        .createCheckoutSession(userId, 'test@example.com', 'business')
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(ConflictException);
+      expect((err as ConflictException).message).toMatch(
+        /still being processed/,
+      );
+      expect(mockStripe.checkout.sessions.create).not.toHaveBeenCalled();
+    });
+
     it('rejects with 409 when the org the owner bills for is already paid', async () => {
       const orgId = 'org-1';
       const userRepo = (service as any).userRepository;
@@ -457,6 +476,7 @@ describe('BillingService', () => {
   describe('handleWebhookEvent', () => {
     it('handles checkout.session.completed', async () => {
       mockStripe.subscriptions.retrieve.mockResolvedValue({
+        status: 'active',
         current_period_end: Math.floor(Date.now() / 1000) + 86400 * 30,
         cancel_at_period_end: false,
       });
@@ -487,6 +507,85 @@ describe('BillingService', () => {
         }),
       );
     });
+
+    it('keeps a checkout whose payment has not cleared incomplete', async () => {
+      // A bank debit (or a card waiting for authentication) leaves the new
+      // subscription incomplete when checkout completes.
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        status: 'incomplete',
+        current_period_end: Math.floor(Date.now() / 1000) + 86400 * 30,
+        cancel_at_period_end: false,
+        cancel_at: null,
+      });
+      mockRepository.findOne.mockResolvedValue({
+        ...mockSubscription,
+        stripeSubscriptionId: null,
+        plan: 'free',
+      });
+
+      await service.handleWebhookEvent({
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            metadata: { userId, plan: 'pro' },
+            subscription: 'sub_new123',
+            customer: 'cus_test123',
+          },
+        },
+      } as any);
+
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          plan: 'pro',
+          status: 'incomplete',
+          stripeSubscriptionId: 'sub_new123',
+        }),
+      );
+      const saved = mockRepository.save.mock.calls[0][0];
+      expect(effectivePlan(saved)).toBe('free');
+    });
+
+    it.each([
+      ['checkout.session.async_payment_succeeded', 'active'],
+      ['checkout.session.async_payment_failed', 'incomplete'],
+    ])(
+      'applies the subscription status from Stripe on %s',
+      async (type, status) => {
+        mockRepository.findOne.mockResolvedValue({
+          ...mockSubscription,
+          plan: 'pro',
+          status: 'incomplete',
+        });
+        mockStripe.subscriptions.retrieve.mockResolvedValue({
+          id: 'sub_test123',
+          status,
+          current_period_end: Math.floor(Date.now() / 1000) + 86400 * 30,
+          cancel_at_period_end: false,
+          cancel_at: null,
+        });
+
+        await service.handleWebhookEvent({
+          type,
+          data: {
+            object: {
+              id: 'cs_async',
+              metadata: { userId, plan: 'pro' },
+              subscription: 'sub_test123',
+              customer: 'cus_test123',
+            },
+          },
+        } as any);
+
+        expect(mockStripe.subscriptions.retrieve).toHaveBeenCalledWith(
+          'sub_test123',
+        );
+        expect(mockRepository.save).toHaveBeenCalledWith(
+          expect.objectContaining({ status }),
+        );
+        const saved = mockRepository.save.mock.calls[0][0];
+        expect(effectivePlan(saved)).toBe(status === 'active' ? 'pro' : 'free');
+      },
+    );
 
     describe('checkout.session.completed with an existing subscription', () => {
       const checkoutEvent = (subscription: string) =>
@@ -532,6 +631,23 @@ describe('BillingService', () => {
         expect(errorLog).toHaveBeenCalledWith(
           expect.stringMatching(/kept=sub_test123 duplicate=sub_dup/),
         );
+      });
+
+      it('cancels a second checkout while the first payment is still clearing', async () => {
+        stripeSubs.sub_test123 = { id: 'sub_test123', status: 'incomplete' };
+        stripeSubs.sub_dup = { id: 'sub_dup', status: 'active' };
+        mockRepository.findOne.mockResolvedValue({
+          ...mockSubscription,
+          status: 'incomplete',
+        });
+        jest
+          .spyOn((service as any).logger, 'error')
+          .mockImplementation(() => undefined);
+
+        await service.handleWebhookEvent(checkoutEvent('sub_dup'));
+
+        expect(mockRepository.save).not.toHaveBeenCalled();
+        expect(mockStripe.subscriptions.cancel).toHaveBeenCalledWith('sub_dup');
       });
 
       it('does not cancel twice when the event is redelivered', async () => {

@@ -7,9 +7,13 @@ import type { Subscription } from './entities/subscription.entity';
 /**
  * Stripe statuses where the subscription still bills (or will bill) the
  * customer. A second checkout on top of one of these creates a duplicate.
+ * `incomplete` is a new subscription whose first payment hasn't cleared yet
+ * (a bank debit, or a card waiting for authentication); it grants no plan
+ * (see entitlement.ts) but still blocks a second checkout.
  */
 export const LIVE_STRIPE_STATUSES = new Set([
   'active',
+  'incomplete',
   'past_due',
   'trialing',
   'unpaid',

@@ -247,6 +247,8 @@ KrakenKey uses Stripe for subscription billing. The integration supports checkou
    - Add endpoint: `https://api.example.com/billing/webhook`
    - Select events:
      - `checkout.session.completed`
+     - `checkout.session.async_payment_succeeded`
+     - `checkout.session.async_payment_failed`
      - `customer.subscription.updated`
      - `customer.subscription.deleted`
      - `invoice.payment_failed`
@@ -263,7 +265,8 @@ stripe listen --forward-to localhost:8080/billing/webhook
 
 | Event | Action |
 |-------|--------|
-| `checkout.session.completed` | Creates subscription record, links to user/org |
+| `checkout.session.completed` | Creates subscription record, links to user/org, with Stripe's status (`incomplete` until a delayed payment clears) |
+| `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed` | Reads the subscription from Stripe and applies its status, so a delayed payment starts the plan once it clears |
 | `customer.subscription.updated` | Updates plan, status, billing period; starts the grace period on `past_due`, clears it on `active` |
 | `customer.subscription.deleted` | Marks subscription as canceled, resets to free tier |
 | `invoice.payment_failed` | Sets status `past_due`, records `pastDueSince` on the first failure and emails the owner |

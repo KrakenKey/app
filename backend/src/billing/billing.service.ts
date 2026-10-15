@@ -407,6 +407,14 @@ export class BillingService {
     if (isAwaitingAwsEntitlement(existing)) {
       throw new ConflictException(AWAITING_AWS_MESSAGE);
     }
+    if (
+      existing?.status === 'incomplete' &&
+      hasLiveStripeSubscription(existing)
+    ) {
+      throw new ConflictException(
+        'The payment for your subscription is still being processed. Your plan starts once it clears.',
+      );
+    }
     if (hasLiveStripeSubscription(existing)) {
       throw new ConflictException(
         'You already have a paid subscription. Upgrade your plan from the billing page or manage it in the billing portal instead of starting a new checkout.',
@@ -1110,6 +1118,12 @@ export class BillingService {
           event.data.object as Stripe.Checkout.Session,
         );
         break;
+      case 'checkout.session.async_payment_succeeded':
+      case 'checkout.session.async_payment_failed':
+        await this.handleCheckoutAsyncPayment(
+          event.data.object as Stripe.Checkout.Session,
+        );
+        break;
       case 'customer.subscription.updated':
         await this.handleSubscriptionUpdated(
           event.data.object as Stripe.Subscription,
@@ -1226,7 +1240,10 @@ export class BillingService {
       billingInterval:
         paid?.interval ??
         (metadataInterval === 'year' ? ('year' as const) : ('month' as const)),
-      status: 'active' as const,
+      // Stripe's own status: a payment that hasn't cleared yet (a bank
+      // debit, or a card waiting for authentication) leaves the subscription
+      // incomplete, which grants no plan until Stripe activates it.
+      status: stripeSub.status,
       pastDueSince: null,
       currentPeriodEnd: new Date(this.extractPeriodEnd(stripeSub) * 1000),
       cancelAtPeriodEnd:
@@ -1259,7 +1276,28 @@ export class BillingService {
 
     await this.subscriptionRepository.save(sub);
 
-    this.logger.log(`Checkout completed: ${owner} plan=${plan}`);
+    this.logger.log(
+      `Checkout completed: ${owner} plan=${plan} status=${stripeSub.status}`,
+    );
+  }
+
+  /**
+   * A delayed checkout payment cleared or failed. Stripe also sends
+   * customer.subscription.updated when the subscription changes status, but
+   * that can arrive in any order, so read the subscription's current state
+   * from Stripe and apply it the same way.
+   */
+  private async handleCheckoutAsyncPayment(
+    session: Stripe.Checkout.Session,
+  ): Promise<void> {
+    const stripeSubscriptionId =
+      typeof session.subscription === 'string'
+        ? session.subscription
+        : session.subscription?.id;
+    if (!stripeSubscriptionId) return;
+    const stripeSub =
+      await this.stripe.subscriptions.retrieve(stripeSubscriptionId);
+    await this.handleSubscriptionUpdated(stripeSub);
   }
 
   /**
