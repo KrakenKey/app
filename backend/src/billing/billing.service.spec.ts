@@ -20,6 +20,7 @@ const mockStripe = {
   checkout: { sessions: { create: jest.fn() } },
   billingPortal: { sessions: { create: jest.fn() } },
   subscriptions: { retrieve: jest.fn(), update: jest.fn(), cancel: jest.fn() },
+  subscriptionSchedules: { release: jest.fn() },
   prices: { retrieve: jest.fn() },
   invoiceItems: { create: jest.fn() },
   invoices: { create: jest.fn(), pay: jest.fn(), createPreview: jest.fn() },
@@ -1178,6 +1179,7 @@ describe('BillingService', () => {
         targetInterval: 'month',
         currentPeriodEnd: mockSubscription.currentPeriodEnd!.toISOString(),
         prorationDate: expect.any(Number),
+        cancelsScheduledChange: false,
       });
       expect(mockStripe.invoices.createPreview).toHaveBeenCalledWith({
         customer: 'cus_test123',
@@ -1434,6 +1436,99 @@ describe('BillingService', () => {
           mockStripe.subscriptions.update.mock.calls[0][1].proration_date,
         ).toBeUndefined();
       }
+    });
+
+    describe('with a change scheduled in the portal', () => {
+      const scheduled = {
+        ...monthlyItem,
+        schedule: 'sub_sched_1',
+      };
+      const order: string[] = [];
+
+      beforeEach(() => {
+        order.length = 0;
+        mockStripe.subscriptions.retrieve.mockResolvedValue(scheduled);
+        mockStripe.subscriptionSchedules.release.mockImplementation(
+          async () => {
+            order.push('release');
+            return {};
+          },
+        );
+      });
+
+      it('says in the preview that the scheduled change will be canceled', async () => {
+        mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+        mockStripe.invoices.createPreview.mockResolvedValue({
+          amount_due: 6000,
+          currency: 'usd',
+        });
+        const preview = await service.previewUpgrade(userId, 'business');
+        expect(preview.cancelsScheduledChange).toBe(true);
+        // A preview changes nothing
+        expect(mockStripe.subscriptionSchedules.release).not.toHaveBeenCalled();
+      });
+
+      it('releases the schedule, then upgrades, so the upgrade is final', async () => {
+        mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+        mockStripe.subscriptions.update.mockImplementation(async () => {
+          order.push('update');
+          return { items: { data: [{ current_period_end: 2_000_000_000 }] } };
+        });
+
+        await expect(
+          service.upgradeSubscription(userId, 'business'),
+        ).resolves.toMatchObject({ plan: 'business' });
+        expect(mockStripe.subscriptionSchedules.release).toHaveBeenCalledWith(
+          'sub_sched_1',
+        );
+        expect(order).toEqual(['release', 'update']);
+      });
+
+      it('says the scheduled change is gone when the payment then fails', async () => {
+        mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+        mockStripe.subscriptions.update.mockRejectedValue(
+          Object.assign(new Error('Your card was declined.'), {
+            type: 'StripeCardError',
+            statusCode: 402,
+          }),
+        );
+        const warn = jest
+          .spyOn((service as any).logger, 'warn')
+          .mockImplementation(() => undefined);
+
+        const err = await service
+          .upgradeSubscription(userId, 'business')
+          .catch((e) => e);
+
+        expect(err.getStatus()).toBe(402);
+        expect(err.getResponse().message).toBe(
+          "The payment for the upgrade didn't go through: Your card was declined. Your plan hasn't changed. The change that was scheduled for the end of your billing period was canceled.",
+        );
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringMatching(/after releasing schedule sub_sched_1/),
+        );
+        expect(mockRepository.save).not.toHaveBeenCalled();
+      });
+
+      it('leaves the schedule alone when the upgrade is refused before Stripe', async () => {
+        mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+        await expect(
+          service.upgradeSubscription(userId, 'enterprise'),
+        ).rejects.toThrow(BadRequestException);
+        await expect(
+          service.upgradeSubscription(userId, 'pro'),
+        ).rejects.toThrow(BadRequestException);
+        expect(mockStripe.subscriptionSchedules.release).not.toHaveBeenCalled();
+      });
+
+      it('refuses the portal interval switch while a change is scheduled', async () => {
+        mockRepository.findOne.mockResolvedValue({ ...mockSubscription });
+        await expect(
+          service.createPortalSession(userId, 'switch_interval'),
+        ).rejects.toThrow(ConflictException);
+        expect(mockStripe.billingPortal.sessions.create).not.toHaveBeenCalled();
+        expect(mockStripe.subscriptionSchedules.release).not.toHaveBeenCalled();
+      });
     });
 
     it('starts a new period when moving to yearly', async () => {

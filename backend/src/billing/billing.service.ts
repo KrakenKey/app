@@ -55,6 +55,11 @@ interface UpgradeChange {
   targetInterval: BillingInterval;
   /** Monthly to yearly or back: Stripe starts a new period. */
   intervalChanges: boolean;
+  /**
+   * The subscription schedule holding a change for the end of the period
+   * (a downgrade or a yearly-to-monthly switch made in the portal), or null.
+   */
+  scheduleId: string | null;
 }
 
 /**
@@ -466,7 +471,14 @@ export class BillingService {
         'Only an active subscription can switch between monthly and yearly billing',
       );
     }
-    const { item, current } = await this.currentItem(sub);
+    const { item, current, scheduleId } = await this.currentItem(sub);
+    if (scheduleId) {
+      // The portal can't confirm a change on top of one it has scheduled;
+      // the dashboard hides the switch while a change is scheduled
+      throw new ConflictException(
+        'A change to your subscription is already scheduled for the end of this billing period. Manage it in the billing portal.',
+      );
+    }
     if (!current) {
       throw new BadRequestException(
         'This subscription is on a price that can only be changed in the billing portal',
@@ -516,6 +528,7 @@ export class BillingService {
     targetInterval: BillingInterval;
     currentPeriodEnd: string;
     prorationDate: number;
+    cancelsScheduledChange: boolean;
   }> {
     await this.assertBillingAccess(userId);
     const change = await this.planUpgrade(userId, newPlan, interval);
@@ -544,6 +557,9 @@ export class BillingService {
         ? addInterval(new Date(), change.targetInterval).toISOString()
         : change.sub.currentPeriodEnd!.toISOString(),
       prorationDate,
+      // The upgrade releases the schedule, so the downgrade or switch it
+      // holds for the end of the period won't happen
+      cancelsScheduledChange: change.scheduleId !== null,
     };
   }
 
@@ -577,6 +593,22 @@ export class BillingService {
     // No off_session: the customer is on the page making the change, so
     // the payment is on-session; a bank that asks for confirmation gets
     // sent to the billing portal instead (below).
+    // A change scheduled in the portal for the end of the period (a
+    // downgrade, or yearly to monthly) would undo this upgrade when its
+    // phase starts. Releasing the schedule keeps the current settings and
+    // drops the scheduled change, so the upgrade is final.
+    let releasedSchedule = false;
+    if (change.scheduleId) {
+      await this.stripe.subscriptionSchedules.release(change.scheduleId);
+      releasedSchedule = true;
+      this.logger.log(
+        `Released subscription schedule ${change.scheduleId} before upgrading ${sub.stripeSubscriptionId}`,
+      );
+    }
+    const scheduleNote = releasedSchedule
+      ? ' The change that was scheduled for the end of your billing period was canceled.'
+      : '';
+
     let updated: Stripe.Subscription;
     try {
       updated = await this.stripe.subscriptions.update(
@@ -590,11 +622,17 @@ export class BillingService {
         { idempotencyKey: `upgrade-${sub.id}-${randomUUID()}` },
       );
     } catch (err) {
+      if (releasedSchedule) {
+        // Acceptable: the customer keeps their current plan and only loses
+        // the pending downgrade, which they can schedule again
+        this.logger.warn(
+          `Upgrade of ${sub.stripeSubscriptionId} failed after releasing schedule ${change.scheduleId}; the scheduled change is gone`,
+        );
+      }
       if (needsCustomerAction(err)) {
         throw new HttpException(
           {
-            message:
-              "Your bank needs you to confirm this payment. Your plan hasn't changed; use Manage Subscription to make the change in the billing portal, where you can confirm it.",
+            message: `Your bank needs you to confirm this payment. Your plan hasn't changed; use Manage Subscription to make the change in the billing portal, where you can confirm it.${scheduleNote}`,
           },
           402,
         );
@@ -609,7 +647,7 @@ export class BillingService {
         );
         throw new HttpException(
           {
-            message: `The payment for the upgrade didn't go through${reason ? `: ${reason}` : ''}. Your plan hasn't changed.`,
+            message: `The payment for the upgrade didn't go through${reason ? `: ${reason}` : ''}. Your plan hasn't changed.${scheduleNote}`,
           },
           402,
         );
@@ -708,6 +746,7 @@ export class BillingService {
     item: Stripe.SubscriptionItem;
     current: PlanPrice | undefined;
     interval: BillingInterval;
+    scheduleId: string | null;
   }> {
     const stripeSub = await this.stripe.subscriptions.retrieve(
       sub.stripeSubscriptionId!,
@@ -717,7 +756,10 @@ export class BillingService {
     const interval: BillingInterval =
       current?.interval ??
       (item.price?.recurring?.interval === 'year' ? 'year' : 'month');
-    return { item, current, interval };
+    const schedule = stripeSub.schedule;
+    const scheduleId =
+      typeof schedule === 'string' ? schedule : (schedule?.id ?? null);
+    return { item, current, interval, scheduleId };
   }
 
   /** Checks an upgrade and works out the prices involved. */
@@ -727,7 +769,11 @@ export class BillingService {
     interval: BillingInterval | undefined,
   ): Promise<UpgradeChange> {
     const sub = await this.validateUpgrade(userId, newPlan);
-    const { item, interval: currentInterval } = await this.currentItem(sub);
+    const {
+      item,
+      interval: currentInterval,
+      scheduleId,
+    } = await this.currentItem(sub);
     const targetInterval = interval ?? currentInterval;
     const newPriceId = this.prices.priceFor(newPlan, targetInterval);
     if (!newPriceId) {
@@ -743,6 +789,7 @@ export class BillingService {
       newPriceId,
       targetInterval,
       intervalChanges: targetInterval !== currentInterval,
+      scheduleId,
     };
   }
 
