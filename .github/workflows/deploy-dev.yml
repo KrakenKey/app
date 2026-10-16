@@ -7,7 +7,9 @@
 #                          deploy them to dev pinned to sha-<head>, wait for
 #                          that deploy, set `deploy/dev-deployed`, remove the label
 #   merge to main       ─▶ the image workflows only deploy prd if the merged
-#                          PR's head has `deploy/dev-deployed` = success
+#                          PR's head has `deploy/dev-deployed` = success, and
+#                          tell the open PR that was on dev that dev now runs
+#                          main (.github/scripts/notify-dev-replaced.sh)
 #
 # Branch protection on main should require `deploy/dev-deployed`.
 # INFRA_DEPLOY_PAT needs Contents: write (to dispatch) and Actions: read (to
@@ -75,6 +77,15 @@ jobs:
           BACKEND: ${{ steps.diff.outputs.backend }}
           FRONTEND: ${{ steps.diff.outputs.frontend }}
         run: |
+          # A labeled run for this same commit may already have deployed it
+          # (push and label at about the same time). A new push has a new
+          # SHA, so keeping a success here never hides a stale deploy.
+          existing=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/status" \
+            --jq ".statuses[] | select(.context == \"${DEV_DEPLOYED_CONTEXT}\") | .state" | head -1)
+          if [[ $existing == success ]]; then
+            echo "${HEAD_SHA:0:7} already has ${DEV_DEPLOYED_CONTEXT} = success; leaving it"
+            exit 0
+          fi
           if [[ $BACKEND == true || $FRONTEND == true ]]; then
             state=pending
             description="Add the deploy:dev label to deploy this commit to dev"
@@ -257,3 +268,11 @@ jobs:
           # made with GITHUB_TOKEN don't trigger workflows, so this can't loop.
           gh pr edit "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --remove-label "deploy:dev"
           echo "$state: $description"
+          # If the PR got a new head while this commit was deploying, the new
+          # head isn't on dev and the label is gone, so say so on the PR.
+          current=$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)
+          if [[ $current != "$HEAD_SHA" ]]; then
+            gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body \
+              "This PR's head moved to ${current:0:7} while ${HEAD_SHA:0:7} was deploying, so dev runs ${HEAD_SHA:0:7}. Add the \`deploy:dev\` label again to deploy ${current:0:7}." >/dev/null
+            echo "Head moved to ${current:0:7}; asked for the label again"
+          fi

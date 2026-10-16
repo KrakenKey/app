@@ -172,3 +172,27 @@ jobs:
           event-type: image-published
           client-payload: >-
             {"image": "${{ env.IMAGE_NAME }}", "sha": "${{ github.sha }}", "ref": "${{ github.ref_name }}", "environment": "${{ matrix.environment }}"}
+
+  # A main deploy replaces whatever PR was on dev. The concurrency group is
+  # shared with the other image workflow, so a push that rebuilds both
+  # images comments once.
+  notify-dev-replaced:
+    name: Tell the PR on dev that main replaced it
+    needs: deploy
+    if: needs.deploy.result == 'success' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: dev-replaced-notice
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Comment on the PR that was on dev
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/notify-dev-replaced.sh
