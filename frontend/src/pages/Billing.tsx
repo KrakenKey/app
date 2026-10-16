@@ -257,6 +257,10 @@ export default function Billing() {
   const plan = normalizePlan(subscription?.plan);
   const isPaid = plan !== 'free';
   const isPastDue = subscription?.status === 'past_due';
+  // A checkout whose payment hasn't cleared yet (a bank debit, or a card
+  // waiting for authentication). The paid limits start once Stripe confirms
+  // the payment.
+  const paymentPending = isPaid && subscription?.status === 'incomplete';
   // Stripe retries a failed payment for a while; the paid limits keep
   // applying until graceEndsAt. After that (or once Stripe marks the
   // subscription unpaid) the account is on the free (Starter) limits.
@@ -453,6 +457,18 @@ export default function Billing() {
     <div className="space-y-6">
       {header}
 
+      {paymentPending && (
+        <div
+          role="status"
+          className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm"
+        >
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
+          <p className="font-medium text-amber-200">
+            {`Your payment for the ${planLabel} plan is still being processed. Your account is on ${freeLabel} limits until it clears. A bank debit can take a few business days.`}
+          </p>
+        </div>
+      )}
+
       {paymentFailed && (
         <div
           role="alert"
@@ -523,6 +539,11 @@ export default function Billing() {
               {isPastDue && (
                 <span className="text-xs text-red-400 font-medium">
                   Payment past due
+                </span>
+              )}
+              {paymentPending && (
+                <span className="text-xs text-amber-400 font-medium">
+                  Payment processing
                 </span>
               )}
               {isCanceling && (

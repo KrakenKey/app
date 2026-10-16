@@ -235,7 +235,9 @@ Internal endpoint — receives signed webhook events from Stripe. Not called by 
 2. Backend creates a Stripe Checkout Session
 3. User completes payment on Stripe
 4. `checkout.session.completed` webhook fires
-5. Backend creates a `Subscription` record linked to the user (or organization)
+5. Backend creates a `Subscription` record linked to the user (or organization), with the status Stripe reports for the new subscription
+
+A card payment has cleared by the time checkout completes, so the subscription is `active` and the paid limits apply at once. A payment that clears later (a bank debit, or a card waiting for authentication) leaves the subscription `incomplete`: the account stays on the free (Starter) limits, the billing page says the payment is being processed, and a second checkout answers `409`. When the payment clears, `customer.subscription.updated` and `checkout.session.async_payment_succeeded` move it to `active`. If it fails, Stripe expires the subscription (`incomplete_expired`) and the account stays on Starter.
 
 If the record already points at a different subscription that Stripe still reports as live (for example, two checkout tabs were completed), the webhook keeps the existing subscription, cancels the new one immediately, and logs an error with both IDs. The new subscription's first invoice is not refunded automatically; refund it from the Stripe dashboard. A repeated delivery of the same event changes nothing.
 
@@ -324,7 +326,8 @@ The error message names the owner, both subscription IDs and the organization, b
 | `past_due` | Payment failed, Stripe is retrying. Paid limits apply for 14 days from the first failure |
 | `unpaid` | Stripe gave up retrying. Free limits apply |
 | `canceled` | Subscription has been canceled |
-| `incomplete` | Initial payment has not completed |
+| `incomplete_expired` | The first payment never cleared and Stripe expired the subscription. Free limits apply |
+| `incomplete` | The first payment hasn't cleared yet (a bank debit, or a card waiting for authentication). Free limits apply until it does |
 | `trialing` | Subscription is in a trial period |
 
 ## Subscription Entity Schema

@@ -47,6 +47,23 @@ describe('subscription sources', () => {
     ).toBe(false);
   });
 
+  it('counts a Stripe subscription whose first payment is clearing as live', () => {
+    expect(
+      hasLiveStripeSubscription({
+        source: 'stripe',
+        stripeSubscriptionId: 'sub_1',
+        status: 'incomplete',
+      }),
+    ).toBe(true);
+    expect(
+      hasLiveStripeSubscription({
+        source: 'stripe',
+        stripeSubscriptionId: 'sub_1',
+        status: 'incomplete_expired',
+      }),
+    ).toBe(false);
+  });
+
   it('never reads an AWS row as Stripe or Microsoft, even with a stray Stripe id', () => {
     const row = { ...aws, stripeSubscriptionId: 'sub_1' };
     expect(hasLiveStripeSubscription(row)).toBe(false);

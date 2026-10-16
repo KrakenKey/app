@@ -669,6 +669,34 @@ describe('Billing', () => {
     });
   });
 
+  describe('payment still clearing', () => {
+    it('says the paid limits start once the payment clears', async () => {
+      mockFetchSubscription.mockResolvedValue({
+        ...sub('pro'),
+        status: 'incomplete',
+      });
+      render(<Billing />);
+
+      const notice = await screen.findByRole('status');
+      expect(notice).toHaveTextContent(
+        /Your payment for the Pro plan is still being processed\. Your account is on Starter limits until it clears\./,
+      );
+      expect(screen.getByText('Payment processing')).toBeInTheDocument();
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+
+    it('shows nothing for an active subscription', async () => {
+      mockFetchSubscription.mockResolvedValue(sub('pro'));
+      render(<Billing />);
+
+      await screen.findByText('Pro');
+      expect(screen.queryByText('Payment processing')).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(/still being processed/),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   describe('failed payment', () => {
     const pastDue = (graceEndsAt: string | null, plan = 'business') => ({
       ...sub(plan),
