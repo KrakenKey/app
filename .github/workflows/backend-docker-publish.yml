@@ -104,6 +104,9 @@ jobs:
           context: .
           file: ./backend/Dockerfile
           push: true
+          # The PR head for PR builds, matching the sha-<head> tag
+          build-args: |
+            KK_GIT_SHA=${{ github.event.pull_request.head.sha || github.sha }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
