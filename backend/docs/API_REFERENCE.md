@@ -104,14 +104,15 @@ All errors follow a consistent JSON format:
 
 ### GET /
 
-Returns API status and version.
+Returns API status, version and the commit the running image was built from (`unknown` for a build without it, such as local development).
 
 **Authentication**: None
 
 ```json
 {
   "status": "ok",
-  "version": "0.1.0"
+  "version": "1.0.0",
+  "commit": "7fa851e0c0ffee1234567890abcdef1234567890"
 }
 ```
 

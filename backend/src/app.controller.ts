@@ -12,7 +12,8 @@ export class AppController {
 
   @ApiOperation({
     summary: 'Get API info',
-    description: 'Returns the current status and version of the API',
+    description:
+      'Returns the current status, version and deployed commit of the API',
     responses: {
       200: {
         description: 'Server info retrieved successfully',
@@ -20,7 +21,7 @@ export class AppController {
     },
   })
   @Get()
-  getInfo(): { status: string; version: string } {
+  getInfo(): { status: string; version: string; commit: string } {
     return this.appService.getInfo();
   }
 }

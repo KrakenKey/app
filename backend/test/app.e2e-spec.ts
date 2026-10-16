@@ -23,7 +23,7 @@ describe('AppController (e2e)', () => {
     await app.close();
   });
 
-  it('GET / returns status and version', async () => {
+  it('GET / returns status, version and commit', async () => {
     return request(app.getHttpServer())
       .get('/')
       .expect(200)
@@ -31,6 +31,7 @@ describe('AppController (e2e)', () => {
         expect(res.body).toMatchObject({
           status: 'ok',
           version: expect.any(String),
+          commit: expect.any(String),
         });
       });
   });

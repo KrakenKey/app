@@ -31,6 +31,11 @@ RUN yarn install --production --frozen-lockfile --non-interactive && yarn cache 
 
 COPY --from=builder /app/backend/dist ./dist
 
+# The commit this image was built from, reported by GET /. Last, so a new
+# commit doesn't invalidate the cached layers above.
+ARG KK_GIT_SHA=unknown
+ENV KK_GIT_SHA=${KK_GIT_SHA}
+
 EXPOSE 8888
 USER node
 CMD ["node", "dist/main.js"]
