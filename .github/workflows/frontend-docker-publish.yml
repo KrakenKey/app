@@ -47,7 +47,6 @@ jobs:
         run: yarn install --frozen-lockfile --non-interactive
 
       - name: Lint
-        continue-on-error: true # Existing issues, to be fixed in the future (non-blocking for now)
         working-directory: frontend
         run: yarn lint
 
