@@ -40,11 +40,11 @@ jobs:
 
       - name: Install and build shared library
         working-directory: shared
-        run: yarn install --frozen-lockfile --non-interactive && yarn build
+        run: "$GITHUB_WORKSPACE/.github/scripts/retry.sh" yarn install --frozen-lockfile --non-interactive && yarn build
 
       - name: Install frontend dependencies
         working-directory: frontend
-        run: yarn install --frozen-lockfile --non-interactive
+        run: "$GITHUB_WORKSPACE/.github/scripts/retry.sh" yarn install --frozen-lockfile --non-interactive
 
       - name: Lint
         continue-on-error: true # Existing issues, to be fixed in the future (non-blocking for now)
