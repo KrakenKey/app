@@ -106,6 +106,19 @@ describe('AwsMarketplaceController', () => {
       expect(mocks.link).not.toHaveBeenCalled();
     });
 
+    it("serves the fulfillment URL page on GET and HEAD, for AWS's URL check", async () => {
+      const res = await request(server())
+        .get('/billing/aws-marketplace/register')
+        .expect(200)
+        .expect('Content-Type', /text\/html/)
+        .expect('Cache-Control', 'no-store');
+      expect(res.text).toContain('Set up your account');
+      await request(server())
+        .head('/billing/aws-marketplace/register')
+        .expect(200);
+      expect(mocks.register).not.toHaveBeenCalled();
+    });
+
     it('still lets an owner remove a pending link made before the flag went off', async () => {
       await request(server())
         .delete('/billing/aws-marketplace/pending')
