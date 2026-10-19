@@ -4,6 +4,8 @@ Notable changes to the KrakenKey API, grouped by release.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Dates are merge dates.
 
+From 1.0.0 on, releases follow [Semantic Versioning](https://semver.org/) and are tagged `vX.Y.Z`; see [RELEASING.md](RELEASING.md). Earlier entries are grouped by merge date.
+
 ---
 
 ## [Unreleased]
