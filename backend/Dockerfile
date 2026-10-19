@@ -1,16 +1,18 @@
 FROM node:24 AS builder
 WORKDIR /app
+# Retries installs that fail on transient registry errors
+COPY .github/scripts/retry.sh /usr/local/bin/retry
 
 # 1. Setup Shared Library
 COPY shared ./shared
 WORKDIR /app/shared
-RUN yarn install --frozen-lockfile --non-interactive && yarn build
+RUN retry yarn install --frozen-lockfile --non-interactive && yarn build
 
 # 2. Setup Backend
 WORKDIR /app
 COPY backend/package*.json backend/yarn.lock ./backend/
 WORKDIR /app/backend
-RUN yarn install --frozen-lockfile --non-interactive && yarn cache clean
+RUN retry yarn install --frozen-lockfile --non-interactive && yarn cache clean
 
 # 3. Build Backend
 COPY backend/ .
@@ -22,12 +24,13 @@ FROM node:24-slim
 RUN apt-get update && apt-get install -y --no-install-recommends wget && rm -rf /var/lib/apt/lists/*
 WORKDIR /app/backend
 ENV NODE_ENV=production
+COPY .github/scripts/retry.sh /usr/local/bin/retry
 
 # Copy shared lib source so yarn install --production works (resolving file:../shared)
 COPY --from=builder /app/shared /app/shared
 
 COPY backend/package*.json backend/yarn.lock ./
-RUN yarn install --production --frozen-lockfile --non-interactive && yarn cache clean
+RUN retry yarn install --production --frozen-lockfile --non-interactive && yarn cache clean
 
 COPY --from=builder /app/backend/dist ./dist
 

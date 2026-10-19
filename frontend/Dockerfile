@@ -1,17 +1,19 @@
 # Build Stage
 FROM node:24-alpine AS builder
 WORKDIR /app
+# Retries installs that fail on transient registry errors
+COPY .github/scripts/retry.sh /usr/local/bin/retry
 
 # 1. Setup Shared Library
 COPY shared ./shared
 WORKDIR /app/shared
-RUN yarn install --frozen-lockfile && yarn build
+RUN retry yarn install --frozen-lockfile && yarn build
 
 # 2. Setup Frontend
 WORKDIR /app
 COPY frontend/package.json frontend/yarn.lock ./frontend/
 WORKDIR /app/frontend
-RUN yarn install --frozen-lockfile
+RUN retry yarn install --frozen-lockfile
 
 # 3. Build Frontend
 COPY frontend/ .
