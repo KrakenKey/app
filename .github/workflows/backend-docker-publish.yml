@@ -49,12 +49,10 @@ jobs:
           "$GITHUB_WORKSPACE/.github/scripts/retry.sh" yarn install --frozen-lockfile --non-interactive
 
       - name: Lint
-        continue-on-error: true  # Existing issues, to be fixed in the future (non-blocking for now)
         working-directory: backend
         run: yarn lint
 
       - name: Test
-        continue-on-error: true # Existing issues, to be fixed in the future (non-blocking for now)
         working-directory: backend
         run: yarn test
 
