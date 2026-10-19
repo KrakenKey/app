@@ -23,6 +23,26 @@ import { RateLimitCategory } from '../../throttler/interfaces/rate-limit-categor
 import { AwsMarketplaceService } from './aws-marketplace.service';
 import { AwsMarketplaceRegistrationDto } from './dto/aws-marketplace-registration.dto';
 
+/**
+ * What a plain visit to the fulfillment URL shows. AWS also checks that the
+ * URL answers 200 before it accepts it for a product.
+ */
+const REGISTER_PAGE = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>KrakenKey on AWS Marketplace</title>
+</head>
+<body style="font-family: system-ui, sans-serif; max-width: 36rem; margin: 4rem auto; padding: 0 1rem; line-height: 1.5;">
+<h1>KrakenKey on AWS Marketplace</h1>
+<p>This page sets up KrakenKey after a purchase in AWS Marketplace. To continue, open your KrakenKey subscription in AWS Marketplace and choose <strong>Set up your account</strong>.</p>
+<p>Need help? Visit <a href="https://krakenkey.io/support/">krakenkey.io/support</a>.</p>
+</body>
+</html>
+`;
+
 /** Form fields AWS posts to the fulfillment URL. */
 const TOKEN_FIELD = 'x-amzn-marketplace-token';
 const OFFER_TYPE_FIELD = 'x-amzn-marketplace-offer-type';
@@ -43,6 +63,16 @@ export class AwsMarketplaceController {
   @RateLimitCategoryDecorator(RateLimitCategory.PUBLIC)
   status(): AwsMarketplaceStatusResponse {
     return { enabled: this.awsMarketplace.enabled };
+  }
+
+  /** A browser visiting the fulfillment URL directly, and AWS's URL check. */
+  @Get('register')
+  @RateLimitCategoryDecorator(RateLimitCategory.PUBLIC)
+  registerPage(@Res() res: Response): void {
+    // Served with the flag off too: AWS checks the URL while a product is
+    // being set up, before purchases are turned on in that environment.
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('html').status(200).send(REGISTER_PAGE);
   }
 
   /**
