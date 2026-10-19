@@ -93,9 +93,11 @@ jobs:
           DOCKER_METADATA_PR_HEAD_SHA: "true"
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # PR builds only get sha-<head>: their dev deploys pin it. `dev` follows
+          # main and feature branches, so an unpinned dev deploy never runs a PR.
           tags: |
             type=sha
-            type=raw,value=dev,enable=${{ github.event_name == 'pull_request' || github.ref != 'refs/heads/main' }}
+            type=raw,value=dev,enable=${{ github.event_name != 'pull_request' }}
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push
