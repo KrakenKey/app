@@ -30,10 +30,12 @@ jobs:
           cache-dependency-path: backend/yarn.lock
       - name: Install and build shared
         working-directory: shared
-        run: yarn install --frozen-lockfile --non-interactive && yarn build
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/retry.sh" yarn install --frozen-lockfile --non-interactive && yarn build
       - name: Install backend dependencies
         working-directory: backend
-        run: yarn install --frozen-lockfile --non-interactive
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/retry.sh" yarn install --frozen-lockfile --non-interactive
       - name: Run unit tests
         working-directory: backend
         run: yarn test
@@ -50,10 +52,12 @@ jobs:
           cache-dependency-path: backend/yarn.lock
       - name: Install and build shared
         working-directory: shared
-        run: yarn install --frozen-lockfile --non-interactive && yarn build
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/retry.sh" yarn install --frozen-lockfile --non-interactive && yarn build
       - name: Install backend dependencies
         working-directory: backend
-        run: yarn install --frozen-lockfile --non-interactive
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/retry.sh" yarn install --frozen-lockfile --non-interactive
       - name: Run e2e tests
         working-directory: backend
         run: yarn test:e2e
@@ -70,10 +74,12 @@ jobs:
           cache-dependency-path: frontend/yarn.lock
       - name: Install and build shared
         working-directory: shared
-        run: yarn install --frozen-lockfile --non-interactive && yarn build
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/retry.sh" yarn install --frozen-lockfile --non-interactive && yarn build
       - name: Install frontend dependencies
         working-directory: frontend
-        run: yarn install --frozen-lockfile --non-interactive
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/retry.sh" yarn install --frozen-lockfile --non-interactive
       - name: Run tests
         working-directory: frontend
         run: yarn vitest --run
@@ -90,10 +96,12 @@ jobs:
           cache-dependency-path: frontend/yarn.lock
       - name: Install and build shared
         working-directory: shared
-        run: yarn install --frozen-lockfile --non-interactive && yarn build
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/retry.sh" yarn install --frozen-lockfile --non-interactive && yarn build
       - name: Install frontend dependencies
         working-directory: frontend
-        run: yarn install --frozen-lockfile --non-interactive
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/retry.sh" yarn install --frozen-lockfile --non-interactive
       - name: Install Playwright browsers
         working-directory: frontend
         run: npx playwright install --with-deps chromium
